@@ -144,11 +144,11 @@ deploy: docker-release helm-deploy helm-status
 # Build backend only
 build-backend:
 	@echo "Building backend image for linux/amd64..."
-	docker build --platform linux/amd64 -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/pydantic-ai-backend:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
 
 # Push backend only
 push-backend: acr-login
-	docker push $(ACR_REGISTRY)/pydantic-ai-backend:$(IMAGE_TAG)
+	docker push $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG)
 
 # Rollout restart backend (pull new image)
 rollout-backend:
