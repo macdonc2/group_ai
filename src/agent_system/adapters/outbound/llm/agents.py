@@ -195,6 +195,60 @@ Determine if the query needs a tool. Available tools:
    - Categories: music, cycling, sports, arts, food, festivals, comedy, theater
    - This searches an AI-curated database of Houston events updated daily
 
+=== SOCIAL GRAPH & KNOWLEDGE TOOLS ===
+
+11. "get_person_info" - Use when user asks about a SPECIFIC PERSON they've mentioned before:
+   - "What do you know about Sarah?" → tool: "get_person_info", tool_input: "Sarah"
+   - "Tell me about my friend Jake" → tool: "get_person_info", tool_input: "Jake"
+   - "Who is Rachel?" → tool: "get_person_info", tool_input: "Rachel"
+   - This retrieves stored information about people in the user's social graph
+   - tool_input: The person's name
+
+12. "get_pet_info" - Use when user asks about their PETS:
+   - "What do you know about Zane?" → tool: "get_pet_info", tool_input: "Zane"
+   - "Tell me about my dog" → tool: "get_pet_info", tool_input: "" (lists all pets)
+   - "What does my cat like to eat?" → tool: "get_pet_info", tool_input: "cat"
+   - This retrieves stored information about the user's pets
+   - tool_input: Pet name (or empty for all pets)
+
+13. "get_location_info" - Use when user asks about a PLACE they've mentioned:
+   - "What do you know about Uchi?" → tool: "get_location_info", tool_input: "Uchi"
+   - "Tell me about that restaurant" → tool: "get_location_info", tool_input: "<restaurant name from context>"
+   - This retrieves stored information about locations
+   - tool_input: Location name
+
+14. "list_known_people" - Use when user asks who they've told you about:
+   - "Who have I told you about?" → tool: "list_known_people", tool_input: null
+   - "List people I've mentioned" → tool: "list_known_people", tool_input: null
+   - "My social network" → tool: "list_known_people", tool_input: null
+
+15. "list_pets" - Use when user asks about their pets in general:
+   - "What pets do I have?" → tool: "list_pets", tool_input: null
+   - "List my animals" → tool: "list_pets", tool_input: null
+
+16. "list_locations" - Use when user asks about places they've mentioned:
+   - "What places have I mentioned?" → tool: "list_locations", tool_input: null
+   - "Where have we talked about?" → tool: "list_locations", tool_input: null
+
+17. "get_user_preferences" - Use when user asks about their preferences:
+   - "What are my food preferences?" → tool: "get_user_preferences", tool_input: "food"
+   - "What do I like?" → tool: "get_user_preferences", tool_input: ""
+   - "My restaurant preferences" → tool: "get_user_preferences", tool_input: "restaurant"
+   - tool_input: Category to filter (or empty for all preferences)
+
+18. "recall_from_period" - Use when user asks about messages from a specific time:
+   - "What did we talk about last week?" → tool: "recall_from_period", tool_input: "last week"
+   - "What happened yesterday?" → tool: "recall_from_period", tool_input: "yesterday"
+   - "January discussions" → tool: "recall_from_period", tool_input: "January 2026"
+   - tool_input: Time period description
+
+CRITICAL - ENTITY RESOLUTION FOR PET/PERSON QUERIES:
+- If user asks "What should I do with Zane today?" and Zane is known as their DOG → use get_pet_info
+- If user asks about a person ("my wife Sarah") → use get_person_info
+- If context or knowledge graph shows entity is a pet → prefer get_pet_info
+- If context or knowledge graph shows entity is a person → prefer get_person_info
+- When in doubt about an entity (Zane, Bo, etc.), try recall_about_topic first to determine what they are
+
 IMPORTANT: When in doubt about whether information needs to be current/real-time, USE web_search.
 Do NOT answer location/event/news questions from memory - always search.
 

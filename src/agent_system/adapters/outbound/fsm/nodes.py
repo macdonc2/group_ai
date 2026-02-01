@@ -1717,6 +1717,112 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
             except Exception as e:
                 logger.debug(f"Failed to record interaction: {e}")
         
+        # Extract social graph entities (people, pets, locations, preferences)
+        if ctx.deps.knowledge_graph_port:
+            try:
+                from agent_system.adapters.outbound.llm.knowledge_extractor import extract_knowledge_from_text
+                
+                # Build context from recent conversation
+                history_messages = ctx.state.conversation.get_context_messages()
+                recent_context = None
+                if history_messages:
+                    recent_context = [
+                        {"role": m.role.value, "content": m.content.text[:300]}
+                        for m in history_messages[-5:]
+                    ]
+                
+                # Get existing entities for better resolution
+                existing_persons = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
+                existing_pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
+                existing_locations = await ctx.deps.knowledge_graph_port.list_locations(ctx.state.user.id)
+                
+                person_names = [p.get("name", "") for p in existing_persons] if existing_persons else []
+                pet_names = [p.get("name", "") for p in existing_pets] if existing_pets else []
+                location_names = [l.get("name", "") for l in existing_locations] if existing_locations else []
+                
+                # Extract entities from the exchange
+                content = f"{ctx.state.user_input}\n{ctx.state.response[:500]}"
+                entity_result = await extract_knowledge_from_text(
+                    content,
+                    api_key=ctx.deps.openai_api_key,
+                    context=recent_context,
+                    existing_persons=person_names,
+                    existing_pets=pet_names,
+                    existing_locations=location_names,
+                )
+                
+                # Store extracted persons
+                for person in entity_result.persons:
+                    if person.confidence >= 0.7:
+                        await ctx.deps.knowledge_graph_port.store_person(
+                            user_id=ctx.state.user.id,
+                            name=person.name,
+                            aliases=person.aliases,
+                            relationship_type=person.relationship_type,
+                            context_notes=person.context_notes,
+                        )
+                        logger.debug(f"Stored person: {person.name}")
+                
+                # Store extracted pets
+                for pet in entity_result.pets:
+                    if pet.confidence >= 0.7:
+                        await ctx.deps.knowledge_graph_port.store_pet(
+                            user_id=ctx.state.user.id,
+                            name=pet.name,
+                            species=pet.species,
+                            breed=pet.breed,
+                            personality=pet.personality,
+                        )
+                        logger.debug(f"Stored pet: {pet.name}")
+                
+                # Store extracted locations
+                for location in entity_result.locations:
+                    if location.confidence >= 0.7:
+                        await ctx.deps.knowledge_graph_port.store_location(
+                            user_id=ctx.state.user.id,
+                            name=location.name,
+                            location_type=location.location_type,
+                            city=location.city,
+                            neighborhood=location.neighborhood,
+                        )
+                        logger.debug(f"Stored location: {location.name}")
+                
+                # Store extracted preferences
+                for pref in entity_result.preferences:
+                    await ctx.deps.knowledge_graph_port.store_preference(
+                        user_id=ctx.state.user.id,
+                        category=pref.category,
+                        value=pref.value,
+                        sentiment=pref.sentiment,
+                        confidence=pref.confidence,
+                        source_conversation=str(ctx.state.conversation.id),
+                    )
+                    logger.debug(f"Stored preference: {pref.category}/{pref.value}")
+                
+                # Create relationships between entities
+                for rel in entity_result.relationships:
+                    try:
+                        await ctx.deps.knowledge_graph_port.link_entities(
+                            user_id=ctx.state.user.id,
+                            from_entity=rel.from_entity,
+                            from_type=rel.from_type,
+                            to_entity=rel.to_entity,
+                            to_type=rel.to_type,
+                            relationship=rel.relationship,
+                        )
+                        logger.debug(f"Linked: {rel.from_entity} -{rel.relationship}-> {rel.to_entity}")
+                    except Exception as rel_err:
+                        logger.debug(f"Failed to link entities: {rel_err}")
+                
+                if entity_result.persons or entity_result.pets or entity_result.locations:
+                    logger.info(
+                        f"Extracted social entities: {len(entity_result.persons)} people, "
+                        f"{len(entity_result.pets)} pets, {len(entity_result.locations)} locations"
+                    )
+                    
+            except Exception as entity_err:
+                logger.debug(f"Social entity extraction skipped: {entity_err}")
+        
         # Store message embeddings for semantic search
         # Use per-user API key to create embedding adapter dynamically
         if ctx.deps.knowledge_graph_port:
