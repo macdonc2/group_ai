@@ -266,6 +266,7 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 # ENTITY CONTEXT INJECTION: Look up any named entities BEFORE planning
                 # This ensures the planner knows Zane is a dog, Sarah is a spouse, etc.
                 entity_context = ""
+                logger.info(f"Entity lookup check: entities={ctx.state.entities}, has_kg_port={ctx.deps.knowledge_graph_port is not None}")
                 if ctx.state.entities and ctx.deps.knowledge_graph_port:
                     entity_info_parts = []
                     
@@ -293,17 +294,21 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                             seen.add(e_lower)
                             unique_entities.append(e)
                     
+                    logger.info(f"Processing {len(unique_entities)} unique entities: {unique_entities}")
                     for entity_name in unique_entities[:8]:
                         # Skip common words and phrases
                         if entity_name.lower() in ["birthday", "today", "tomorrow", "party", "the", "a", "an"]:
+                            logger.debug(f"Skipping common word: {entity_name}")
                             continue
                         
+                        logger.info(f"Looking up entity: '{entity_name}'")
                         try:
                             found_info = False
                             
                             # First: Try to find in new typed nodes (PetNode, PersonNode)
                             # Check if it's a pet
                             pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
+                            logger.info(f"Found {len(pets) if pets else 0} pets in graph")
                             for pet in (pets or []):
                                 pet_name = pet.get("name", "").lower()
                                 if entity_name.lower() in pet_name or pet_name in entity_name.lower():
