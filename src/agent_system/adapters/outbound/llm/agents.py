@@ -94,6 +94,13 @@ TOOL OUTPUT FORMATTING:
 
 INTENT_SYSTEM_PROMPT = """You analyze user messages to understand their intent and determine if a tool is needed.
 
+ENTITY EXTRACTION (CRITICAL):
+Extract INDIVIDUAL named entities (people, pets, places, specific things).
+- Extract just the NAME, not phrases containing the name
+- "What should I do for Zane's birthday?" → entities: ["Zane"]  NOT ["Zane's birthday"]
+- "Let's visit the Uchi restaurant with Sarah" → entities: ["Uchi", "Sarah"]
+- "Tell me about my dog Bo" → entities: ["Bo"]
+
 INTENT TYPES:
 - question: Asking for information about a topic
 - task: Wanting something done or created

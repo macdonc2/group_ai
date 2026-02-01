@@ -17,7 +17,7 @@ class IntentAnalysis(BaseModel):
         float, Field(ge=0.0, le=1.0, description="Confidence score for this analysis")
     ]
     entities: Annotated[
-        list[str], Field(default_factory=list, description="Extracted entities from the input")
+        list[str], Field(default_factory=list, description="Extracted NAMED entities (people, pets, places, specific things) from the input. Extract individual names, not phrases. Example: 'What should I do for Zane's birthday?' -> entities: ['Zane'], not ['Zane's birthday']")
     ]
     requires_planning: Annotated[
         bool, Field(description="Whether this intent requires creating a plan")

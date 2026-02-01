@@ -268,9 +268,34 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 entity_context = ""
                 if ctx.state.entities and ctx.deps.knowledge_graph_port:
                     entity_info_parts = []
-                    for entity_name in ctx.state.entities[:5]:  # Limit to 5 entities
+                    
+                    # Extract potential names from entities (handle "Zane's birthday" -> "Zane")
+                    processed_entities = []
+                    for entity_name in ctx.state.entities[:5]:
+                        # If entity contains possessive, extract the name part
+                        if "'s " in entity_name or "'s " in entity_name:
+                            name_part = entity_name.split("'")[0].strip()
+                            if name_part and len(name_part) > 1:
+                                processed_entities.append(name_part)
+                        # Also try the first word if it's capitalized (handles "Zane birthday")
+                        words = entity_name.split()
+                        if words and words[0][0].isupper() and len(words[0]) > 1:
+                            processed_entities.append(words[0])
+                        # Keep original too
+                        processed_entities.append(entity_name)
+                    
+                    # Deduplicate
+                    seen = set()
+                    unique_entities = []
+                    for e in processed_entities:
+                        e_lower = e.lower().strip()
+                        if e_lower not in seen and len(e_lower) > 1:
+                            seen.add(e_lower)
+                            unique_entities.append(e)
+                    
+                    for entity_name in unique_entities[:8]:
                         # Skip common words and phrases
-                        if len(entity_name) < 2 or entity_name.lower() in ["birthday", "today", "tomorrow", "party"]:
+                        if entity_name.lower() in ["birthday", "today", "tomorrow", "party", "the", "a", "an"]:
                             continue
                         
                         try:
