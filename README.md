@@ -154,6 +154,8 @@ Step 3/5: Work through the day-by-day process
 
 ### Built-in Tools
 
+#### Core Tools
+
 | Tool | Trigger Keywords | Description |
 |------|------------------|-------------|
 | `web_search` | "search", "look up", "find online" | Search the web via DuckDuckGo (with context-aware location injection) |
@@ -162,12 +164,38 @@ Step 3/5: Work through the day-by-day process
 | `get_current_datetime` | "time", "date", "today" | Get current date/time (in user's timezone) |
 | `get_upcoming_events` | "plans", "schedule", "events" | View extracted events from group chats |
 | `random_fact` | "interesting", "fun fact" | Get a random fact |
+
+#### Knowledge & Memory Tools
+
+| Tool | Trigger Keywords | Description |
+|------|------------------|-------------|
 | `summarize_user_knowledge` | "what do you know about me" | Summarize all knowledge about the user |
 | `recall_about_topic` | "tell me about X", "what about X" | Recall specific topics from past conversations |
 | `recall_group_topic` | "what has the group discussed about X" | Search group conversation history |
 | `get_user_profile` | "my profile", "my preferences" | View stored preferences |
 | `get_conversation_history` | "my conversations", "past chats" | View conversation history |
 | `analyze_conversation_patterns` | "analyze", "patterns", "statistics" | Get usage analytics |
+| `recall_from_period` | "last week", "in January", "yesterday" | Retrieve messages from a specific time period |
+| `get_thread_history` | "about my project", "renovation progress" | Get cross-conversation thread history |
+
+#### Social Graph Tools
+
+| Tool | Trigger Keywords | Description |
+|------|------------------|-------------|
+| `get_person_info` | "about [name]", "who is [name]" | Get information about a person in your social graph |
+| `get_pet_info` | "my dog", "about [pet name]" | Get information about your pets |
+| `get_location_info` | "about [place]", "that restaurant" | Get details about a saved location |
+| `list_known_people` | "people I know", "who have I mentioned" | List all people you've told the system about |
+| `list_pets` | "my pets", "animals I have" | List all your pets |
+| `list_locations` | "places I've mentioned", "saved locations" | List all tracked locations |
+| `get_user_preferences` | "my preferences", "what I like" | Get your stored preferences by category |
+
+#### Group Intelligence Tools
+
+| Tool | Trigger Keywords | Description |
+|------|------------------|-------------|
+| `get_shared_interests` | "what do we have in common" | Find topics shared across group members |
+| `get_group_consensus` | "what does the group think about X" | Analyze group sentiment on a topic |
 
 **Context-Aware Features:**
 - **Pronoun resolution**: "What about his interests?" → automatically resolves "his" to the entity being discussed (e.g., "Zane")
@@ -270,6 +298,8 @@ Neo4j stores **extracted knowledge** as a graph of interconnected nodes and rela
 
 #### Node Types
 
+**Core Nodes:**
+
 | Node Type | Label | Purpose | Example |
 |-----------|-------|---------|---------|
 | **User** | `KnowledgeNode` (node_type: 'user') | Anchors all user-specific knowledge | The logged-in user |
@@ -279,9 +309,29 @@ Neo4j stores **extracted knowledge** as a graph of interconnected nodes and rela
 | **MessageEmbedding** | `MessageEmbedding` | Vector-embedded messages for semantic search | Stored user/assistant messages |
 | **Group** | `KnowledgeNode` (node_type: 'group') | Group conversation anchor | "Cycling Group" |
 
+**Social Graph Nodes (New):**
+
+| Node Type | Label | Purpose | Key Properties |
+|-----------|-------|---------|----------------|
+| **Person** | `PersonNode` | People in your social graph | name, relationship_type, aliases, context_notes |
+| **Pet** | `PetNode` | Your pets | name, species, breed, personality, food_preferences |
+| **Location** | `LocationNode` | Places you mention | name, location_type, city, activities |
+| **Preference** | `PreferenceNode` | Your likes/dislikes | category, value, sentiment, confidence |
+
+**Intelligence Nodes (New):**
+
+| Node Type | Label | Purpose | Key Properties |
+|-----------|-------|---------|----------------|
+| **Pattern** | `PatternNode` | Detected behavioral patterns | pattern_type, frequency, confidence, next_expected |
+| **Thread** | `ThreadNode` | Cross-conversation topics | name, description, related_conversations |
+| **Expertise** | `ExpertiseNode` | User skill levels | topic, level (novice→expert), evidence_count |
+| **Contradiction** | `ContradictionNode` | Conflicting information | old_value, new_value, severity, resolved |
+
 #### Relationship Types
 
 The system uses meaningful relationships to create a rich, traversable graph:
+
+**Core Relationships:**
 
 | Relationship | Direction | Meaning | Example |
 |--------------|-----------|---------|---------|
@@ -293,9 +343,35 @@ The system uses meaningful relationships to create a rich, traversable graph:
 | **HAS_INTENT** | Interaction → Topic | Intent extracted from message | `(Interaction)-[:HAS_INTENT]->(question)` |
 | **USED_TOOL** | Interaction → Tool | Tool was invoked | `(Interaction)-[:USED_TOOL]->(web_search)` |
 | **SIMILAR_TO** | Topic ↔ Topic | Semantically related topics | `(Python)-[:SIMILAR_TO]->(Programming)` |
-| **LIKES** | Subject → Object | Preference relationship | `(Zane)-[:LIKES]->(ham bones)` |
-| **LOCATED_IN** | Entity → Location | Location relationship | `(Under the Radar Brewery)-[:LOCATED_IN]->(Houston)` |
-| **KNOWS** | User → Entity | User knows this person/entity | `(User)-[:KNOWS]->(Rachel)` |
+
+**Social Graph Relationships (New):**
+
+| Relationship | Direction | Meaning | Example |
+|--------------|-----------|---------|---------|
+| **KNOWS** | User → Person | User knows this person | `(User)-[:KNOWS]->(Rachel)` |
+| **OWNS** | User → Pet | User owns this pet | `(User)-[:OWNS]->(Zane)` |
+| **FREQUENTS** | Person → Location | Person visits this location | `(Sarah)-[:FREQUENTS]->(Uchi)` |
+| **WORKS_AT** | Person → Location | Person works at this place | `(Jake)-[:WORKS_AT]->(Acme Corp)` |
+| **LIVES_IN** | Person → Location | Person lives here | `(Rachel)-[:LIVES_IN]->(Austin)` |
+| **LOCATED_IN** | Location → Location | Location is within another | `(Uchi)-[:LOCATED_IN]->(Houston)` |
+
+**Preference & Pattern Relationships (New):**
+
+| Relationship | Direction | Meaning | Example |
+|--------------|-----------|---------|---------|
+| **LIKES** | Entity → Object | Positive preference | `(Sarah)-[:LIKES]->(omakase)` |
+| **DISLIKES** | Entity → Object | Negative preference | `(User)-[:DISLIKES]->(cilantro)` |
+| **HAS_PREFERENCE** | User → Preference | User has this preference | `(User)-[:HAS_PREFERENCE]->(sushi_preference)` |
+| **HAS_PATTERN** | User → Pattern | User exhibits this behavior | `(User)-[:HAS_PATTERN]->(daily_weather_check)` |
+| **HAS_EXPERTISE** | User → Expertise | User's skill level in topic | `(User)-[:HAS_EXPERTISE]->(Python: intermediate)` |
+
+**Threading & Grouping (New):**
+
+| Relationship | Direction | Meaning | Example |
+|--------------|-----------|---------|---------|
+| **PART_OF_THREAD** | Message → Thread | Message belongs to topic thread | `(Msg)-[:PART_OF_THREAD]->(kitchen_renovation)` |
+| **MEMBER_OF** | User → Group | User is in this group | `(User)-[:MEMBER_OF]->(Cycling Club)` |
+| **SHARES_INTEREST** | User ↔ User | Users share common interests | `(Alice)-[:SHARES_INTEREST]->(Bob)` |
 
 #### Key Design Principles
 
@@ -458,6 +534,262 @@ The frontend's Knowledge Graph view (accessible from the sidebar) renders this g
 - **Filter** by node type to focus on specific aspects
 
 The graph grows richer over time as you have more conversations, building a personal knowledge base that helps the AI remember and connect information across all your interactions.
+
+---
+
+### Enhanced Knowledge Graph: Social Intelligence & Reasoning
+
+Beyond basic topic tracking, the knowledge graph now supports **rich social intelligence**, **temporal awareness**, and **advanced reasoning** capabilities.
+
+#### Social Graph: People, Pets & Locations
+
+The system automatically extracts and tracks people, pets, and locations mentioned in your conversations, building a comprehensive social graph.
+
+**New Node Types:**
+
+| Node Type | Purpose | Extracted Properties |
+|-----------|---------|---------------------|
+| **PersonNode** | People in your life | name, aliases, relationship_type (spouse, friend, colleague, etc.), context_notes, email, phone |
+| **PetNode** | Your pets | name, species, breed, age, personality traits, food preferences, health notes |
+| **LocationNode** | Places you mention | name, location_type (restaurant, gym, office, etc.), address, city, neighborhood, activities |
+| **PreferenceNode** | Your preferences | category, value, sentiment (-1 to +1), confidence, mention count |
+
+**Automatic Entity Extraction:**
+
+When you say something like:
+```
+"Had dinner with my wife Sarah at Uchi last night. She loved the omakase!"
+```
+
+The system extracts:
+- **Person**: Sarah (relationship: spouse, context: "loved the omakase")
+- **Location**: Uchi (type: restaurant, activity: dinner)
+- **Preference**: Sarah likes omakase (sentiment: positive)
+- **Relationship**: `(Sarah)-[:FREQUENTS]->(Uchi)`
+
+**Example Queries Using Social Graph:**
+
+```
+User: "What restaurants has Sarah been to?"
+Agent: Uses get_person_info and graph traversal to find:
+       → Sarah has been to Uchi, Roka Akor, and Underbelly
+
+User: "What does Zane like to eat?"
+Agent: Uses get_pet_info to retrieve:
+       → Zane (Golden Retriever) loves ham bones, chicken treats, and carrots
+
+User: "Where do we usually go on date nights?"
+Agent: Traverses (User)-[:KNOWS]->(Sarah)-[:FREQUENTS]->(Location)
+       → You and Sarah frequent Uchi, Mastro's, and The Pass
+```
+
+**New Social Graph Tools:**
+
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `get_person_info` | Get details about someone in your social graph | "What do you know about my friend Jake?" |
+| `get_pet_info` | Get information about your pets | "Tell me about my dog" |
+| `get_location_info` | Get details about a saved location | "What do you know about Uchi?" |
+| `list_known_people` | List all people you've mentioned | "Who have I told you about?" |
+| `list_pets` | List all your pets | "What pets do I have?" |
+| `list_locations` | List all tracked locations | "What places have I mentioned?" |
+| `get_user_preferences` | Get your stored preferences | "What are my food preferences?" |
+
+#### Temporal Intelligence: Time-Based Recall & Patterns
+
+The system tracks when things happen and detects behavioral patterns over time.
+
+**Time-Based Recall:**
+
+```
+User: "What did I talk about last week?"
+Agent: Uses recall_from_period to search messages from the past 7 days
+       → Returns relevant conversations grouped by topic
+
+User: "What happened on Christmas?"
+Agent: Recalls messages around December 25th
+       → "You mentioned having dinner at your parents' house with Sarah"
+```
+
+**Pattern Detection:**
+
+The `PatternDetector` service identifies recurring behaviors:
+
+| Pattern Type | Example | How It's Detected |
+|-------------|---------|-------------------|
+| **RECURRING_QUERY** | "What's the weather?" asked daily | Same/similar questions asked 3+ times |
+| **DAILY_HABIT** | Active at 2 PM most days | Message clustering by hour across days |
+| **WEEKLY_EVENT** | "Team meeting" every Monday | Weekly recurrence detection |
+| **TOPIC_CYCLE** | Monthly budget review | Longer-term cyclical patterns |
+
+**Contradiction Detection:**
+
+When you provide conflicting information, the system detects it:
+
+```
+Past: "My favorite color is blue"
+New: "I love red, it's my favorite color"
+
+→ Contradiction detected: favorite_color changed from "blue" to "red"
+→ System can ask for clarification or update based on recency
+```
+
+**New Tool:**
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `recall_from_period` | Search messages within a date range | "What did we discuss in January?" |
+
+#### Proactive Intelligence: Suggestions & Expertise
+
+**Contextual Suggestions:**
+
+As you chat, the system proactively retrieves related context from your knowledge graph:
+
+```
+User: "I'm planning a birthday party"
+
+Background graph traversal finds:
+→ Sarah's birthday is in March (from past mention)
+→ You've hosted parties at home before
+→ Sarah likes Italian food
+→ Jake and Emily are close friends
+
+This context enriches the response with personalized suggestions.
+```
+
+**Cross-Conversation Threading:**
+
+Track ongoing projects or topics across multiple conversations:
+
+```cypher
+// Threads connect related conversations
+(Thread: "Kitchen renovation")-[:INCLUDES]->(Conv1)
+(Thread: "Kitchen renovation")-[:INCLUDES]->(Conv2)
+(Thread: "Kitchen renovation")-[:RELATES_TO]->(Topic: "contractors")
+```
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `get_thread_history` | Get conversation history for an ongoing project | "What have we discussed about my renovation?" |
+
+**Expertise Profiling:**
+
+The system tracks your expertise level in different topics to tailor responses:
+
+```
+User has discussed Python → assessed as "intermediate"
+User has discussed cooking → assessed as "novice"
+User has discussed cycling → assessed as "expert"
+
+When explaining Python:
+→ Skip basic syntax explanations
+→ Use technical terms freely
+→ Assume knowledge of common libraries
+
+When explaining cooking:
+→ Define culinary terms
+→ Provide step-by-step instructions
+→ Suggest beginner-friendly approaches
+```
+
+#### Group Intelligence: Shared Knowledge
+
+For group chats, the knowledge graph enables social intelligence across members.
+
+**Shared Interests:**
+
+```
+Group: Cycling Club
+
+Alice → INTERESTED_IN → cycling, gravel bikes, Strava
+Bob → INTERESTED_IN → cycling, road bikes, nutrition
+Carol → INTERESTED_IN → cycling, bikepacking, camping
+
+Overlap: All members share interest in cycling
+Alice & Carol: Both interested in off-road cycling
+```
+
+**Group Consensus:**
+
+| Tool | Description | Example |
+|------|-------------|---------|
+| `get_shared_interests` | Find topics all/most group members care about | "What does our group have in common?" |
+| `get_group_consensus` | Analyze group sentiment on a topic | "What does the team think about remote work?" |
+
+**Example:**
+
+```
+User in group: "@agent what should we do for the team outing?"
+
+Agent queries:
+1. Shared interests across group members
+2. Past group activities mentioned
+3. Location preferences of members
+4. Any scheduling constraints mentioned
+
+Response: "Based on everyone's interests, you might enjoy:
+- A group bike ride (3 members are cyclists)
+- Visiting Top Golf (Jake and Sarah mentioned it)
+- Dinner at a steakhouse (most popular cuisine preference)"
+```
+
+#### Advanced Reasoning: Inference & Aggregation
+
+**Multi-Hop Inference:**
+
+The inference engine derives new facts by traversing the graph:
+
+```
+Known: Sarah → FREQUENTS → Uchi
+Known: Uchi → SERVES → Japanese cuisine
+Known: Sarah → IS_SPOUSE_OF → User
+
+Inferred: User might enjoy Japanese cuisine
+         (via spouse's restaurant preferences)
+```
+
+**Inference Rules:**
+
+| Rule | Pattern | Inference |
+|------|---------|-----------|
+| `category_preference` | Person likes X, X is in category Y | Person may like category Y |
+| `location_via_person` | Person frequents Location | User may want to visit Location |
+| `activity_suggestion` | Person enjoys Activity at Location | Suggest Activity at Location |
+
+**Preference Aggregation:**
+
+Scattered mentions are consolidated into a coherent preference profile:
+
+```
+Mentions:
+- "I love sushi" (3 times, positive)
+- "Hate cilantro" (2 times, negative)  
+- "That Thai place was okay" (1 time, neutral)
+
+Aggregated Profile:
+├── Food
+│   ├── sushi: likes (confidence: 0.9, mentions: 3)
+│   ├── cilantro: dislikes (confidence: 0.85, mentions: 2)
+│   └── Thai food: neutral (confidence: 0.5, mentions: 1)
+```
+
+**Example: Preference-Based Recommendations:**
+
+```
+User: "Where should I eat tonight?"
+
+System:
+1. Aggregates food preferences (likes: sushi, Italian, steak)
+2. Checks location graph (restaurants near home/work)
+3. Cross-references with people (Sarah likes Uchi, you went there together)
+4. Applies inference (liked omakase at Uchi → may like other high-end Japanese)
+
+Response: "Based on your preferences, I'd suggest:
+- Uchi (you and Sarah loved the omakase)
+- Kata Robata (similar to Uchi, highly rated)
+- Or Mastro's if you're in the mood for steak"
+```
 
 ---
 
