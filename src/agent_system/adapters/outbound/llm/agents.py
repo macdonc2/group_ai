@@ -242,12 +242,27 @@ Determine if the query needs a tool. Available tools:
    - "January discussions" → tool: "recall_from_period", tool_input: "January 2026"
    - tool_input: Time period description
 
-CRITICAL - ENTITY RESOLUTION FOR PET/PERSON QUERIES:
-- If user asks "What should I do with Zane today?" and Zane is known as their DOG → use get_pet_info
-- If user asks about a person ("my wife Sarah") → use get_person_info
-- If context or knowledge graph shows entity is a pet → prefer get_pet_info
-- If context or knowledge graph shows entity is a person → prefer get_person_info
-- When in doubt about an entity (Zane, Bo, etc.), try recall_about_topic first to determine what they are
+CRITICAL - ENTITY RESOLUTION PRIORITY (MOST IMPORTANT):
+When the query involves a NAMED ENTITY (Zane, Bo, Sarah, Jake, etc.) and asks about:
+- What to DO with/for them ("What should we do for Zane's birthday?")
+- Activities involving them ("What should I do with Zane today?")
+- Plans for them ("Plan something for Bo this weekend")
+- Anything that requires knowing WHO/WHAT they are
+
+YOU MUST use "recall_about_topic" FIRST to identify what the entity is!
+
+EXAMPLES:
+- "What should we do for Zane's birthday?" → tool: "recall_about_topic", tool_input: "Zane"
+  (NOT get_upcoming_events! Need to know if Zane is a dog, person, etc. first)
+- "What should I do with Bo today?" → tool: "recall_about_topic", tool_input: "Bo"  
+- "Plan something fun for my dog" → tool: "get_pet_info", tool_input: ""
+- "What would Sarah like for dinner?" → tool: "recall_about_topic", tool_input: "Sarah"
+
+DO NOT suggest generic event/schedule tools when the query is about a specific named entity!
+The type of entity (dog, cat, person, child) completely changes what suggestions are appropriate.
+
+A dog's birthday = dog park, special treats, new toys
+A human's birthday = party, dinner, activities they enjoy
 
 IMPORTANT: When in doubt about whether information needs to be current/real-time, USE web_search.
 Do NOT answer location/event/news questions from memory - always search.
@@ -264,6 +279,15 @@ CONTEXT AWARENESS (CRITICAL):
   - After discussing a dog named "Bo", if user asks "What are his favorite toys?" → tool_input: "Bo favorite toys"
   - After discussing "Under the Radar Brewery", user asks "Is there a cycling group that frequents the brewery?" → tool_input: "cycling group Under the Radar Brewery Houston"
   - After discussing "Winnie's", user asks "What's their happy hour?" → tool_input: "Winnie's Houston happy hour"
+
+ENTITY TYPE AWARENESS (CRITICAL):
+- Named entities like "Zane", "Bo", "Ewan" could be PETS or PEOPLE - you must identify which!
+- If you don't know what an entity is, use recall_about_topic to find out BEFORE planning
+- The entity type completely changes what advice/plans are appropriate:
+  - DOG birthday: dog park, special treats, new toys, doggy playdate
+  - HUMAN birthday: party, restaurant, gifts, activities they enjoy
+  - CAT birthday: new toys, catnip, special food
+- Never assume - look it up first!
 """
 
 PLANNING_SYSTEM_PROMPT = """You are a planning specialist that creates structured, actionable plans.
@@ -282,12 +306,29 @@ REACT_PLANNING_SYSTEM_PROMPT = """You are a ReAct (Reasoning + Acting) planning 
 
 CRITICAL: Create 3-6 distinct reasoning steps that will guide thorough exploration of the topic.
 
+ENTITY IDENTIFICATION - ALWAYS FIRST:
+When the question involves a named entity (Zane, Bo, Sarah, etc.), your FIRST step MUST be:
+- Step 1: Identify the entity - What/who is [name]? (mark needs_tool=True, tool=recall_about_topic)
+
+This is CRITICAL because:
+- "Zane" could be a dog, cat, child, or friend - advice differs completely!
+- Dog birthday = dog park, treats, toys
+- Human birthday = party, dinner, activities
+- NEVER assume - always identify first!
+
 For KNOWLEDGE/HOW-TO questions (e.g., "How do I make sourdough?"):
 - Step 1: Understand fundamentals - What is the core concept/process?
 - Step 2: Identify components - What are the key ingredients/parts/requirements?
 - Step 3: Work through process - What are the sequential steps or phases?
 - Step 4: Address challenges - What are common issues and how to handle them?
 - Step 5: Define success - How do you know it's working/done correctly?
+
+For QUESTIONS ABOUT A NAMED ENTITY (e.g., "What should we do for Zane's birthday?"):
+- Step 1: Identify entity type - What/who is Zane? (needs_tool=True, use recall_about_topic)
+- Step 2: Consider entity-specific options - Based on what they are, what's appropriate?
+- Step 3: Explore activity ideas - What specific activities suit this entity type?
+- Step 4: Consider logistics - Timing, location, supplies needed
+- Step 5: Formulate recommendation - What's the best plan?
 
 For ANALYSIS questions (e.g., "What should I consider when buying a house?"):
 - Step 1: Frame the decision - What are we actually trying to decide?
