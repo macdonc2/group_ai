@@ -263,6 +263,71 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         try:
             # Use ReAct planning agent if in react_mode, otherwise standard planning
             if ctx.state.react_mode:
+                # ENTITY CONTEXT INJECTION: Look up any named entities BEFORE planning
+                # This ensures the planner knows Zane is a dog, Sarah is a spouse, etc.
+                entity_context = ""
+                if ctx.state.entities and ctx.deps.knowledge_graph_port:
+                    entity_info_parts = []
+                    for entity_name in ctx.state.entities[:5]:  # Limit to 5 entities
+                        # Skip common words and phrases
+                        if len(entity_name) < 2 or entity_name.lower() in ["birthday", "today", "tomorrow", "party"]:
+                            continue
+                        
+                        try:
+                            # Try to find this entity in the knowledge graph
+                            # Check if it's a pet
+                            pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
+                            for pet in (pets or []):
+                                pet_name = pet.get("name", "").lower()
+                                if entity_name.lower() in pet_name or pet_name in entity_name.lower():
+                                    species = pet.get("species", "pet")
+                                    breed = pet.get("breed", "")
+                                    personality = pet.get("personality", [])
+                                    info = f"'{entity_name}' is the user's {species}"
+                                    if breed:
+                                        info += f" ({breed})"
+                                    if personality:
+                                        info += f", personality: {', '.join(personality[:3])}"
+                                    entity_info_parts.append(info)
+                                    logger.info(f"Entity lookup: {entity_name} -> {species}")
+                                    break
+                            
+                            # Check if it's a person
+                            if not any(entity_name.lower() in p for p in entity_info_parts):
+                                people = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
+                                for person in (people or []):
+                                    person_name = person.get("name", "").lower()
+                                    if entity_name.lower() in person_name or person_name in entity_name.lower():
+                                        rel = person.get("relationship_type", "known person")
+                                        context = person.get("context_notes", "")
+                                        info = f"'{entity_name}' is the user's {rel}"
+                                        if context:
+                                            info += f" ({context[:50]})"
+                                        entity_info_parts.append(info)
+                                        logger.info(f"Entity lookup: {entity_name} -> {rel}")
+                                        break
+                            
+                            # Fallback: Use recall_about_topic
+                            if not any(entity_name.lower() in p.lower() for p in entity_info_parts):
+                                recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                                    ctx.state.user.id,
+                                    entity_name,
+                                    limit=3
+                                )
+                                if recall_result:
+                                    # Summarize what we know
+                                    snippets = [r.get("content", "")[:100] for r in recall_result[:2]]
+                                    if snippets:
+                                        info = f"About '{entity_name}': {' | '.join(snippets)}"
+                                        entity_info_parts.append(info)
+                                        logger.info(f"Entity recall: {entity_name} -> found {len(recall_result)} mentions")
+                        except Exception as entity_err:
+                            logger.debug(f"Entity lookup failed for {entity_name}: {entity_err}")
+                    
+                    if entity_info_parts:
+                        entity_context = "\n\nIMPORTANT ENTITY CONTEXT (use this when planning):\n" + "\n".join(f"- {p}" for p in entity_info_parts)
+                        logger.info(f"Injecting entity context into planning: {entity_context}")
+                
                 # Verbose logging of ReAct planning
                 logger.info("=" * 80)
                 logger.info("📋 REACT PLANNING - CONTEXT FED TO PLANNING AGENT")
@@ -272,10 +337,17 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 logger.info(f"ReAct Mode: {ctx.state.react_mode}")
                 logger.info(f"Intent Type: {ctx.state.intent.intent_type if ctx.state.intent else 'None'}")
                 logger.info(f"User Input (to be broken into steps): {ctx.state.user_input}")
+                if entity_context:
+                    logger.info(f"Entity Context: {entity_context}")
                 logger.info("=" * 80)
                 
+                # Build the planning prompt with entity context
+                planning_prompt = ctx.state.user_input
+                if entity_context:
+                    planning_prompt = f"{ctx.state.user_input}{entity_context}"
+                
                 agent = create_react_planning_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
-                result = await agent.run(ctx.state.user_input)
+                result = await agent.run(planning_prompt)
                 
                 # Log the generated plan
                 logger.info("=" * 80)
