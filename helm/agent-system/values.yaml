@@ -1,0 +1,142 @@
+# Agent System Helm Values
+# Override these values for your environment
+
+# Namespace
+namespace: agent-system
+
+# Image configuration
+imagePullSecrets:
+  - name: acr-pull-secret
+
+backend:
+  image:
+    repository: macdoncml.azurecr.io/agent-system-backend
+    tag: "latest"
+    pullPolicy: Always
+  replicas: 1
+  port: 8000
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+
+frontend:
+  image:
+    repository: macdoncml.azurecr.io/agent-system-frontend
+    tag: "latest"
+    pullPolicy: Always
+  replicas: 1
+  port: 8080  # Non-root nginx
+  resources:
+    requests:
+      memory: "128Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+# Ingress configuration
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-dns"
+    nginx.ingress.kubernetes.io/proxy-body-size: "50m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    # WebSocket support
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+  host: agent.macdonml.com
+  tls:
+    enabled: true
+    secretName: agent-system-tls
+
+# Secret names (must be created separately or via sealed-secrets)
+secrets:
+  name: agent-system-secrets
+  # These keys should exist in the secret:
+  # - SECRET_KEY (JWT signing key)
+  # - ENCRYPTION_KEY (Fernet key for encrypting user API keys)
+  # - DATABASE_PASSWORD (if not using subchart)
+  # - NEO4J_PASSWORD (if not using subchart)
+  #
+  # NOTE: OPENAI_API_KEY is NOT required at system level.
+  #       All users must configure their own API keys via Settings.
+
+# Environment variables (non-sensitive)
+env:
+  # API settings
+  API_BASE_URL: "https://agent.macdonml.com"
+  
+  # LLM settings
+  LLM_PROVIDER: "openai"
+  DEFAULT_MODEL: "gpt-4o-mini"
+
+# PostgreSQL subchart configuration (DISABLED - using custom deployment)
+postgresql:
+  enabled: false
+  auth:
+    username: agent_system
+    database: agent_system
+    existingSecret: agent-system-secrets
+    secretKeys:
+      adminPasswordKey: DATABASE_PASSWORD
+      userPasswordKey: DATABASE_PASSWORD
+  primary:
+    persistence:
+      enabled: true
+      size: 10Gi
+    resources:
+      requests:
+        memory: "256Mi"
+        cpu: "100m"
+      limits:
+        memory: "1Gi"
+        cpu: "500m"
+
+# Neo4j subchart configuration
+neo4j:
+  enabled: true
+  fullnameOverride: "agent-neo4j"
+  neo4j:
+    name: agent-neo4j
+    password: ""  # Set via secret
+    passwordFromSecret: agent-system-secrets
+    passwordFromSecretKey: NEO4J_AUTH  # Format: neo4j/yourpassword
+    edition: community
+    acceptLicenseAgreement: "yes"
+    resources:
+      requests:
+        memory: "2Gi"   # Neo4j minimum is 2Gi
+        cpu: "500m"     # Neo4j minimum is 500m
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+  services:
+    neo4j:
+      enabled: true
+      spec:
+        type: ClusterIP
+    default:
+      enabled: false
+  volumes:
+    data:
+      mode: defaultStorageClass
+      defaultStorageClass:
+        requests:
+          storage: 10Gi
+
+# Service configuration
+service:
+  backend:
+    type: ClusterIP
+    port: 80
+    targetPort: 8000
+  frontend:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080

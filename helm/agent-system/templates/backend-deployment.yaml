@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "agent-system.fullname" . }}-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "agent-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      {{- include "agent-system.backend.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "agent-system.backend.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.backend.port }}
+              protocol: TCP
+          env:
+            # Database URL (constructed from PostgreSQL subchart)
+            - name: DATABASE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: DATABASE_PASSWORD
+            - name: DATABASE_URL
+              value: "postgresql+asyncpg://{{ .Values.postgresql.auth.username }}:$(DATABASE_PASSWORD)@{{ .Release.Name }}-postgresql:5432/{{ .Values.postgresql.auth.database }}"
+            
+            # Neo4j connection
+            {{- if .Values.neo4j.enabled }}
+            - name: NEO4J_URI
+              value: "bolt://{{ .Values.neo4j.fullnameOverride | default (printf "%s-neo4j" .Release.Name) }}:7687"
+            - name: NEO4J_USER
+              value: "neo4j"
+            - name: NEO4J_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.name }}
+                  key: NEO4J_PASSWORD
+            {{- end }}
+            
+            # API configuration
+            - name: API_BASE_URL
+              value: {{ .Values.env.API_BASE_URL | quote }}
+            
+            # LLM settings
+            - name: LLM_PROVIDER
+              value: {{ .Values.env.LLM_PROVIDER | quote }}
+            - name: DEFAULT_MODEL
+              value: {{ .Values.env.DEFAULT_MODEL | quote }}
+          
+          envFrom:
+            - secretRef:
+                name: {{ .Values.secrets.name }}
+            # Google Calendar OAuth credentials
+            - secretRef:
+                name: google-calendar-secrets
+                optional: true
+          
+          resources:
+            {{- toYaml .Values.backend.resources | nindent 12 }}
+          
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "agent-system.fullname" . }}-backend
+  namespace: {{ .Values.namespace }}
+  labels:
+    {{- include "agent-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: backend
+spec:
+  type: {{ .Values.service.backend.type }}
+  ports:
+    - port: {{ .Values.service.backend.port }}
+      targetPort: {{ .Values.service.backend.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "agent-system.backend.selectorLabels" . | nindent 4 }}

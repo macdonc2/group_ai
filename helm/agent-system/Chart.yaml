@@ -1,0 +1,16 @@
+apiVersion: v2
+name: agent-system
+description: Agentic AI platform with multi-agent reasoning, real-time collaboration, and knowledge graph
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+
+dependencies:
+  - name: postgresql
+    version: "15.5.38"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+  - name: neo4j
+    version: "5.26.0"
+    repository: https://helm.neo4j.com/neo4j
+    condition: neo4j.enabled

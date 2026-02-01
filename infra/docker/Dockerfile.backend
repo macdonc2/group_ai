@@ -1,0 +1,39 @@
+# Backend Dockerfile for Agent System
+FROM python:3.12-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install uv for faster dependency resolution
+RUN pip install --no-cache-dir uv
+
+# Copy dependency files and README (required by pyproject.toml)
+COPY pyproject.toml README.md ./
+
+# Copy source code (needed for package install)
+COPY src/ ./src/
+
+# Install Python dependencies (non-editable for production)
+RUN uv pip install --system --no-cache .
+
+# Create non-root user
+RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
+USER appuser
+
+EXPOSE 8000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "agent_system.adapters.inbound.api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,72 @@
+# Production values override for Agent System
+# Usage: helm upgrade --install agent-system ./helm/agent-system -f values-prod.yaml
+
+# Namespace
+namespace: agent-system
+
+# Backend configuration
+backend:
+  replicas: 2
+  resources:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+# Frontend configuration  
+frontend:
+  replicas: 2
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+# Ingress - update host for your domain
+ingress:
+  enabled: true
+  className: nginx
+  host: agent.macdonml.com
+  tls:
+    enabled: true
+    secretName: agent-system-tls
+
+# PostgreSQL production settings
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+    resources:
+      requests:
+        memory: "512Mi"
+        cpu: "250m"
+      limits:
+        memory: "2Gi"
+        cpu: "1000m"
+  # Enable read replicas for high availability
+  readReplicas:
+    replicaCount: 1
+
+# Neo4j production settings
+neo4j:
+  enabled: true
+  neo4j:
+    resources:
+      requests:
+        memory: "2Gi"
+        cpu: "500m"
+      limits:
+        memory: "4Gi"
+        cpu: "2000m"
+  volumes:
+    data:
+      mode: defaultStorageClass
+      defaultStorageClass:
+        requests:
+          storage: 50Gi
