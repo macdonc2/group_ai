@@ -1722,6 +1722,88 @@ class Neo4jAdapter(KnowledgeGraphPort):
                 })
         return results
 
+    async def recall_about_topic(
+        self,
+        user_id: UserId,
+        topic: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search for mentions of a topic in user's conversation history.
+        
+        Searches both MessageEmbedding content and KnowledgeNode labels
+        to find relevant information about an entity or topic.
+        
+        Args:
+            user_id: The user's ID
+            topic: The topic/entity name to search for
+            limit: Maximum results
+            
+        Returns:
+            List of relevant text snippets mentioning the topic
+        """
+        results = []
+        
+        # Search MessageEmbedding for topic mentions (most reliable source)
+        message_query = """
+        MATCH (m:MessageEmbedding {user_id: $user_id})
+        WHERE toLower(m.content) CONTAINS toLower($topic)
+        RETURN 
+            m.content as content,
+            m.role as role,
+            m.created_at as created_at,
+            'message' as source_type
+        ORDER BY m.created_at DESC
+        LIMIT $limit
+        """
+        
+        # Also search KnowledgeNode labels
+        knowledge_query = """
+        MATCH (k:KnowledgeNode)
+        WHERE k.user_id = $user_id 
+          AND (toLower(k.label) CONTAINS toLower($topic))
+        RETURN 
+            k.label as content,
+            k.node_type as role,
+            k.created_at as created_at,
+            'knowledge' as source_type
+        ORDER BY k.created_at DESC
+        LIMIT $limit
+        """
+        
+        params = {
+            "user_id": str(user_id),
+            "topic": topic,
+            "limit": limit,
+        }
+        
+        async with self.driver.session(database=self._database) as session:
+            # Get message results
+            result = await session.run(message_query, **params)
+            async for record in result:
+                results.append({
+                    "content": record["content"],
+                    "role": record["role"],
+                    "created_at": record["created_at"],
+                    "source_type": record["source_type"],
+                })
+            
+            # Get knowledge node results
+            result = await session.run(knowledge_query, **params)
+            async for record in result:
+                # Avoid duplicates
+                content = record["content"]
+                if not any(r["content"] == content for r in results):
+                    results.append({
+                        "content": content,
+                        "role": record["role"],
+                        "created_at": record["created_at"],
+                        "source_type": record["source_type"],
+                    })
+        
+        # Sort by created_at and limit
+        results.sort(key=lambda x: x.get("created_at", "") or "", reverse=True)
+        return results[:limit]
+
     # ============ Preference Operations ============
 
     async def store_preference(

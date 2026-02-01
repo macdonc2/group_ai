@@ -299,7 +299,9 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                             continue
                         
                         try:
-                            # Try to find this entity in the knowledge graph
+                            found_info = False
+                            
+                            # First: Try to find in new typed nodes (PetNode, PersonNode)
                             # Check if it's a pet
                             pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
                             for pet in (pets or []):
@@ -314,11 +316,12 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                                     if personality:
                                         info += f", personality: {', '.join(personality[:3])}"
                                     entity_info_parts.append(info)
-                                    logger.info(f"Entity lookup: {entity_name} -> {species}")
+                                    logger.info(f"Entity lookup (PetNode): {entity_name} -> {species}")
+                                    found_info = True
                                     break
                             
                             # Check if it's a person
-                            if not any(entity_name.lower() in p for p in entity_info_parts):
+                            if not found_info:
                                 people = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
                                 for person in (people or []):
                                     person_name = person.get("name", "").lower()
@@ -329,25 +332,64 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                                         if context:
                                             info += f" ({context[:50]})"
                                         entity_info_parts.append(info)
-                                        logger.info(f"Entity lookup: {entity_name} -> {rel}")
+                                        logger.info(f"Entity lookup (PersonNode): {entity_name} -> {rel}")
+                                        found_info = True
                                         break
                             
-                            # Fallback: Use recall_about_topic
-                            if not any(entity_name.lower() in p.lower() for p in entity_info_parts):
+                            # Fallback: Use recall_about_topic to search message history
+                            if not found_info:
+                                logger.info(f"Entity '{entity_name}' not in typed nodes, searching message history...")
                                 recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
                                     ctx.state.user.id,
                                     entity_name,
-                                    limit=3
+                                    limit=5
                                 )
                                 if recall_result:
-                                    # Summarize what we know
-                                    snippets = [r.get("content", "")[:100] for r in recall_result[:2]]
+                                    # Extract text snippets
+                                    snippets = [r.get("content", "") for r in recall_result if r.get("content")]
                                     if snippets:
-                                        info = f"About '{entity_name}': {' | '.join(snippets)}"
-                                        entity_info_parts.append(info)
-                                        logger.info(f"Entity recall: {entity_name} -> found {len(recall_result)} mentions")
+                                        logger.info(f"Found {len(snippets)} mentions of '{entity_name}' in message history")
+                                        
+                                        # Use LLM to detect entity type from snippets
+                                        from agent_system.adapters.outbound.llm.knowledge_extractor import detect_entity_type
+                                        
+                                        entity_type_result = await detect_entity_type(
+                                            entity_name=entity_name,
+                                            text_snippets=snippets,
+                                            api_key=ctx.deps.openai_api_key,
+                                        )
+                                        
+                                        if entity_type_result.entity_type == "pet":
+                                            species = entity_type_result.species or "pet"
+                                            info = f"'{entity_name}' is the user's {species}"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            entity_info_parts.append(info)
+                                            logger.info(f"Entity type detected: {entity_name} -> {species} (confidence: {entity_type_result.confidence})")
+                                        elif entity_type_result.entity_type == "person":
+                                            rel = entity_type_result.relationship or "known person"
+                                            info = f"'{entity_name}' is the user's {rel}"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            entity_info_parts.append(info)
+                                            logger.info(f"Entity type detected: {entity_name} -> {rel} (confidence: {entity_type_result.confidence})")
+                                        elif entity_type_result.entity_type == "location":
+                                            info = f"'{entity_name}' is a location/place"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            entity_info_parts.append(info)
+                                            logger.info(f"Entity type detected: {entity_name} -> location (confidence: {entity_type_result.confidence})")
+                                        else:
+                                            # Unknown type - just include raw snippets
+                                            snippet_summary = snippets[0][:150] if snippets else ""
+                                            if snippet_summary:
+                                                info = f"About '{entity_name}': {snippet_summary}"
+                                                entity_info_parts.append(info)
+                                                logger.info(f"Entity type unknown for '{entity_name}', using raw snippet")
+                                else:
+                                    logger.info(f"No mentions of '{entity_name}' found in message history")
                         except Exception as entity_err:
-                            logger.debug(f"Entity lookup failed for {entity_name}: {entity_err}")
+                            logger.warning(f"Entity lookup failed for {entity_name}: {entity_err}")
                     
                     if entity_info_parts:
                         entity_context = "\n\nIMPORTANT ENTITY CONTEXT (use this when planning):\n" + "\n".join(f"- {p}" for p in entity_info_parts)
