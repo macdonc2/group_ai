@@ -15,8 +15,12 @@ from agent_system.domain.value_objects.identifiers import (
 from agent_system.domain.value_objects.knowledge import (
     Entity,
     EntityType,
+    ExpertiseLevel,
     Intent,
     IntentType,
+    LocationType,
+    PatternType,
+    PersonRelationType,
     Relationship,
     RelationType,
     Suggestion,
@@ -64,4 +68,9 @@ __all__ = [
     "Entity",
     "Relationship",
     "Suggestion",
+    # Social Graph Types
+    "PersonRelationType",
+    "LocationType",
+    "ExpertiseLevel",
+    "PatternType",
 ]

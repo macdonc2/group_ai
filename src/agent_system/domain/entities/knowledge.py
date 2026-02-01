@@ -20,6 +20,7 @@ from agent_system.domain.value_objects import (
 class KnowledgeNodeType(str, Enum):
     """Type of knowledge node."""
 
+    # Core node types
     USER = "user"
     INTENT = "intent"
     TOPIC = "topic"
@@ -27,6 +28,18 @@ class KnowledgeNodeType(str, Enum):
     INTERACTION = "interaction"
     SUGGESTION = "suggestion"
     ENTITY = "entity"
+    
+    # Social graph node types
+    PERSON = "person"
+    PET = "pet"
+    LOCATION = "location"
+    
+    # Intelligence node types
+    PATTERN = "pattern"
+    THREAD = "thread"
+    EXPERTISE = "expertise"
+    PREFERENCE = "preference"
+    CONTRADICTION = "contradiction"
 
 
 class KnowledgeNode(BaseModel):

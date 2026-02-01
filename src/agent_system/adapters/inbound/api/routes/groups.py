@@ -1653,6 +1653,140 @@ async def websocket_chat(
                                 logger.info("No events detected in message")
                     except Exception as e:
                         logger.error(f"Event extraction failed: {e}", exc_info=True)
+                    
+                    # Extract knowledge entities (people, pets, locations, preferences) asynchronously
+                    # This runs in parallel with regular message processing
+                    try:
+                        from agent_system.adapters.outbound.llm.knowledge_extractor import extract_knowledge_from_text
+                        from agent_system.composition_root.config import get_settings
+                        
+                        # Get API key for entity extraction (reuse logic from event extraction)
+                        api_key_for_entities: str | None = None
+                        async with _database.session() as session:
+                            user_for_key = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
+                            if user_for_key and user_for_key.has_api_key():
+                                try:
+                                    from agent_system.domain.utils.encryption import get_api_key_encryption
+                                    encryption = get_api_key_encryption()
+                                    api_key_for_entities = encryption.decrypt(user_for_key.encrypted_openai_api_key)
+                                except Exception as decrypt_err:
+                                    logger.debug(f"Failed to decrypt user API key for entities: {decrypt_err}")
+                        
+                        # Fall back to system key
+                        if not api_key_for_entities:
+                            settings = get_settings()
+                            api_key_for_entities = settings.openai_api_key
+                        
+                        if api_key_for_entities and _neo4j_adapter:
+                            # Get existing entities for reference resolution
+                            existing_persons: list[str] = []
+                            existing_pets: list[str] = []
+                            existing_locations: list[str] = []
+                            
+                            try:
+                                user_id_obj = UserId.from_string(user_id)
+                                people = await _neo4j_adapter.list_known_people(user_id_obj, limit=20)
+                                existing_persons = [p.get("name", "") for p in people if p.get("name")]
+                                
+                                pets = await _neo4j_adapter.list_pets(user_id_obj)
+                                existing_pets = [p.get("name", "") for p in pets if p.get("name")]
+                                
+                                locs = await _neo4j_adapter.list_locations(user_id_obj, limit=20)
+                                existing_locations = [l.get("name", "") for l in locs if l.get("name")]
+                            except Exception as fetch_err:
+                                logger.debug(f"Could not fetch existing entities: {fetch_err}")
+                            
+                            # Extract entities from the message
+                            entity_result = await extract_knowledge_from_text(
+                                content,
+                                api_key=api_key_for_entities,
+                                context=recent_context if recent_context else None,
+                                existing_persons=existing_persons,
+                                existing_pets=existing_pets,
+                                existing_locations=existing_locations,
+                            )
+                            
+                            # Store extracted entities
+                            user_id_obj = UserId.from_string(user_id)
+                            
+                            # Store persons
+                            for person in entity_result.persons:
+                                if person.confidence >= 0.7:
+                                    await _neo4j_adapter.store_person(
+                                        user_id=user_id_obj,
+                                        name=person.name,
+                                        aliases=person.aliases,
+                                        relationship_type=person.relationship_type,
+                                        context_notes=person.context_notes,
+                                    )
+                                    logger.debug(f"Stored person: {person.name}")
+                            
+                            # Store pets
+                            for pet in entity_result.pets:
+                                if pet.confidence >= 0.7:
+                                    await _neo4j_adapter.store_pet(
+                                        user_id=user_id_obj,
+                                        name=pet.name,
+                                        aliases=pet.aliases,
+                                        species=pet.species,
+                                        breed=pet.breed,
+                                        personality=pet.traits,
+                                        food_preferences=pet.food_preferences,
+                                    )
+                                    logger.debug(f"Stored pet: {pet.name}")
+                            
+                            # Store locations
+                            for location in entity_result.locations:
+                                if location.confidence >= 0.7:
+                                    await _neo4j_adapter.store_location(
+                                        user_id=user_id_obj,
+                                        name=location.name,
+                                        aliases=location.aliases,
+                                        location_type=location.location_type,
+                                        address=location.address,
+                                        city=location.city,
+                                        associated_activities=[location.associated_activity] if location.associated_activity else None,
+                                    )
+                                    logger.debug(f"Stored location: {location.name}")
+                            
+                            # Store preferences
+                            for pref in entity_result.preferences:
+                                if pref.confidence >= 0.7:
+                                    sentiment = 0.8 if pref.sentiment == "likes" else (-0.8 if pref.sentiment == "dislikes" else 0.5)
+                                    await _neo4j_adapter.store_preference(
+                                        user_id=user_id_obj,
+                                        category=pref.category,
+                                        value=pref.value,
+                                        sentiment=sentiment,
+                                        subcategory=pref.subcategory,
+                                        conversation_id=conversation_id,
+                                    )
+                                    logger.debug(f"Stored preference: {pref.category}/{pref.value}")
+                            
+                            # Create relationships between entities
+                            for rel in entity_result.relationships:
+                                if rel.confidence >= 0.7:
+                                    await _neo4j_adapter.link_entities(
+                                        user_id=user_id_obj,
+                                        source_type=rel.source_type,
+                                        source_name=rel.source_name,
+                                        target_type=rel.target_type,
+                                        target_name=rel.target_name,
+                                        relationship=rel.relationship,
+                                    )
+                                    logger.debug(f"Linked: {rel.source_name} -{rel.relationship}-> {rel.target_name}")
+                            
+                            extracted_count = (
+                                len([p for p in entity_result.persons if p.confidence >= 0.7]) +
+                                len([p for p in entity_result.pets if p.confidence >= 0.7]) +
+                                len([l for l in entity_result.locations if l.confidence >= 0.7]) +
+                                len([p for p in entity_result.preferences if p.confidence >= 0.7])
+                            )
+                            if extracted_count > 0:
+                                logger.info(f"Extracted {extracted_count} entities from message")
+                        
+                    except Exception as entity_err:
+                        logger.debug(f"Entity extraction skipped: {entity_err}")
                 
                 elif msg_type == "typing":
                     await connection_manager.set_typing(

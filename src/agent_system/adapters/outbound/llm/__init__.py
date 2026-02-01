@@ -63,6 +63,17 @@ from agent_system.adapters.outbound.llm.group_summarizer import (
     SocialSuggestion,
     ThemeSummary,
 )
+from agent_system.adapters.outbound.llm.knowledge_extractor import (
+    create_knowledge_extractor_agent,
+    extract_knowledge_from_conversation,
+    extract_knowledge_from_text,
+    ExtractedLocation,
+    ExtractedPerson,
+    ExtractedPet,
+    ExtractedPreference,
+    ExtractedRelationship,
+    KnowledgeExtractionResult,
+)
 
 __all__ = [
     # Adapter
@@ -124,4 +135,14 @@ __all__ = [
     "SocialMatchResult",
     "SocialSuggestion",
     "ThemeSummary",
+    # Knowledge extraction
+    "create_knowledge_extractor_agent",
+    "extract_knowledge_from_text",
+    "extract_knowledge_from_conversation",
+    "KnowledgeExtractionResult",
+    "ExtractedPerson",
+    "ExtractedPet",
+    "ExtractedLocation",
+    "ExtractedRelationship",
+    "ExtractedPreference",
 ]

@@ -29,6 +29,16 @@ from agent_system.domain.entities.knowledge import (
     KnowledgeNodeType,
 )
 from agent_system.domain.entities.plan import Plan, StoredPlanStep
+from agent_system.domain.entities.social import (
+    Contradiction,
+    Expertise,
+    Location,
+    Pattern,
+    Person,
+    Pet,
+    Preference,
+    Thread,
+)
 from agent_system.domain.entities.user import LearnedPattern, User, UserPreferences
 
 __all__ = [
@@ -62,4 +72,13 @@ __all__ = [
     "KnowledgeNode",
     "KnowledgeNodeType",
     "KnowledgeGraph",
+    # Social Graph
+    "Person",
+    "Pet",
+    "Location",
+    "Pattern",
+    "Thread",
+    "Expertise",
+    "Preference",
+    "Contradiction",
 ]

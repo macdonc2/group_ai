@@ -1380,6 +1380,715 @@ async def get_houston_events(
         )
 
 
+# ============ Social Graph Tools ============
+
+async def get_person_info(
+    name: str,
+    user_id: str,
+    knowledge_graph_port: Any,
+) -> ToolResult:
+    """Get information about a person in the user's social graph.
+    
+    Searches by name or alias to find people the user has mentioned.
+    
+    Args:
+        name: The person's name or alias to look up
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        
+    Returns:
+        ToolResult with person information
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        
+        # Try exact name match first
+        person = await knowledge_graph_port.get_person(user_id_obj, name)
+        
+        # If not found, try alias match
+        if not person:
+            person = await knowledge_graph_port.find_person_by_alias(user_id_obj, name)
+        
+        if not person:
+            return ToolResult(
+                success=True,
+                data=None,
+                message=f"I don't have any information about '{name}' yet. Tell me about them!",
+            )
+        
+        # Get related entities
+        relationships = await knowledge_graph_port.get_entity_relationships(
+            user_id_obj, "person", person.get("name", name), max_depth=2
+        )
+        
+        # Format the response
+        info_parts = [f"**{person.get('name', name)}**"]
+        
+        if person.get("relationship_type"):
+            info_parts.append(f"- Relationship: {person['relationship_type']}")
+        if person.get("context_notes"):
+            info_parts.append(f"- Notes: {person['context_notes']}")
+        if person.get("email"):
+            info_parts.append(f"- Email: {person['email']}")
+        if person.get("phone"):
+            info_parts.append(f"- Phone: {person['phone']}")
+        if person.get("aliases"):
+            info_parts.append(f"- Also known as: {', '.join(person['aliases'])}")
+        
+        info_parts.append(f"- Mentioned {person.get('mention_count', 1)} time(s)")
+        
+        if relationships:
+            info_parts.append("\n**Related:**")
+            for rel in relationships[:5]:
+                info_parts.append(f"- {' → '.join(rel['relationship_path'])} → {rel['related_name']}")
+        
+        return ToolResult(
+            success=True,
+            data=person,
+            message="\n".join(info_parts),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting person info: {str(e)}",
+        )
+
+
+async def get_pet_info(
+    name: str,
+    user_id: str,
+    knowledge_graph_port: Any,
+) -> ToolResult:
+    """Get information about a pet in the user's household.
+    
+    Args:
+        name: The pet's name
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        
+    Returns:
+        ToolResult with pet information
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        pet = await knowledge_graph_port.get_pet(user_id_obj, name)
+        
+        if not pet:
+            return ToolResult(
+                success=True,
+                data=None,
+                message=f"I don't have any information about a pet named '{name}' yet. Tell me about them!",
+            )
+        
+        # Format the response
+        info_parts = [f"**{pet.get('name', name)}**"]
+        
+        if pet.get("species"):
+            info_parts.append(f"- Species: {pet['species']}")
+        if pet.get("breed"):
+            info_parts.append(f"- Breed: {pet['breed']}")
+        if pet.get("personality"):
+            info_parts.append(f"- Personality: {', '.join(pet['personality'])}")
+        if pet.get("food_preferences"):
+            info_parts.append(f"- Food preferences: {', '.join(pet['food_preferences'])}")
+        if pet.get("health_notes"):
+            info_parts.append(f"- Health notes: {pet['health_notes']}")
+        if pet.get("aliases"):
+            info_parts.append(f"- Nicknames: {', '.join(pet['aliases'])}")
+        
+        info_parts.append(f"- Mentioned {pet.get('mention_count', 1)} time(s)")
+        
+        return ToolResult(
+            success=True,
+            data=pet,
+            message="\n".join(info_parts),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting pet info: {str(e)}",
+        )
+
+
+async def get_location_info(
+    name: str,
+    user_id: str,
+    knowledge_graph_port: Any,
+) -> ToolResult:
+    """Get information about a location the user frequents.
+    
+    Args:
+        name: The location name
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        
+    Returns:
+        ToolResult with location information
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        location = await knowledge_graph_port.get_location(user_id_obj, name)
+        
+        if not location:
+            return ToolResult(
+                success=True,
+                data=None,
+                message=f"I don't have any information about '{name}' yet. Tell me about this place!",
+            )
+        
+        # Format the response
+        info_parts = [f"**{location.get('name', name)}**"]
+        
+        if location.get("location_type"):
+            info_parts.append(f"- Type: {location['location_type']}")
+        if location.get("address"):
+            info_parts.append(f"- Address: {location['address']}")
+        if location.get("city"):
+            info_parts.append(f"- City: {location['city']}")
+        if location.get("neighborhood"):
+            info_parts.append(f"- Neighborhood: {location['neighborhood']}")
+        if location.get("associated_activities"):
+            info_parts.append(f"- Activities: {', '.join(location['associated_activities'])}")
+        if location.get("notes"):
+            info_parts.append(f"- Notes: {location['notes']}")
+        if location.get("aliases"):
+            info_parts.append(f"- Also called: {', '.join(location['aliases'])}")
+        
+        info_parts.append(f"- Mentioned {location.get('mention_count', 1)} time(s)")
+        
+        return ToolResult(
+            success=True,
+            data=location,
+            message="\n".join(info_parts),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting location info: {str(e)}",
+        )
+
+
+async def list_known_people(
+    user_id: str,
+    knowledge_graph_port: Any,
+    relationship_type: str | None = None,
+) -> ToolResult:
+    """List all people in the user's social graph.
+    
+    Args:
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        relationship_type: Optional filter by relationship (spouse, friend, colleague, etc.)
+        
+    Returns:
+        ToolResult with list of people
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        people = await knowledge_graph_port.list_known_people(
+            user_id_obj,
+            relationship_type=relationship_type,
+            limit=50,
+        )
+        
+        if not people:
+            filter_msg = f" with relationship '{relationship_type}'" if relationship_type else ""
+            return ToolResult(
+                success=True,
+                data=[],
+                message=f"I don't know any people{filter_msg} yet. Tell me about the people in your life!",
+            )
+        
+        # Format the response
+        lines = [f"**People I Know About ({len(people)}):**\n"]
+        
+        for person in people:
+            rel = f" ({person.get('relationship_type')})" if person.get("relationship_type") else ""
+            mentions = f" - {person.get('mention_count', 1)} mentions"
+            lines.append(f"- **{person.get('name')}**{rel}{mentions}")
+        
+        return ToolResult(
+            success=True,
+            data=people,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error listing people: {str(e)}",
+        )
+
+
+async def list_pets(
+    user_id: str,
+    knowledge_graph_port: Any,
+    species: str | None = None,
+) -> ToolResult:
+    """List all pets in the user's household.
+    
+    Args:
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        species: Optional filter by species (dog, cat, etc.)
+        
+    Returns:
+        ToolResult with list of pets
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        pets = await knowledge_graph_port.list_pets(user_id_obj, species=species)
+        
+        if not pets:
+            filter_msg = f" ({species})" if species else ""
+            return ToolResult(
+                success=True,
+                data=[],
+                message=f"I don't know about any pets{filter_msg} yet. Tell me about your furry friends!",
+            )
+        
+        # Format the response
+        lines = [f"**Your Pets ({len(pets)}):**\n"]
+        
+        for pet in pets:
+            species_str = f" the {pet.get('species')}" if pet.get("species") else ""
+            breed_str = f" ({pet.get('breed')})" if pet.get("breed") else ""
+            lines.append(f"- **{pet.get('name')}**{species_str}{breed_str}")
+        
+        return ToolResult(
+            success=True,
+            data=pets,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error listing pets: {str(e)}",
+        )
+
+
+async def list_locations(
+    user_id: str,
+    knowledge_graph_port: Any,
+    location_type: str | None = None,
+    city: str | None = None,
+) -> ToolResult:
+    """List all locations the user frequents.
+    
+    Args:
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        location_type: Optional filter by type (restaurant, gym, etc.)
+        city: Optional filter by city
+        
+    Returns:
+        ToolResult with list of locations
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        locations = await knowledge_graph_port.list_locations(
+            user_id_obj,
+            location_type=location_type,
+            city=city,
+        )
+        
+        if not locations:
+            filter_msg = ""
+            if location_type:
+                filter_msg = f" of type '{location_type}'"
+            if city:
+                filter_msg += f" in {city}"
+            return ToolResult(
+                success=True,
+                data=[],
+                message=f"I don't know about any locations{filter_msg} yet. Tell me about your favorite places!",
+            )
+        
+        # Format the response
+        lines = [f"**Places You Frequent ({len(locations)}):**\n"]
+        
+        for loc in locations:
+            type_str = f" ({loc.get('location_type')})" if loc.get("location_type") else ""
+            city_str = f" in {loc.get('city')}" if loc.get("city") else ""
+            lines.append(f"- **{loc.get('name')}**{type_str}{city_str}")
+        
+        return ToolResult(
+            success=True,
+            data=locations,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error listing locations: {str(e)}",
+        )
+
+
+async def get_user_preferences(
+    user_id: str,
+    knowledge_graph_port: Any,
+    category: str | None = None,
+) -> ToolResult:
+    """Get aggregated user preferences from conversations.
+    
+    Args:
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        category: Optional filter by category (food, activities, schedule, etc.)
+        
+    Returns:
+        ToolResult with user preferences
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        preferences = await knowledge_graph_port.get_user_preferences(
+            user_id_obj,
+            category=category,
+            min_confidence=0.3,
+        )
+        
+        if not preferences:
+            filter_msg = f" for '{category}'" if category else ""
+            return ToolResult(
+                success=True,
+                data=[],
+                message=f"I haven't learned any preferences{filter_msg} yet. As we chat, I'll remember what you like!",
+            )
+        
+        # Group by category
+        by_category: dict[str, list] = {}
+        for pref in preferences:
+            cat = pref.get("category", "general")
+            if cat not in by_category:
+                by_category[cat] = []
+            by_category[cat].append(pref)
+        
+        # Format the response
+        lines = [f"**Your Preferences ({len(preferences)}):**\n"]
+        
+        for cat, prefs in by_category.items():
+            lines.append(f"\n**{cat.title()}:**")
+            for pref in prefs:
+                sentiment = pref.get("sentiment", 0)
+                if sentiment > 0.3:
+                    emoji = "👍"
+                elif sentiment < -0.3:
+                    emoji = "👎"
+                else:
+                    emoji = "➖"
+                confidence = pref.get("confidence", 0.5)
+                conf_str = f" ({confidence:.0%} confident)" if confidence < 0.8 else ""
+                lines.append(f"- {emoji} {pref.get('value')}{conf_str}")
+        
+        return ToolResult(
+            success=True,
+            data=preferences,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting preferences: {str(e)}",
+        )
+
+
+async def get_group_consensus(
+    topic: str,
+    group_id: str,
+    knowledge_graph_port: Any,
+) -> ToolResult:
+    """Get group consensus on a topic.
+    
+    Analyzes what group members have discussed about a topic.
+    
+    Args:
+        topic: The topic to get consensus on
+        group_id: The group's ID
+        knowledge_graph_port: The Neo4j adapter
+        
+    Returns:
+        ToolResult with group consensus information
+    """
+    try:
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        consensus = await knowledge_graph_port.get_group_consensus(group_id, topic)
+        
+        if consensus.get("mention_count", 0) == 0:
+            return ToolResult(
+                success=True,
+                data=consensus,
+                message=f"No group discussions found about '{topic}' yet.",
+            )
+        
+        # Format the response
+        lines = [f"**Group Consensus on '{topic}':**\n"]
+        
+        lines.append(f"- **Mentions:** {consensus.get('mention_count', 0)}")
+        
+        users = consensus.get("users_involved", [])
+        if users:
+            lines.append(f"- **Contributors:** {', '.join(users)}")
+        
+        mentions = consensus.get("mentions", [])
+        if mentions:
+            lines.append("\n**Recent Discussions:**")
+            for i, mention in enumerate(mentions[:5], 1):
+                user = mention.get("user", "Unknown")
+                content = mention.get("content", "")[:150]
+                if len(mention.get("content", "")) > 150:
+                    content += "..."
+                lines.append(f"{i}. **{user}**: {content}")
+        
+        return ToolResult(
+            success=True,
+            data=consensus,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting group consensus: {str(e)}",
+        )
+
+
+async def get_thread_history(
+    thread_name: str,
+    user_id: str,
+    knowledge_graph_port: Any,
+) -> ToolResult:
+    """Get the full history of a cross-conversation thread/project.
+    
+    Threads track ongoing topics that span multiple conversations.
+    
+    Args:
+        thread_name: Name of the thread/project
+        user_id: The user's ID
+        knowledge_graph_port: The Neo4j adapter
+        
+    Returns:
+        ToolResult with thread history
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        user_id_obj = UserId.from_string(user_id)
+        thread = await knowledge_graph_port.get_thread_history(user_id_obj, thread_name)
+        
+        if not thread:
+            return ToolResult(
+                success=True,
+                data=None,
+                message=f"No thread found named '{thread_name}'. Create one by telling me about an ongoing project!",
+            )
+        
+        # Format the response
+        info_parts = [f"**Thread: {thread.get('name', thread_name)}**"]
+        
+        if thread.get("description"):
+            info_parts.append(f"\n{thread['description']}")
+        
+        info_parts.append(f"\n**Status:** {thread.get('status', 'active')}")
+        
+        conv_ids = thread.get("conversation_ids", [])
+        if conv_ids:
+            info_parts.append(f"**Conversations:** {len(conv_ids)} linked")
+        
+        topics = thread.get("related_topics", [])
+        if topics:
+            info_parts.append(f"**Topics:** {', '.join(topics)}")
+        
+        if thread.get("created_at"):
+            info_parts.append(f"\n*Started: {thread['created_at']}*")
+        if thread.get("last_updated"):
+            info_parts.append(f"*Last updated: {thread['last_updated']}*")
+        
+        return ToolResult(
+            success=True,
+            data=thread,
+            message="\n".join(info_parts),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error getting thread history: {str(e)}",
+        )
+
+
+async def recall_from_period(
+    user_id: str,
+    start_date: str,
+    end_date: str,
+    knowledge_graph_port: Any,
+    topic: str | None = None,
+) -> ToolResult:
+    """Recall what was discussed during a specific time period.
+    
+    Args:
+        user_id: The user's ID
+        start_date: Start date (ISO format or "YYYY-MM-DD")
+        end_date: End date (ISO format or "YYYY-MM-DD")
+        knowledge_graph_port: The Neo4j adapter
+        topic: Optional topic filter
+        
+    Returns:
+        ToolResult with messages from the period
+    """
+    try:
+        from agent_system.domain.value_objects import UserId
+        
+        if not knowledge_graph_port:
+            return ToolResult(
+                success=False,
+                data=None,
+                message="Knowledge graph not available",
+            )
+        
+        # Parse dates
+        try:
+            start = datetime.fromisoformat(start_date.replace("Z", "+00:00"))
+        except ValueError:
+            start = datetime.strptime(start_date, "%Y-%m-%d")
+        
+        try:
+            end = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
+        except ValueError:
+            end = datetime.strptime(end_date, "%Y-%m-%d")
+            end = end.replace(hour=23, minute=59, second=59)
+        
+        user_id_obj = UserId.from_string(user_id)
+        messages = await knowledge_graph_port.recall_from_period(
+            user_id_obj,
+            start_date=start,
+            end_date=end,
+            topic=topic,
+            limit=20,
+        )
+        
+        if not messages:
+            topic_msg = f" about '{topic}'" if topic else ""
+            return ToolResult(
+                success=True,
+                data=[],
+                message=f"No conversations found{topic_msg} between {start_date} and {end_date}.",
+            )
+        
+        # Format the response
+        lines = [f"**Conversations from {start_date} to {end_date}:**\n"]
+        
+        for msg in messages:
+            role = "You" if msg.get("role") == "user" else "Assistant"
+            content = msg.get("content", "")[:200]
+            if len(msg.get("content", "")) > 200:
+                content += "..."
+            lines.append(f"- **{role}**: {content}")
+        
+        return ToolResult(
+            success=True,
+            data=messages,
+            message="\n".join(lines),
+        )
+        
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error recalling from period: {str(e)}",
+        )
+
+
 # ============ Tool Registry ============
 
 AVAILABLE_TOOLS = {
@@ -1479,6 +2188,75 @@ AVAILABLE_TOOLS = {
             "category": "string (optional: music, cycling, sports, arts, food, etc.)",
             "limit": "int (optional, default 30)",
         },
+    },
+    # Social Graph Tools
+    "get_person_info": {
+        "function": get_person_info,
+        "description": "Get information about a person in your social graph (friends, family, colleagues)",
+        "parameters": {"name": "string (person's name or nickname)"},
+        "requires_knowledge_graph": True,
+    },
+    "get_pet_info": {
+        "function": get_pet_info,
+        "description": "Get information about a pet in your household",
+        "parameters": {"name": "string (pet's name)"},
+        "requires_knowledge_graph": True,
+    },
+    "get_location_info": {
+        "function": get_location_info,
+        "description": "Get information about a location you frequent",
+        "parameters": {"name": "string (location name)"},
+        "requires_knowledge_graph": True,
+    },
+    "list_known_people": {
+        "function": list_known_people,
+        "description": "List all people in your social graph",
+        "parameters": {"relationship_type": "string (optional: spouse, friend, colleague, family, etc.)"},
+        "requires_knowledge_graph": True,
+    },
+    "list_pets": {
+        "function": list_pets,
+        "description": "List all pets in your household",
+        "parameters": {"species": "string (optional: dog, cat, etc.)"},
+        "requires_knowledge_graph": True,
+    },
+    "list_locations": {
+        "function": list_locations,
+        "description": "List all locations you frequent",
+        "parameters": {
+            "location_type": "string (optional: restaurant, gym, office, etc.)",
+            "city": "string (optional city filter)",
+        },
+        "requires_knowledge_graph": True,
+    },
+    "get_user_preferences": {
+        "function": get_user_preferences,
+        "description": "Get your preferences learned from conversations (food, activities, schedule, etc.)",
+        "parameters": {"category": "string (optional: food, activities, schedule, etc.)"},
+        "requires_knowledge_graph": True,
+    },
+    "recall_from_period": {
+        "function": recall_from_period,
+        "description": "Recall what was discussed during a specific time period",
+        "parameters": {
+            "start_date": "string (YYYY-MM-DD format)",
+            "end_date": "string (YYYY-MM-DD format)",
+            "topic": "string (optional topic filter)",
+        },
+        "requires_knowledge_graph": True,
+    },
+    "get_thread_history": {
+        "function": get_thread_history,
+        "description": "Get the full history of a cross-conversation thread/project",
+        "parameters": {"thread_name": "string (name of the thread/project)"},
+        "requires_knowledge_graph": True,
+    },
+    "get_group_consensus": {
+        "function": get_group_consensus,
+        "description": "Get group consensus on a topic - what group members have discussed about it",
+        "parameters": {"topic": "string (topic to get consensus on)"},
+        "requires_knowledge_graph": True,
+        "requires_group_context": True,
     },
 }
 

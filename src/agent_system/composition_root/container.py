@@ -107,6 +107,10 @@ class Container:
                         dimensions=embedding_adapter.get_dimensions()
                     )
                     print("✓ Neo4j vector index ready")
+                    
+                    # Set up temporal indexes for time-based queries
+                    await knowledge_graph_adapter.ensure_temporal_index()
+                    print("✓ Neo4j temporal indexes ready")
             except Exception as e:
                 print(f"✗ Embedding adapter initialization failed: {e}")
         else:

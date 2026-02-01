@@ -34,6 +34,61 @@ class EntityType(str, Enum):
     URL = "url"
 
 
+class PersonRelationType(str, Enum):
+    """Type of relationship to a person."""
+    
+    SPOUSE = "spouse"
+    PARTNER = "partner"
+    FAMILY = "family"
+    PARENT = "parent"
+    CHILD = "child"
+    SIBLING = "sibling"
+    FRIEND = "friend"
+    COLLEAGUE = "colleague"
+    ACQUAINTANCE = "acquaintance"
+    MENTOR = "mentor"
+    CLIENT = "client"
+    NEIGHBOR = "neighbor"
+
+
+class LocationType(str, Enum):
+    """Type of location."""
+    
+    RESTAURANT = "restaurant"
+    CAFE = "cafe"
+    BAR = "bar"
+    GYM = "gym"
+    OFFICE = "office"
+    HOME = "home"
+    PARK = "park"
+    STORE = "store"
+    VENUE = "venue"
+    SCHOOL = "school"
+    HOSPITAL = "hospital"
+    SALON = "salon"
+    OTHER = "other"
+
+
+class ExpertiseLevel(str, Enum):
+    """Level of expertise in a topic."""
+    
+    NOVICE = "novice"
+    BEGINNER = "beginner"
+    INTERMEDIATE = "intermediate"
+    ADVANCED = "advanced"
+    EXPERT = "expert"
+
+
+class PatternType(str, Enum):
+    """Type of detected pattern."""
+    
+    RECURRING_QUERY = "recurring_query"
+    DAILY_HABIT = "daily_habit"
+    WEEKLY_EVENT = "weekly_event"
+    MONTHLY_ROUTINE = "monthly_routine"
+    PREFERENCE_PATTERN = "preference_pattern"
+
+
 class RelationType(str, Enum):
     """Type of relationship between knowledge nodes."""
 
@@ -50,6 +105,7 @@ class RelationType(str, Enum):
     
     # Semantic relationships for richer knowledge graphs
     LIKES = "LIKES"  # Subject likes/prefers something
+    DISLIKES = "DISLIKES"  # Subject dislikes something
     OWNS = "OWNS"  # Subject owns/has something
     LOCATED_IN = "LOCATED_IN"  # Entity is in a location
     IS_A = "IS_A"  # Type/category relationship
@@ -60,6 +116,18 @@ class RelationType(str, Enum):
     BELONGS_TO = "BELONGS_TO"  # Membership relationship
     WORKS_AT = "WORKS_AT"  # Employment relationship
     LIVES_IN = "LIVES_IN"  # Residence relationship
+    
+    # Social graph relationships
+    RELATED_TO = "RELATED_TO"  # Person related to another person
+    FREQUENTS = "FREQUENTS"  # User frequents a location
+    HOSTS = "HOSTS"  # Location hosts events
+    
+    # Threading and patterns
+    PART_OF = "PART_OF"  # Conversation part of thread
+    CONTINUES = "CONTINUES"  # Message continues another
+    HAS_PATTERN = "HAS_PATTERN"  # User has detected pattern
+    HAS_EXPERTISE = "HAS_EXPERTISE"  # User has expertise in topic
+    CONTRADICTS = "CONTRADICTS"  # Fact contradicts another
 
 
 class Intent(BaseModel):

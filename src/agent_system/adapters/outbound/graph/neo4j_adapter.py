@@ -1045,3 +1045,1035 @@ class Neo4jAdapter(KnowledgeGraphPort):
             async for record in result:
                 nodes.append(self._record_to_node(record["n"]))
         return nodes
+
+    # ============ Social Graph Operations (Person, Pet, Location) ============
+
+    async def store_person(
+        self,
+        user_id: UserId,
+        name: str,
+        aliases: list[str] | None = None,
+        relationship_type: str | None = None,
+        context_notes: str | None = None,
+        email: str | None = None,
+        phone: str | None = None,
+    ) -> str:
+        """Store or update a person in the user's social graph.
+        
+        Uses MERGE by name (case-insensitive) to deduplicate.
+        Creates KNOWS relationship to user.
+        
+        Returns:
+            The node ID of the person
+        """
+        import uuid
+        
+        now = datetime.utcnow().isoformat()
+        node_id = str(uuid.uuid4())
+        alias_list = aliases or []
+        
+        # MERGE person by lowercase name within user's graph
+        query = """
+        // Ensure user node exists
+        MERGE (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
+        ON CREATE SET u.id = $user_node_id, u.label = 'User', 
+                      u.created_at = $now, u.updated_at = $now
+        
+        // MERGE person by name (case-insensitive)
+        WITH u
+        MERGE (p:PersonNode {user_id: $user_id, name_lower: toLower($name)})
+        ON CREATE SET 
+            p.id = $id,
+            p.name = $name,
+            p.aliases = $aliases,
+            p.relationship_type = $relationship_type,
+            p.context_notes = $context_notes,
+            p.email = $email,
+            p.phone = $phone,
+            p.first_mentioned = $now,
+            p.last_mentioned = $now,
+            p.mention_count = 1,
+            p.created_at = $now
+        ON MATCH SET 
+            p.last_mentioned = $now,
+            p.mention_count = p.mention_count + 1,
+            p.aliases = CASE WHEN size($aliases) > size(p.aliases) THEN $aliases ELSE p.aliases END,
+            p.relationship_type = COALESCE($relationship_type, p.relationship_type),
+            p.context_notes = COALESCE($context_notes, p.context_notes),
+            p.email = COALESCE($email, p.email),
+            p.phone = COALESCE($phone, p.phone)
+        
+        // Create KNOWS relationship
+        MERGE (u)-[:KNOWS]->(p)
+        
+        RETURN p.id as id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                user_node_id=str(uuid.uuid4()),
+                id=node_id,
+                name=name,
+                aliases=alias_list,
+                relationship_type=relationship_type,
+                context_notes=context_notes,
+                email=email,
+                phone=phone,
+                now=now,
+            )
+            record = await result.single()
+            return record["id"] if record else node_id
+
+    async def get_person(
+        self,
+        user_id: UserId,
+        name: str,
+    ) -> dict[str, Any] | None:
+        """Get a person by name (case-insensitive) from user's social graph."""
+        query = """
+        MATCH (p:PersonNode {user_id: $user_id, name_lower: toLower($name)})
+        RETURN p
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), name=name)
+            record = await result.single()
+            if record:
+                return dict(record["p"])
+        return None
+
+    async def find_person_by_alias(
+        self,
+        user_id: UserId,
+        alias: str,
+    ) -> dict[str, Any] | None:
+        """Find a person by alias match."""
+        query = """
+        MATCH (p:PersonNode {user_id: $user_id})
+        WHERE toLower($alias) IN [a IN p.aliases | toLower(a)]
+           OR p.name_lower = toLower($alias)
+        RETURN p
+        LIMIT 1
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), alias=alias)
+            record = await result.single()
+            if record:
+                return dict(record["p"])
+        return None
+
+    async def list_known_people(
+        self,
+        user_id: UserId,
+        relationship_type: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        """List all people in user's social graph."""
+        where_clause = ""
+        if relationship_type:
+            where_clause = "AND p.relationship_type = $relationship_type"
+        
+        query = f"""
+        MATCH (p:PersonNode {{user_id: $user_id}})
+        WHERE p.id IS NOT NULL {where_clause}
+        RETURN p
+        ORDER BY p.mention_count DESC, p.last_mentioned DESC
+        LIMIT $limit
+        """
+        
+        params = {"user_id": str(user_id), "limit": limit}
+        if relationship_type:
+            params["relationship_type"] = relationship_type
+        
+        people = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, **params)
+            async for record in result:
+                people.append(dict(record["p"]))
+        return people
+
+    async def store_pet(
+        self,
+        user_id: UserId,
+        name: str,
+        aliases: list[str] | None = None,
+        species: str | None = None,
+        breed: str | None = None,
+        personality: list[str] | None = None,
+        food_preferences: list[str] | None = None,
+        health_notes: str | None = None,
+    ) -> str:
+        """Store or update a pet in the user's household.
+        
+        Returns:
+            The node ID of the pet
+        """
+        import uuid
+        
+        now = datetime.utcnow().isoformat()
+        node_id = str(uuid.uuid4())
+        
+        query = """
+        // Ensure user node exists
+        MERGE (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
+        ON CREATE SET u.id = $user_node_id, u.label = 'User',
+                      u.created_at = $now, u.updated_at = $now
+        
+        // MERGE pet by name
+        WITH u
+        MERGE (p:PetNode {user_id: $user_id, name_lower: toLower($name)})
+        ON CREATE SET
+            p.id = $id,
+            p.name = $name,
+            p.aliases = $aliases,
+            p.species = $species,
+            p.breed = $breed,
+            p.personality = $personality,
+            p.food_preferences = $food_preferences,
+            p.health_notes = $health_notes,
+            p.first_mentioned = $now,
+            p.last_mentioned = $now,
+            p.mention_count = 1,
+            p.created_at = $now
+        ON MATCH SET
+            p.last_mentioned = $now,
+            p.mention_count = p.mention_count + 1,
+            p.aliases = CASE WHEN size($aliases) > size(COALESCE(p.aliases, [])) THEN $aliases ELSE p.aliases END,
+            p.species = COALESCE($species, p.species),
+            p.breed = COALESCE($breed, p.breed),
+            p.personality = CASE WHEN size($personality) > 0 THEN 
+                [x IN p.personality WHERE NOT x IN $personality] + $personality 
+                ELSE p.personality END,
+            p.food_preferences = CASE WHEN size($food_preferences) > 0 THEN
+                [x IN p.food_preferences WHERE NOT x IN $food_preferences] + $food_preferences
+                ELSE p.food_preferences END,
+            p.health_notes = COALESCE($health_notes, p.health_notes)
+        
+        // Create OWNS relationship
+        MERGE (u)-[:OWNS]->(p)
+        
+        RETURN p.id as id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                user_node_id=str(uuid.uuid4()),
+                id=node_id,
+                name=name,
+                aliases=aliases or [],
+                species=species,
+                breed=breed,
+                personality=personality or [],
+                food_preferences=food_preferences or [],
+                health_notes=health_notes,
+                now=now,
+            )
+            record = await result.single()
+            return record["id"] if record else node_id
+
+    async def get_pet(
+        self,
+        user_id: UserId,
+        name: str,
+    ) -> dict[str, Any] | None:
+        """Get a pet by name from user's household."""
+        query = """
+        MATCH (p:PetNode {user_id: $user_id, name_lower: toLower($name)})
+        RETURN p
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), name=name)
+            record = await result.single()
+            if record:
+                return dict(record["p"])
+        return None
+
+    async def list_pets(
+        self,
+        user_id: UserId,
+        species: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all pets in user's household."""
+        where_clause = ""
+        if species:
+            where_clause = "AND toLower(p.species) = toLower($species)"
+        
+        query = f"""
+        MATCH (p:PetNode {{user_id: $user_id}})
+        WHERE p.id IS NOT NULL {where_clause}
+        RETURN p
+        ORDER BY p.mention_count DESC
+        """
+        
+        params: dict[str, Any] = {"user_id": str(user_id)}
+        if species:
+            params["species"] = species
+        
+        pets = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, **params)
+            async for record in result:
+                pets.append(dict(record["p"]))
+        return pets
+
+    async def store_location(
+        self,
+        user_id: UserId,
+        name: str,
+        aliases: list[str] | None = None,
+        location_type: str | None = None,
+        address: str | None = None,
+        city: str | None = None,
+        neighborhood: str | None = None,
+        associated_activities: list[str] | None = None,
+        notes: str | None = None,
+    ) -> str:
+        """Store or update a location the user frequents.
+        
+        Returns:
+            The node ID of the location
+        """
+        import uuid
+        
+        now = datetime.utcnow().isoformat()
+        node_id = str(uuid.uuid4())
+        
+        query = """
+        // Ensure user node exists
+        MERGE (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
+        ON CREATE SET u.id = $user_node_id, u.label = 'User',
+                      u.created_at = $now, u.updated_at = $now
+        
+        // MERGE location by name
+        WITH u
+        MERGE (l:LocationNode {user_id: $user_id, name_lower: toLower($name)})
+        ON CREATE SET
+            l.id = $id,
+            l.name = $name,
+            l.aliases = $aliases,
+            l.location_type = $location_type,
+            l.address = $address,
+            l.city = $city,
+            l.neighborhood = $neighborhood,
+            l.associated_activities = $associated_activities,
+            l.notes = $notes,
+            l.first_mentioned = $now,
+            l.last_mentioned = $now,
+            l.mention_count = 1,
+            l.created_at = $now
+        ON MATCH SET
+            l.last_mentioned = $now,
+            l.mention_count = l.mention_count + 1,
+            l.aliases = CASE WHEN size($aliases) > size(COALESCE(l.aliases, [])) THEN $aliases ELSE l.aliases END,
+            l.location_type = COALESCE($location_type, l.location_type),
+            l.address = COALESCE($address, l.address),
+            l.city = COALESCE($city, l.city),
+            l.neighborhood = COALESCE($neighborhood, l.neighborhood),
+            l.associated_activities = CASE WHEN size($associated_activities) > 0 THEN
+                [x IN l.associated_activities WHERE NOT x IN $associated_activities] + $associated_activities
+                ELSE l.associated_activities END,
+            l.notes = COALESCE($notes, l.notes)
+        
+        // Create FREQUENTS relationship
+        MERGE (u)-[:FREQUENTS]->(l)
+        
+        RETURN l.id as id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                user_node_id=str(uuid.uuid4()),
+                id=node_id,
+                name=name,
+                aliases=aliases or [],
+                location_type=location_type,
+                address=address,
+                city=city,
+                neighborhood=neighborhood,
+                associated_activities=associated_activities or [],
+                notes=notes,
+                now=now,
+            )
+            record = await result.single()
+            return record["id"] if record else node_id
+
+    async def get_location(
+        self,
+        user_id: UserId,
+        name: str,
+    ) -> dict[str, Any] | None:
+        """Get a location by name."""
+        query = """
+        MATCH (l:LocationNode {user_id: $user_id, name_lower: toLower($name)})
+        RETURN l
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), name=name)
+            record = await result.single()
+            if record:
+                return dict(record["l"])
+        return None
+
+    async def list_locations(
+        self,
+        user_id: UserId,
+        location_type: str | None = None,
+        city: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all locations the user frequents."""
+        where_clauses = ["l.id IS NOT NULL"]
+        params: dict[str, Any] = {"user_id": str(user_id)}
+        
+        if location_type:
+            where_clauses.append("toLower(l.location_type) = toLower($location_type)")
+            params["location_type"] = location_type
+        if city:
+            where_clauses.append("toLower(l.city) = toLower($city)")
+            params["city"] = city
+        
+        where_clause = " AND ".join(where_clauses)
+        
+        query = f"""
+        MATCH (l:LocationNode {{user_id: $user_id}})
+        WHERE {where_clause}
+        RETURN l
+        ORDER BY l.mention_count DESC
+        """
+        
+        locations = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, **params)
+            async for record in result:
+                locations.append(dict(record["l"]))
+        return locations
+
+    async def link_entities(
+        self,
+        user_id: UserId,
+        source_type: str,
+        source_name: str,
+        target_type: str,
+        target_name: str,
+        relationship: str,
+        properties: dict[str, Any] | None = None,
+    ) -> bool:
+        """Create a relationship between two entities.
+        
+        Args:
+            user_id: The user's ID
+            source_type: Type of source entity (person, pet, location)
+            source_name: Name of source entity
+            target_type: Type of target entity
+            target_name: Name of target entity
+            relationship: Relationship type (e.g., WORKS_AT, FRIEND_OF)
+            properties: Optional relationship properties
+            
+        Returns:
+            True if relationship was created
+        """
+        now = datetime.utcnow().isoformat()
+        props = properties or {}
+        
+        # Map type to label
+        type_to_label = {
+            "person": "PersonNode",
+            "pet": "PetNode",
+            "location": "LocationNode",
+            "user": "KnowledgeNode",
+        }
+        
+        source_label = type_to_label.get(source_type.lower(), "KnowledgeNode")
+        target_label = type_to_label.get(target_type.lower(), "KnowledgeNode")
+        
+        # Build dynamic query based on source/target types
+        if source_type.lower() == "user":
+            source_match = f"(s:{source_label} {{node_type: 'user', user_id: $user_id}})"
+        else:
+            source_match = f"(s:{source_label} {{user_id: $user_id, name_lower: toLower($source_name)}})"
+        
+        if target_type.lower() == "user":
+            target_match = f"(t:{target_label} {{node_type: 'user', user_id: $user_id}})"
+        else:
+            target_match = f"(t:{target_label} {{user_id: $user_id, name_lower: toLower($target_name)}})"
+        
+        # Use dynamic relationship type (sanitize it first)
+        rel_type = relationship.upper().replace(" ", "_").replace("-", "_")
+        
+        query = f"""
+        MATCH {source_match}
+        MATCH {target_match}
+        MERGE (s)-[r:{rel_type}]->(t)
+        ON CREATE SET r.created_at = $now, r.properties_json = $properties_json
+        RETURN s.id as source_id, t.id as target_id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                source_name=source_name,
+                target_name=target_name,
+                now=now,
+                properties_json=json.dumps(props),
+            )
+            record = await result.single()
+            return record is not None
+
+    async def resolve_entity_by_alias(
+        self,
+        user_id: UserId,
+        alias: str,
+    ) -> dict[str, Any] | None:
+        """Resolve an alias or reference to an entity.
+        
+        Searches across Person, Pet, and Location nodes.
+        
+        Returns:
+            Dict with 'type' and entity data, or None if not found
+        """
+        # Search persons first
+        person = await self.find_person_by_alias(user_id, alias)
+        if person:
+            return {"type": "person", "entity": person}
+        
+        # Search pets
+        query = """
+        MATCH (p:PetNode {user_id: $user_id})
+        WHERE toLower($alias) IN [a IN p.aliases | toLower(a)]
+           OR p.name_lower = toLower($alias)
+        RETURN p, 'pet' as type
+        LIMIT 1
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), alias=alias)
+            record = await result.single()
+            if record:
+                return {"type": "pet", "entity": dict(record["p"])}
+        
+        # Search locations
+        query = """
+        MATCH (l:LocationNode {user_id: $user_id})
+        WHERE toLower($alias) IN [a IN l.aliases | toLower(a)]
+           OR l.name_lower = toLower($alias)
+           OR toLower(l.name) CONTAINS toLower($alias)
+        RETURN l, 'location' as type
+        LIMIT 1
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), alias=alias)
+            record = await result.single()
+            if record:
+                return {"type": "location", "entity": dict(record["l"])}
+        
+        return None
+
+    async def get_entity_relationships(
+        self,
+        user_id: UserId,
+        entity_type: str,
+        entity_name: str,
+        max_depth: int = 2,
+    ) -> list[dict[str, Any]]:
+        """Get all relationships for an entity (for contextual suggestions).
+        
+        Args:
+            user_id: The user's ID
+            entity_type: Type of entity (person, pet, location)
+            entity_name: Name of the entity
+            max_depth: Maximum relationship depth to traverse
+            
+        Returns:
+            List of related entities with relationship info
+        """
+        type_to_label = {
+            "person": "PersonNode",
+            "pet": "PetNode",
+            "location": "LocationNode",
+        }
+        
+        label = type_to_label.get(entity_type.lower(), "PersonNode")
+        
+        query = f"""
+        MATCH (e:{label} {{user_id: $user_id, name_lower: toLower($name)}})
+        MATCH (e)-[r*1..{max_depth}]-(related)
+        WHERE related <> e
+        WITH related, 
+             [rel in r | type(rel)] as rel_types,
+             length(r) as depth
+        RETURN 
+            labels(related)[0] as related_type,
+            related.name as related_name,
+            related.id as related_id,
+            rel_types,
+            depth
+        ORDER BY depth ASC
+        LIMIT 50
+        """
+        
+        relationships = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                name=entity_name,
+            )
+            async for record in result:
+                relationships.append({
+                    "related_type": record["related_type"],
+                    "related_name": record["related_name"],
+                    "related_id": record["related_id"],
+                    "relationship_path": record["rel_types"],
+                    "depth": record["depth"],
+                })
+        return relationships
+
+    # ============ Temporal Operations ============
+
+    async def ensure_temporal_index(self) -> bool:
+        """Ensure indexes exist for temporal queries."""
+        queries = [
+            "CREATE INDEX message_timestamp IF NOT EXISTS FOR (m:MessageEmbedding) ON (m.created_at)",
+            "CREATE INDEX group_message_timestamp IF NOT EXISTS FOR (m:GroupMessageEmbedding) ON (m.created_at)",
+            "CREATE INDEX person_mentioned IF NOT EXISTS FOR (p:PersonNode) ON (p.last_mentioned)",
+            "CREATE INDEX pet_mentioned IF NOT EXISTS FOR (p:PetNode) ON (p.last_mentioned)",
+            "CREATE INDEX location_mentioned IF NOT EXISTS FOR (l:LocationNode) ON (l.last_mentioned)",
+        ]
+        
+        try:
+            async with self.driver.session(database=self._database) as session:
+                for query in queries:
+                    try:
+                        await session.run(query)
+                    except Exception:
+                        pass  # Index might already exist
+            return True
+        except Exception as e:
+            print(f"Warning: Could not create temporal indexes: {e}")
+            return False
+
+    async def recall_from_period(
+        self,
+        user_id: UserId,
+        start_date: datetime,
+        end_date: datetime,
+        topic: str | None = None,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Recall messages from a specific time period.
+        
+        Args:
+            user_id: The user's ID
+            start_date: Start of period
+            end_date: End of period
+            topic: Optional topic filter (searches content)
+            limit: Maximum results
+            
+        Returns:
+            List of messages from the period
+        """
+        topic_filter = ""
+        if topic:
+            topic_filter = "AND toLower(m.content) CONTAINS toLower($topic)"
+        
+        query = f"""
+        MATCH (m:MessageEmbedding {{user_id: $user_id}})
+        WHERE m.created_at >= $start_date AND m.created_at <= $end_date
+        {topic_filter}
+        RETURN 
+            m.id as id,
+            m.content as content,
+            m.role as role,
+            m.conversation_id as conversation_id,
+            m.created_at as created_at
+        ORDER BY m.created_at DESC
+        LIMIT $limit
+        """
+        
+        params: dict[str, Any] = {
+            "user_id": str(user_id),
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "limit": limit,
+        }
+        if topic:
+            params["topic"] = topic
+        
+        results = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, **params)
+            async for record in result:
+                results.append({
+                    "id": record["id"],
+                    "content": record["content"],
+                    "role": record["role"],
+                    "conversation_id": record["conversation_id"],
+                    "created_at": record["created_at"],
+                })
+        return results
+
+    # ============ Preference Operations ============
+
+    async def store_preference(
+        self,
+        user_id: UserId,
+        category: str,
+        value: str,
+        sentiment: float = 0.5,
+        subcategory: str | None = None,
+        conversation_id: str | None = None,
+    ) -> str:
+        """Store or update a user preference.
+        
+        Args:
+            user_id: The user's ID
+            category: Preference category (food, activities, schedule, etc.)
+            value: The preference value
+            sentiment: Sentiment score (-1 to 1, negative = dislike)
+            subcategory: Optional subcategory
+            conversation_id: Optional source conversation
+            
+        Returns:
+            The preference node ID
+        """
+        import uuid
+        
+        now = datetime.utcnow().isoformat()
+        node_id = str(uuid.uuid4())
+        
+        query = """
+        MERGE (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
+        ON CREATE SET u.id = $user_node_id, u.label = 'User',
+                      u.created_at = $now, u.updated_at = $now
+        
+        WITH u
+        MERGE (p:PreferenceNode {
+            user_id: $user_id, 
+            category_lower: toLower($category),
+            value_lower: toLower($value)
+        })
+        ON CREATE SET
+            p.id = $id,
+            p.category = $category,
+            p.subcategory = $subcategory,
+            p.value = $value,
+            p.sentiment = $sentiment,
+            p.mention_count = 1,
+            p.confidence = 0.5,
+            p.first_mentioned = $now,
+            p.last_mentioned = $now,
+            p.source_conversations = CASE WHEN $conversation_id IS NOT NULL 
+                THEN [$conversation_id] ELSE [] END,
+            p.created_at = $now
+        ON MATCH SET
+            p.last_mentioned = $now,
+            p.mention_count = p.mention_count + 1,
+            p.sentiment = (p.sentiment * p.mention_count + $sentiment) / (p.mention_count + 1),
+            p.confidence = CASE WHEN p.mention_count > 3 THEN 0.8 
+                WHEN p.mention_count > 1 THEN 0.6 ELSE 0.5 END,
+            p.source_conversations = CASE WHEN $conversation_id IS NOT NULL 
+                AND NOT $conversation_id IN p.source_conversations
+                THEN p.source_conversations + [$conversation_id]
+                ELSE p.source_conversations END
+        
+        MERGE (u)-[:HAS_PREFERENCE]->(p)
+        
+        RETURN p.id as id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                user_node_id=str(uuid.uuid4()),
+                id=node_id,
+                category=category,
+                subcategory=subcategory,
+                value=value,
+                sentiment=sentiment,
+                conversation_id=conversation_id,
+                now=now,
+            )
+            record = await result.single()
+            return record["id"] if record else node_id
+
+    async def get_user_preferences(
+        self,
+        user_id: UserId,
+        category: str | None = None,
+        min_confidence: float = 0.0,
+    ) -> list[dict[str, Any]]:
+        """Get user preferences, optionally filtered by category.
+        
+        Args:
+            user_id: The user's ID
+            category: Optional category filter
+            min_confidence: Minimum confidence threshold
+            
+        Returns:
+            List of preference dicts
+        """
+        where_clauses = ["p.confidence >= $min_confidence"]
+        params: dict[str, Any] = {
+            "user_id": str(user_id),
+            "min_confidence": min_confidence,
+        }
+        
+        if category:
+            where_clauses.append("toLower(p.category) = toLower($category)")
+            params["category"] = category
+        
+        where_clause = " AND ".join(where_clauses)
+        
+        query = f"""
+        MATCH (p:PreferenceNode {{user_id: $user_id}})
+        WHERE {where_clause}
+        RETURN p
+        ORDER BY p.confidence DESC, p.mention_count DESC
+        """
+        
+        prefs = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, **params)
+            async for record in result:
+                prefs.append(dict(record["p"]))
+        return prefs
+
+    # ============ Thread Operations ============
+
+    async def store_thread(
+        self,
+        user_id: UserId,
+        name: str,
+        description: str | None = None,
+        conversation_id: str | None = None,
+        topics: list[str] | None = None,
+    ) -> str:
+        """Store or update a cross-conversation thread.
+        
+        Returns:
+            The thread node ID
+        """
+        import uuid
+        
+        now = datetime.utcnow().isoformat()
+        node_id = str(uuid.uuid4())
+        
+        query = """
+        MERGE (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
+        ON CREATE SET u.id = $user_node_id, u.label = 'User',
+                      u.created_at = $now, u.updated_at = $now
+        
+        WITH u
+        MERGE (t:ThreadNode {user_id: $user_id, name_lower: toLower($name)})
+        ON CREATE SET
+            t.id = $id,
+            t.name = $name,
+            t.description = $description,
+            t.status = 'active',
+            t.conversation_ids = CASE WHEN $conversation_id IS NOT NULL 
+                THEN [$conversation_id] ELSE [] END,
+            t.related_topics = $topics,
+            t.created_at = $now,
+            t.last_updated = $now
+        ON MATCH SET
+            t.last_updated = $now,
+            t.description = COALESCE($description, t.description),
+            t.conversation_ids = CASE WHEN $conversation_id IS NOT NULL
+                AND NOT $conversation_id IN t.conversation_ids
+                THEN t.conversation_ids + [$conversation_id]
+                ELSE t.conversation_ids END,
+            t.related_topics = CASE WHEN size($topics) > 0 THEN
+                [x IN t.related_topics WHERE NOT x IN $topics] + $topics
+                ELSE t.related_topics END
+        
+        MERGE (u)-[:HAS_THREAD]->(t)
+        
+        RETURN t.id as id
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                user_node_id=str(uuid.uuid4()),
+                id=node_id,
+                name=name,
+                description=description,
+                conversation_id=conversation_id,
+                topics=topics or [],
+                now=now,
+            )
+            record = await result.single()
+            return record["id"] if record else node_id
+
+    async def get_thread_history(
+        self,
+        user_id: UserId,
+        thread_name: str,
+    ) -> dict[str, Any] | None:
+        """Get full thread history with all linked conversations."""
+        query = """
+        MATCH (t:ThreadNode {user_id: $user_id, name_lower: toLower($name)})
+        RETURN t
+        """
+        
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id), name=thread_name)
+            record = await result.single()
+            if record:
+                return dict(record["t"])
+        return None
+
+    # ============ Contextual Suggestions ============
+
+    async def get_contextual_suggestions(
+        self,
+        user_id: UserId,
+        mentioned_entities: list[str],
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Get contextual suggestions based on mentioned entities.
+        
+        Traverses graph 2 hops from mentioned entities to find related context.
+        
+        Args:
+            user_id: The user's ID
+            mentioned_entities: Names of entities mentioned in current message
+            limit: Maximum suggestions
+            
+        Returns:
+            List of suggestion dicts with relevance scores
+        """
+        if not mentioned_entities:
+            return []
+        
+        query = """
+        // Find matching entities
+        UNWIND $entities as entity_name
+        OPTIONAL MATCH (p:PersonNode {user_id: $user_id})
+        WHERE p.name_lower = toLower(entity_name) OR toLower(entity_name) IN [a IN p.aliases | toLower(a)]
+        OPTIONAL MATCH (pet:PetNode {user_id: $user_id})
+        WHERE pet.name_lower = toLower(entity_name) OR toLower(entity_name) IN [a IN pet.aliases | toLower(a)]
+        OPTIONAL MATCH (l:LocationNode {user_id: $user_id})
+        WHERE l.name_lower = toLower(entity_name) OR toLower(entity_name) IN [a IN l.aliases | toLower(a)]
+        
+        // Collect found entities
+        WITH collect(p) + collect(pet) + collect(l) as found_entities
+        UNWIND found_entities as e
+        
+        // Traverse 2 hops to find related entities
+        MATCH (e)-[r*1..2]-(related)
+        WHERE related <> e AND NOT related:KnowledgeNode
+        
+        // Score by recency and relationship strength
+        WITH related, 
+             count(*) as connection_strength,
+             max(related.last_mentioned) as recency
+        ORDER BY connection_strength DESC, recency DESC
+        LIMIT $limit
+        
+        RETURN 
+            labels(related)[0] as type,
+            related.name as name,
+            related.id as id,
+            connection_strength,
+            recency
+        """
+        
+        suggestions = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user_id=str(user_id),
+                entities=mentioned_entities,
+                limit=limit,
+            )
+            async for record in result:
+                suggestions.append({
+                    "type": record["type"],
+                    "name": record["name"],
+                    "id": record["id"],
+                    "relevance": min(record["connection_strength"] / 5.0, 1.0),
+                    "recency": record["recency"],
+                })
+        return suggestions
+
+    # ============ Interest Overlap (Group Features) ============
+
+    async def get_shared_interests(
+        self,
+        user1_id: UserId,
+        user2_id: UserId,
+    ) -> list[str]:
+        """Find shared interests between two users.
+        
+        Returns:
+            List of shared topic/interest names
+        """
+        query = """
+        MATCH (u1:KnowledgeNode {node_type: 'user', user_id: $user1_id})-[:INTERESTED_IN]->(t:KnowledgeNode)
+              <-[:INTERESTED_IN]-(u2:KnowledgeNode {node_type: 'user', user_id: $user2_id})
+        RETURN t.label as shared_interest
+        """
+        
+        interests = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                query,
+                user1_id=str(user1_id),
+                user2_id=str(user2_id),
+            )
+            async for record in result:
+                interests.append(record["shared_interest"])
+        return interests
+
+    async def get_group_consensus(
+        self,
+        group_id: str,
+        topic: str,
+    ) -> dict[str, Any]:
+        """Get group consensus on a topic.
+        
+        Analyzes what group members have said about a topic.
+        
+        Returns:
+            Dict with consensus info (opinions, agreement level)
+        """
+        query = """
+        MATCH (m:GroupMessageEmbedding {group_id: $group_id})
+        WHERE toLower(m.content) CONTAINS toLower($topic)
+        RETURN 
+            m.user_email as user,
+            m.content as content,
+            m.created_at as timestamp
+        ORDER BY m.created_at DESC
+        LIMIT 20
+        """
+        
+        mentions = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, group_id=group_id, topic=topic)
+            async for record in result:
+                mentions.append({
+                    "user": record["user"],
+                    "content": record["content"],
+                    "timestamp": record["timestamp"],
+                })
+        
+        return {
+            "topic": topic,
+            "mention_count": len(mentions),
+            "mentions": mentions,
+            "users_involved": list(set(m["user"] for m in mentions)),
+        }

@@ -1048,6 +1048,34 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
         except Exception as e:
             logger.debug(f"Semantic search failed (non-critical): {e}")
         
+        # =============================================================
+        # CONTEXTUAL SUGGESTIONS: Get related entities from social graph
+        # =============================================================
+        contextual_suggestions: list[dict] = []
+        try:
+            if ctx.deps.knowledge_graph_port:
+                # Extract potential entity names from user input
+                # Simple extraction - look for capitalized words that might be names
+                words = ctx.state.user_input.split()
+                potential_entities = [
+                    w.strip(",.!?") for w in words 
+                    if w and w[0].isupper() and len(w) > 1
+                ]
+                
+                if potential_entities:
+                    contextual_suggestions = await ctx.deps.knowledge_graph_port.get_contextual_suggestions(
+                        user_id=ctx.state.user.id,
+                        mentioned_entities=potential_entities[:5],  # Limit to 5 entities
+                        limit=5,
+                    )
+                    
+                    if contextual_suggestions:
+                        logger.info(f"Found {len(contextual_suggestions)} contextual suggestions from social graph")
+                        for sug in contextual_suggestions[:3]:
+                            logger.debug(f"  Suggestion: {sug.get('name')} ({sug.get('type')}, relevance={sug.get('relevance', 0):.2f})")
+        except Exception as e:
+            logger.debug(f"Contextual suggestions failed (non-critical): {e}")
+        
         # ReAct mode: Synthesize step results into final response
         if ctx.state.react_mode and ctx.state.step_results:
             await ctx.deps.emit_event("react_synthesis_start", "GenerateResponse", "Synthesizing step results...")
