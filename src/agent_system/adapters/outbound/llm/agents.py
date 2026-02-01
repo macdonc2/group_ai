@@ -211,12 +211,12 @@ Determine if the query needs a tool. Available tools:
    - This retrieves stored information about people in the user's social graph
    - tool_input: The person's name
 
-12. "get_pet_info" - Use when user asks about their PETS:
+12. "get_pet_info" - Use when user asks about a SPECIFIC NAMED pet:
    - "What do you know about Zane?" → tool: "get_pet_info", tool_input: "Zane"
-   - "Tell me about my dog" → tool: "get_pet_info", tool_input: "" (lists all pets)
-   - "What does my cat like to eat?" → tool: "get_pet_info", tool_input: "cat"
-   - This retrieves stored information about the user's pets
-   - tool_input: Pet name (or empty for all pets)
+   - "Tell me about Roxanne" → tool: "get_pet_info", tool_input: "Roxanne"
+   - This retrieves stored information about a specific pet by name
+   - tool_input: REQUIRED - the pet's name (not optional!)
+   - For general pet queries, use "list_pets" instead
 
 13. "get_location_info" - Use when user asks about a PLACE they've mentioned:
    - "What do you know about Uchi?" → tool: "get_location_info", tool_input: "Uchi"
@@ -229,9 +229,13 @@ Determine if the query needs a tool. Available tools:
    - "List people I've mentioned" → tool: "list_known_people", tool_input: null
    - "My social network" → tool: "list_known_people", tool_input: null
 
-15. "list_pets" - Use when user asks about their pets in general:
+15. "list_pets" - Use when user asks about their pets in general (not a specific named pet):
    - "What pets do I have?" → tool: "list_pets", tool_input: null
+   - "Tell me about my dogs" → tool: "list_pets", tool_input: "dog"
+   - "What can you tell me about my dogs?" → tool: "list_pets", tool_input: "dog"
    - "List my animals" → tool: "list_pets", tool_input: null
+   - "How many cats do I have?" → tool: "list_pets", tool_input: "cat"
+   - tool_input: Optional species filter (dog, cat, etc.)
 
 16. "list_locations" - Use when user asks about places they've mentioned:
    - "What places have I mentioned?" → tool: "list_locations", tool_input: null
@@ -262,7 +266,7 @@ EXAMPLES:
 - "What should we do for Zane's birthday?" → tool: "recall_about_topic", tool_input: "Zane"
   (NOT get_upcoming_events! Need to know if Zane is a dog, person, etc. first)
 - "What should I do with Bo today?" → tool: "recall_about_topic", tool_input: "Bo"  
-- "Plan something fun for my dog" → tool: "get_pet_info", tool_input: ""
+- "Plan something fun for my dog" → tool: "list_pets", tool_input: "dog"
 - "What would Sarah like for dinner?" → tool: "recall_about_topic", tool_input: "Sarah"
 
 DO NOT suggest generic event/schedule tools when the query is about a specific named entity!

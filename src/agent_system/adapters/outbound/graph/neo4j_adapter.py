@@ -1743,7 +1743,10 @@ class Neo4jAdapter(KnowledgeGraphPort):
         """
         results = []
         
-        # Search MessageEmbedding for topic mentions (most reliable source)
+        # Search MessageEmbedding for topic mentions
+        # CRITICAL: Prioritize USER messages over assistant messages!
+        # User messages contain defining info like "Zane is my dog"
+        # Assistant messages are just responses that mention the name
         message_query = """
         MATCH (m:MessageEmbedding {user_id: $user_id})
         WHERE toLower(m.content) CONTAINS toLower($topic)
@@ -1751,22 +1754,42 @@ class Neo4jAdapter(KnowledgeGraphPort):
             m.content as content,
             m.role as role,
             m.created_at as created_at,
-            'message' as source_type
-        ORDER BY m.created_at DESC
+            'message' as source_type,
+            CASE WHEN m.role = 'user' THEN 0 ELSE 1 END as priority
+        ORDER BY priority ASC, m.created_at DESC
         LIMIT $limit
         """
         
         # Also search KnowledgeNode labels
+        # CRITICAL: Prioritize nodes that DEFINE what the entity IS
+        # e.g., "User has a dog named Zane" should come before "Zane's birthday"
+        # Priority 0: topic/fact nodes with defining keywords (dog, pet, cat, spouse, etc.)
+        # Priority 1: other topic/fact nodes
+        # Priority 2: interaction nodes
         knowledge_query = """
         MATCH (k:KnowledgeNode)
-        WHERE k.user_id = $user_id 
-          AND (toLower(k.label) CONTAINS toLower($topic))
+        WHERE (k.user_id = $user_id OR k.user_id IS NULL)
+          AND toLower(k.label) CONTAINS toLower($topic)
+        WITH k, toLower(k.label) as lbl
+        WITH k, lbl,
+             CASE 
+                 WHEN k.node_type IN ['topic', 'fact', 'entity', 'preference', 'personal'] 
+                      AND (lbl CONTAINS 'dog' OR lbl CONTAINS 'pet' OR lbl CONTAINS 'cat' 
+                           OR lbl CONTAINS 'spouse' OR lbl CONTAINS 'wife' OR lbl CONTAINS 'husband'
+                           OR lbl CONTAINS 'friend' OR lbl CONTAINS 'brother' OR lbl CONTAINS 'sister'
+                           OR lbl CONTAINS 'son' OR lbl CONTAINS 'daughter' OR lbl CONTAINS 'parent'
+                           OR lbl CONTAINS 'is my' OR lbl CONTAINS 'is a' OR lbl CONTAINS 'is the')
+                 THEN 0
+                 WHEN k.node_type IN ['topic', 'fact', 'entity', 'preference', 'personal'] THEN 1
+                 ELSE 2
+             END as priority
         RETURN 
             k.label as content,
             k.node_type as role,
             k.created_at as created_at,
-            'knowledge' as source_type
-        ORDER BY k.created_at DESC
+            'knowledge' as source_type,
+            priority
+        ORDER BY priority ASC, k.created_at DESC
         LIMIT $limit
         """
         
@@ -1787,22 +1810,24 @@ class Neo4jAdapter(KnowledgeGraphPort):
                     "source_type": record["source_type"],
                 })
             
-            # Get knowledge node results
+            # Get knowledge node results - INSERT AT FRONT since they have defining info
+            knowledge_results = []
             result = await session.run(knowledge_query, **params)
             async for record in result:
                 # Avoid duplicates
                 content = record["content"]
                 if not any(r["content"] == content for r in results):
-                    results.append({
+                    knowledge_results.append({
                         "content": content,
                         "role": record["role"],
                         "created_at": record["created_at"],
                         "source_type": record["source_type"],
                     })
         
-        # Sort by created_at and limit
-        results.sort(key=lambda x: x.get("created_at", "") or "", reverse=True)
-        return results[:limit]
+        # Prioritize knowledge nodes (topic/fact) over messages
+        # Knowledge nodes contain defining info like "Zane is my dog"
+        combined = knowledge_results + results
+        return combined[:limit]
 
     # ============ Preference Operations ============
 
