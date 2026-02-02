@@ -1212,13 +1212,12 @@ async def get_upcoming_events(
         # Build query conditions
         conditions = [ExtractedEventModel.group_id.in_(search_group_ids)]
         
-        # Date range condition
-        date_condition = or_(
-            and_(
-                ExtractedEventModel.event_datetime >= start_date,
-                ExtractedEventModel.event_datetime <= end_date,
-            ),
-            ExtractedEventModel.event_datetime.is_(None),  # Include events without datetime
+        # Date range condition - ONLY include events with a specific datetime
+        # Events without datetime are not useful for "what do I have planned" queries
+        date_condition = and_(
+            ExtractedEventModel.event_datetime.isnot(None),
+            ExtractedEventModel.event_datetime >= start_date,
+            ExtractedEventModel.event_datetime <= end_date,
         )
         conditions.append(date_condition)
         

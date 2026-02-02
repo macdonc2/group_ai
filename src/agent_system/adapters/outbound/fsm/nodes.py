@@ -985,6 +985,36 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             }
             logger.debug(f"Houston events args: query={query}, category={category}")
         
+        elif tool_name == "list_pets":
+            # List pets with optional species filter
+            # tool_input should be species like "dog", "cat", or empty for all
+            species = None
+            if tool_input:
+                input_lower = tool_input.lower().strip()
+                if input_lower in ["dog", "dogs", "cat", "cats", "bird", "birds", "fish", "rabbit", "hamster"]:
+                    # Normalize to singular
+                    species = input_lower.rstrip("s")
+            ctx.state.tool_arguments = {"species": species} if species else {}
+            logger.debug(f"list_pets args: species={species}")
+        
+        elif tool_name == "get_pet_info":
+            # Get specific pet info - requires name
+            name = tool_input.strip() if tool_input else ""
+            if not name:
+                # No name provided - suggest using list_pets instead
+                ctx.state.tool_arguments = {}
+            else:
+                ctx.state.tool_arguments = {"name": name}
+            logger.debug(f"get_pet_info args: name={name}")
+        
+        elif tool_name == "list_known_people":
+            # List known people - no arguments needed
+            ctx.state.tool_arguments = {}
+        
+        elif tool_name == "list_locations":
+            # List locations - no arguments needed  
+            ctx.state.tool_arguments = {}
+        
         else:
             # Unknown tool - set empty arguments to avoid errors
             ctx.state.tool_arguments = {}
@@ -1072,6 +1102,10 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                             ctx.state.tool_result = f"Search results:\n{formatted}"
                         elif tool_name == "get_houston_events":
                             # Houston events: message already contains fully formatted output
+                            # Don't append raw data
+                            ctx.state.tool_result = result.message
+                        elif tool_name == "get_upcoming_events":
+                            # User's personal events: message already formatted as table
                             # Don't append raw data
                             ctx.state.tool_result = result.message
                         else:
@@ -1914,11 +1948,13 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
                         await ctx.deps.knowledge_graph_port.store_pet(
                             user_id=ctx.state.user.id,
                             name=pet.name,
+                            aliases=pet.aliases,
                             species=pet.species,
                             breed=pet.breed,
-                            personality=pet.personality,
+                            personality=pet.traits,  # ExtractedPet uses 'traits' field
+                            food_preferences=pet.food_preferences,
                         )
-                        logger.debug(f"Stored pet: {pet.name}")
+                        logger.info(f"Stored pet: {pet.name} (species={pet.species}, confidence={pet.confidence})")
                 
                 # Store extracted locations
                 for location in entity_result.locations:
