@@ -1,6 +1,7 @@
 """LLM agent for extracting events from group conversations."""
 
 import os
+from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
@@ -137,6 +138,7 @@ async def extract_events_from_text(
     model: str = "openai:gpt-4o",
     api_key: str | None = None,
     context: list[dict[str, str]] | None = None,
+    message_timestamp: datetime | None = None,
 ) -> EventExtractionResult:
     """Extract events from a text snippet with optional conversation context.
     
@@ -146,11 +148,27 @@ async def extract_events_from_text(
         api_key: Optional API key to use
         context: Optional list of recent messages for context, each with 'role' and 'content' keys
                  This helps extract full event details when user references something from recent conversation
+        message_timestamp: The timestamp when the message was originally sent.
+                          CRITICAL for resolving relative dates like "today", "tomorrow", "tonight".
+                          If not provided, current time is used (which can cause date errors for old messages).
         
     Returns:
         EventExtractionResult with found events
     """
     agent = create_event_extractor_agent(model, api_key)
+    
+    # Build date context - CRITICAL for resolving "today", "tomorrow", etc.
+    if message_timestamp:
+        date_context = f"""IMPORTANT - MESSAGE DATE CONTEXT:
+This message was sent on: {message_timestamp.strftime('%A, %B %d, %Y at %I:%M %p')}
+When the message says "today", it means {message_timestamp.strftime('%A, %B %d, %Y')}.
+When the message says "tomorrow", it means {(message_timestamp + __import__('datetime').timedelta(days=1)).strftime('%A, %B %d, %Y')}.
+When the message says "tonight", it means the evening of {message_timestamp.strftime('%A, %B %d, %Y')}.
+ALWAYS resolve relative dates based on when the message was SENT, not the current date.
+
+"""
+    else:
+        date_context = ""
     
     # Build the prompt with context if available
     if context:
@@ -158,7 +176,7 @@ async def extract_events_from_text(
             f"[{msg.get('role', 'user')}]: {msg.get('content', '')}" 
             for msg in context[-10:]  # Last 10 messages max
         )
-        full_prompt = f"""RECENT CONVERSATION CONTEXT:
+        full_prompt = f"""{date_context}RECENT CONVERSATION CONTEXT:
 {context_str}
 
 ---
@@ -166,7 +184,7 @@ async def extract_events_from_text(
 CURRENT MESSAGE TO ANALYZE (extract events from this, using context above for details):
 {text}"""
     else:
-        full_prompt = text
+        full_prompt = f"{date_context}{text}"
     
     result = await agent.run(full_prompt)
     return result.output

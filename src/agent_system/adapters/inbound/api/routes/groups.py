@@ -1556,10 +1556,15 @@ async def websocket_chat(
                                 logger.warning(f"Could not load conversation context: {ctx_err}")
                             
                             logger.info(f"Extracting events from: {content[:100]}")
+                            # Pass current timestamp so relative dates like "today" are resolved correctly
+                            # This is a real-time message, so current time is correct
+                            from datetime import datetime, timezone
+                            message_time = datetime.now(timezone.utc)
                             result = await extract_events_from_text(
                                 content, 
                                 api_key=api_key_for_extraction,
                                 context=recent_context if recent_context else None,
+                                message_timestamp=message_time,
                             )
                             logger.info(f"Event extraction result: {len(result.events)} events, reasoning: {result.reasoning}")
                             
@@ -1590,9 +1595,11 @@ async def websocket_chat(
                                                     
                                                     # Use smart datetime parser with LLM fallback for vague references
                                                     # "tonight" -> 6 PM, "tomorrow" -> 9 AM, "next week" -> 7 days at 9 AM
+                                                    # Pass message_time as reference so "today" is resolved correctly
                                                     event_datetime = await parse_vague_datetime(
                                                         extracted.datetime_str,
                                                         user_timezone=user_tz_name,
+                                                        reference_time=message_time,
                                                         api_key=api_key_for_extraction,
                                                     )
                                                     
