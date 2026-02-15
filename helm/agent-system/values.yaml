@@ -74,7 +74,8 @@ env:
   
   # LLM settings
   LLM_PROVIDER: "openai"
-  DEFAULT_MODEL: "gpt-4o-mini"
+  DEFAULT_MODEL: "gpt-5.2-2025-12-11"
+FALLBACK_MODEL: "gpt-5-mini-2025-08-07"
 
 # PostgreSQL subchart configuration (DISABLED - using custom deployment)
 postgresql:

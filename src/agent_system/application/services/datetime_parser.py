@@ -68,9 +68,9 @@ def _get_datetime_interpreter(api_key: str | None = None) -> Agent[None, Interpr
             pass
     
     if key:
-        model = OpenAIModel("gpt-4o-mini", provider=OpenAIProvider(api_key=key))
+        model = OpenAIModel("gpt-5-mini", provider=OpenAIProvider(api_key=key))
     else:
-        model = "openai:gpt-4o-mini"
+        model = "openai:gpt-5-mini"
     
     return Agent(
         model,

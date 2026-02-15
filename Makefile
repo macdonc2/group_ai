@@ -162,11 +162,11 @@ deploy-backend: build-backend push-backend rollout-backend
 # Build frontend only
 build-frontend:
 	@echo "Building frontend image for linux/amd64..."
-	docker build --platform linux/amd64 -f infra/docker/Dockerfile.frontend -t $(ACR_REGISTRY)/pydantic-ai-frontend:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 -f infra/docker/Dockerfile.frontend -t $(ACR_REGISTRY)/agent-system-frontend:$(IMAGE_TAG) .
 
 # Push frontend only
 push-frontend: acr-login
-	docker push $(ACR_REGISTRY)/pydantic-ai-frontend:$(IMAGE_TAG)
+	docker push $(ACR_REGISTRY)/agent-system-frontend:$(IMAGE_TAG)
 
 # Rollout restart frontend
 rollout-frontend:

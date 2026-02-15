@@ -47,49 +47,63 @@ class AnalyzeIntent(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         """Extract intent and entities from user input using the intent agent."""
         from agent_system.domain.value_objects import Intent, IntentType
         from agent_system.adapters.outbound.llm import create_intent_agent
-        
+
         await ctx.deps.emit_event("node_start", "AnalyzeIntent", "Analyzing user intent...")
-        
-        try:
-            # Create and run the intent analysis agent with conversation context
-            agent = create_intent_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
-            
-            # Build context-aware prompt for intent analysis
-            history_messages = ctx.state.conversation.get_context_messages()
-            if history_messages:
-                recent_context = "\n".join([
-                    f"{m.role.value}: {m.content.text[:200]}"
-                    for m in history_messages[-5:]  # Last 5 messages for context
-                ])
-                prompt = f"""Recent conversation:
+
+        # Build context-aware prompt for intent analysis
+        history_messages = ctx.state.conversation.get_context_messages()
+        if history_messages:
+            recent_context = "\n".join([
+                f"{m.role.value}: {m.content.text[:200]}"
+                for m in history_messages[-5:]
+            ])
+            prompt = f"""Recent conversation:
 {recent_context}
 
 Current message to analyze: {ctx.state.user_input}
 
 Analyze the intent of the current message in context of the conversation."""
-            else:
-                prompt = ctx.state.user_input
-            
-            # Verbose logging of intent analysis context
-            logger.info("=" * 80)
-            logger.info("🎯 ANALYZE INTENT - CONTEXT FED TO INTENT AGENT")
-            logger.info("=" * 80)
-            logger.info(f"User ID: {ctx.state.user.id}")
-            logger.info(f"Conversation ID: {ctx.state.conversation.id}")
-            logger.info(f"User Input: {ctx.state.user_input}")
-            logger.info(f"Conversation History Messages: {len(history_messages) if history_messages else 0}")
-            if history_messages:
-                logger.info("Recent Context (last 5 messages):")
-                for m in history_messages[-5:]:
-                    logger.info(f"  {m.role.value}: {m.content.text[:100]}...")
-            logger.info("-" * 40)
-            logger.info("FULL INTENT ANALYSIS PROMPT:")
-            logger.info(prompt)
-            logger.info("=" * 80)
-            
-            result = await agent.run(prompt)
-            
-            # Log intent result
+        else:
+            prompt = ctx.state.user_input
+
+        logger.info("=" * 80)
+        logger.info("🎯 ANALYZE INTENT - CONTEXT FED TO INTENT AGENT")
+        logger.info("=" * 80)
+        logger.info(f"User ID: {ctx.state.user.id}")
+        logger.info(f"Conversation ID: {ctx.state.conversation.id}")
+        logger.info(f"User Input: {ctx.state.user_input}")
+        logger.info(f"Conversation History Messages: {len(history_messages) if history_messages else 0}")
+        if history_messages:
+            logger.info("Recent Context (last 5 messages):")
+            for m in history_messages[-5:]:
+                logger.info(f"  {m.role.value}: {m.content.text[:100]}...")
+        logger.info("-" * 40)
+        logger.info("FULL INTENT ANALYSIS PROMPT:")
+        logger.info(prompt)
+        logger.info("=" * 80)
+
+        result = None
+        last_error: Exception | None = None
+
+        for model, label in [
+            (ctx.deps.default_model, "primary"),
+            (getattr(ctx.deps, "fallback_model", "openai:gpt-5-mini-2025-08-07"), "fallback"),
+        ]:
+            try:
+                agent = create_intent_agent(model, ctx.deps.openai_api_key)
+                result = await agent.run(prompt)
+                break
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    "Intent analysis with %s model failed: %s: %s",
+                    label,
+                    type(e).__name__,
+                    e,
+                )
+
+        if result is not None:
+            # Log and apply LLM result
             logger.info("=" * 80)
             logger.info("🎯 INTENT ANALYSIS RESULT")
             logger.info("=" * 80)
@@ -102,8 +116,7 @@ Analyze the intent of the current message in context of the conversation."""
             logger.info(f"Suggested Tool: {result.output.suggested_tool}")
             logger.info(f"Tool Input: {result.output.tool_input}")
             logger.info("=" * 80)
-            
-            # Map the LLM result to our domain
+
             intent_type_map = {
                 "question": IntentType.QUESTION,
                 "task": IntentType.TASK,
@@ -113,42 +126,49 @@ Analyze the intent of the current message in context of the conversation."""
                 "command": IntentType.COMMAND,
                 "meta": IntentType.META,
             }
-            
+
             intent_type = intent_type_map.get(
                 result.output.intent_type.lower(),
-                IntentType.EXPLORATION
+                IntentType.EXPLORATION,
             )
-            
+
             ctx.state.intent = Intent(
                 intent_type=intent_type,
                 description=result.output.description,
                 confidence=result.output.confidence,
                 entities=result.output.entities,
             )
-            
+
             ctx.state.entities = result.output.entities
             ctx.state.plan_needed = result.output.requires_planning
             ctx.state.is_about_assistant = result.output.is_about_assistant
-            
-            # Capture LLM-determined tool requirements
+
             if result.output.suggested_tool:
                 ctx.state.requires_tool = True
                 ctx.state.tool_name = result.output.suggested_tool
                 ctx.state.tool_input = result.output.tool_input
-            
-            await ctx.deps.emit_event("node_complete", "AnalyzeIntent", f"Intent: {ctx.state.intent.intent_type.value}", {
-                "intent_type": ctx.state.intent.intent_type.value,
-                "confidence": ctx.state.intent.confidence,
-                "entities": ctx.state.entities,
-                "is_about_assistant": ctx.state.is_about_assistant,
-                "suggested_tool": result.output.suggested_tool,
-            })
-            
-        except Exception as e:
-            # Fallback to simple intent detection if LLM fails
-            logger.error(f"Intent analysis LLM call failed: {type(e).__name__}: {e}")
-            user_input_lower = ctx.state.user_input.lower()
-            
+
+            await ctx.deps.emit_event(
+                "node_complete",
+                "AnalyzeIntent",
+                f"Intent: {ctx.state.intent.intent_type.value}",
+                {
+                    "intent_type": ctx.state.intent.intent_type.value,
+                    "confidence": ctx.state.intent.confidence,
+                    "entities": ctx.state.entities,
+                    "is_about_assistant": ctx.state.is_about_assistant,
+                    "suggested_tool": result.output.suggested_tool,
+                },
+            )
+        else:
+            # Heuristic fallback when both models fail
+            logger.error(
+                "Intent analysis failed with primary and fallback models: %s: %s",
+                type(last_error).__name__ if last_error else "Unknown",
+                last_error,
+            )
+            user_input_lower = ctx.state.user_input.lower().strip()
+
             if any(q in user_input_lower for q in ["what", "how", "why", "when", "where", "?"]):
                 intent_type = IntentType.QUESTION
             elif any(cmd in user_input_lower for cmd in ["create", "make", "build", "write", "implement"]):
@@ -159,18 +179,46 @@ Analyze the intent of the current message in context of the conversation."""
             else:
                 intent_type = IntentType.EXPLORATION
 
+            entities: list[str] = []
+            suggested_tool: str | None = None
+            tool_input_val: str | None = None
+
+            # "Tell me a joke about X" / "Tell me a story about X" -> recall about entity for context
+            for prefix in ["tell me a joke about", "tell me a story about", "tell me about", "what do you know about"]:
+                if prefix in user_input_lower:
+                    rest = user_input_lower.split(prefix, 1)[-1].strip().rstrip(".!?")
+                    if rest and len(rest) < 100:
+                        words = [w for w in rest.split() if w.lower() not in ("the", "a", "an")]
+                        if words:
+                            # Use last meaningful word as entity; full rest as tool input
+                            entities = [words[-1]]
+                            suggested_tool = "recall_about_topic"
+                            tool_input_val = rest
+                            break
+
             ctx.state.intent = Intent(
                 intent_type=intent_type,
                 description=ctx.state.user_input[:100],
                 confidence=0.6,
-                entities=[],
+                entities=entities,
             )
-            
-            await ctx.deps.emit_event("node_complete", "AnalyzeIntent", f"Intent (fallback): {intent_type.value}", {
-                "intent_type": intent_type.value,
-                "confidence": 0.6,
-                "fallback": True,
-            })
+            ctx.state.entities = entities
+            if suggested_tool:
+                ctx.state.requires_tool = True
+                ctx.state.tool_name = suggested_tool
+                ctx.state.tool_input = tool_input_val
+
+            await ctx.deps.emit_event(
+                "node_complete",
+                "AnalyzeIntent",
+                f"Intent (fallback): {intent_type.value}",
+                {
+                    "intent_type": intent_type.value,
+                    "confidence": 0.6,
+                    "fallback": True,
+                    "suggested_tool": suggested_tool,
+                },
+            )
         
         return UpdateKnowledge()
 
@@ -799,6 +847,11 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             # Use LLM-extracted word
             word = tool_input if tool_input else "word"
             ctx.state.tool_arguments = {"word": word}
+
+        elif tool_name == "search_internal_docs":
+            # Search internal docs for system/how-it-works questions
+            query = tool_input if tool_input else "knowledge graph semantic search memory"
+            ctx.state.tool_arguments = {"query": query, "max_sections": 5}
         
         elif tool_name == "get_current_datetime":
             # Pass user_id for timezone lookup
@@ -1100,6 +1153,12 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                                 for item in result.data[:5]
                             ])
                             ctx.state.tool_result = f"Search results:\n{formatted}"
+                        elif tool_name == "search_internal_docs":
+                            formatted = "\n\n".join([
+                                f"## {item['title']}\n{item['content']}"
+                                for item in result.data
+                            ])
+                            ctx.state.tool_result = f"Internal documentation:\n\n{formatted}"
                         elif tool_name == "get_houston_events":
                             # Houston events: message already contains fully formatted output
                             # Don't append raw data
@@ -2000,9 +2059,19 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
                         f"Extracted social entities: {len(entity_result.persons)} people, "
                         f"{len(entity_result.pets)} pets, {len(entity_result.locations)} locations"
                     )
+                else:
+                    logger.info(
+                        f"Entity extraction completed: 0 stored "
+                        f"(extracted: {len(entity_result.persons)} persons, "
+                        f"{len(entity_result.pets)} pets, {len(entity_result.locations)} locations) "
+                        f"reasoning: {entity_result.reasoning[:150] if entity_result.reasoning else 'none'}"
+                    )
                     
             except Exception as entity_err:
-                logger.debug(f"Social entity extraction skipped: {entity_err}")
+                logger.warning(
+                    f"Social entity extraction failed (will not store person/pet/location): {entity_err}",
+                    exc_info=True,
+                )
         
         # Store message embeddings for semantic search
         # Use per-user API key to create embedding adapter dynamically

@@ -29,7 +29,8 @@ class AgentDependencies:
 
     # Configuration
     openai_api_key: str = ""
-    default_model: str = "openai:gpt-4o"
+    default_model: str = "openai:gpt-5.2-2025-12-11"
+    fallback_model: str = "openai:gpt-5-mini-2025-08-07"
     temperature: float = 0.7
     max_tokens: int = 4096
     

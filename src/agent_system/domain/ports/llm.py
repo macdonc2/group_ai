@@ -22,7 +22,7 @@ class LLMResponse:
 class LLMConfig:
     """Configuration for LLM calls."""
 
-    model: str = "openai:gpt-4o"
+    model: str = "openai:gpt-5.2"
     temperature: float = 0.7
     max_tokens: int = 4096
     system_prompt: str | None = None

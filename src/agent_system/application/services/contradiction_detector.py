@@ -62,8 +62,8 @@ def _get_model(api_key: str | None = None) -> OpenAIModel | str:
     """Get model for contradiction assessment."""
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIModel("gpt-4o-mini", provider=OpenAIProvider(api_key=key))
-    return "openai:gpt-4o-mini"
+        return OpenAIModel("gpt-5-mini", provider=OpenAIProvider(api_key=key))
+    return "openai:gpt-5-mini"
 
 
 class ContradictionDetector:

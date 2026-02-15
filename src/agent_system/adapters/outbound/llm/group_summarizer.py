@@ -41,7 +41,7 @@ Be concise but insightful - help members quickly understand what's been happenin
 """
 
 
-def create_group_summarizer_agent(model: str = "openai:gpt-4o") -> Agent[None, GroupSummaryResult]:
+def create_group_summarizer_agent(model: str = "openai:gpt-5.2") -> Agent[None, GroupSummaryResult]:
     """Create an agent for generating group summaries.
     
     Args:
@@ -59,7 +59,7 @@ def create_group_summarizer_agent(model: str = "openai:gpt-4o") -> Agent[None, G
 
 async def generate_group_summary(
     messages_text: str,
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
 ) -> GroupSummaryResult:
     """Generate a summary of group conversations.
     
@@ -121,7 +121,7 @@ Suggest concrete, actionable ideas rather than vague possibilities.
 """
 
 
-def create_social_matcher_agent(model: str = "openai:gpt-4o") -> Agent[None, SocialMatchResult]:
+def create_social_matcher_agent(model: str = "openai:gpt-5.2") -> Agent[None, SocialMatchResult]:
     """Create an agent for social matching and suggestions.
     
     Args:
@@ -139,7 +139,7 @@ def create_social_matcher_agent(model: str = "openai:gpt-4o") -> Agent[None, Soc
 
 async def generate_social_suggestions(
     context_text: str,
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
 ) -> SocialMatchResult:
     """Generate social suggestions for a group.
     

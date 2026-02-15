@@ -23,13 +23,13 @@ def _get_model(model_string: str, api_key: str | None = None) -> OpenAIModel | s
     """Get a model instance, using api_key if provided.
     
     Args:
-        model_string: Model string like "openai:gpt-4o" or "gpt-4o"
+        model_string: Model string like "openai:gpt-5.2" or "gpt-5.2"
         api_key: Optional API key to use (if not provided, uses env var)
         
     Returns:
         OpenAIModel instance if api_key provided, otherwise model string
     """
-    # Extract model name from "openai:gpt-4o" format
+    # Extract model name from "openai:gpt-5.2" format
     if ":" in model_string:
         _, model_name = model_string.split(":", 1)
     else:
@@ -90,6 +90,8 @@ TOOL OUTPUT FORMATTING:
 - You can add context BEFORE and AFTER the table, but always preserve the table itself
 - Example: If tool returns "| Event | Time |...", include that exact table in your response
 - Tables help users scan information quickly - don't convert them to paragraphs
+- When tool output contains INTERNAL DOCUMENTATION (how the app works), use it accurately to answer.
+  Synthesize the doc content into a clear, helpful explanation - don't just dump raw sections.
 """
 
 INTENT_SYSTEM_PROMPT = """You analyze user messages to understand their intent and determine if a tool is needed.
@@ -141,15 +143,25 @@ Determine if the query needs a tool. Available tools:
 3. "define_word" - For word definitions, meanings
    - tool_input: The word to define
    - Example: "What does 'ephemeral' mean?" → tool: "define_word", input: "ephemeral"
+
+4. "search_internal_docs" - USE THIS when user asks HOW the app works:
+   - "How does the knowledge graph work?" → tool: "search_internal_docs", input: "knowledge graph"
+   - "How does semantic search work?" → tool: "search_internal_docs", input: "semantic search"
+   - "How does the app remember things?" → tool: "search_internal_docs", input: "memory"
+   - "How does conversational history work?" → tool: "search_internal_docs", input: "conversational history"
+   - "How does memory work?" → tool: "search_internal_docs", input: "memory"
+   - Any "how does X work" about the app → tool: "search_internal_docs", input: "<relevant terms>"
+   - tool_input: Search terms from the question (e.g. "knowledge graph", "semantic search", "memory")
+   - CRITICAL: Use this for meta questions about HOW the system works, NOT for general web research
    
-4. "random_fact" - When user wants trivia or a fun fact
+5. "random_fact" - When user wants trivia or a fun fact
    - tool_input: null (no input needed)
    
-5. "get_current_datetime" - For current time, date, day of week (when user ONLY needs the time/date itself)
+6. "get_current_datetime" - For current time, date, day of week (when user ONLY needs the time/date itself)
    - tool_input: null (no input needed)
    - Note: For queries like "events this week" use web_search instead with date context in the query
    
-6. "summarize_user_knowledge" - ALWAYS use when user asks about:
+7. "summarize_user_knowledge" - ALWAYS use when user asks about:
    - What you know about them ("What do you know about me?")
    - Their interests or history ("What are my interests?", "What have we discussed?")
    - Their profile or preferences ("Tell me about myself", "Summarize my profile")
@@ -157,7 +169,7 @@ Determine if the query needs a tool. Available tools:
    - tool_input: null (user_id is injected automatically)
    - THIS IS CRITICAL: Any variation of "what do you know about me" MUST trigger this tool
 
-7. "recall_about_topic" - ALWAYS use when user asks about a SPECIFIC person, pet, topic, or entity:
+8. "recall_about_topic" - ALWAYS use when user asks about a SPECIFIC person, pet, topic, or entity:
    - "Tell me about Bo" → tool: "recall_about_topic", tool_input: "Bo"
    - "What do you know about Zane?" → tool: "recall_about_topic", tool_input: "Zane"
    - "Remind me about the cat discussion" → tool: "recall_about_topic", tool_input: "cat"
@@ -165,22 +177,27 @@ Determine if the query needs a tool. Available tools:
    - tool_input: The entity/topic name to look up
    - IMPORTANT: RESOLVE PRONOUNS! If user says "his interests" and conversation is about "Zane", use tool_input: "Zane interests" NOT "his interests"
 
-8. "recall_group_topic" - Use in GROUP CHATS when user asks about group discussions or shared knowledge:
+9. "recall_group_topic" - Use in GROUP CHATS when user asks about group discussions or shared knowledge:
    - "What has the group discussed about X?" → tool: "recall_group_topic", tool_input: "X"
    - "Has anyone talked about Y before?" → tool: "recall_group_topic", tool_input: "Y"
    - "What do we know about Z?" → tool: "recall_group_topic", tool_input: "Z"
    - tool_input: The topic to search for in group history
 
-9. "get_upcoming_events" - Use when user asks about their schedule, events, or plans:
+10. "get_upcoming_events" - ALWAYS use for ANY question about events, plans, schedule, or things happening.
+   The user stores local/city events in the app (e.g., Houston events, concerts, festivals) as well as personal events.
+   Do NOT use web_search for event queries - use get_upcoming_events instead.
+   
    - FILTERING OPTIONS (combine as needed in tool_input):
      a) Timeframe: "today", "tomorrow", "week", "month", "all"
-     b) Search keyword: Include the specific event/topic to find (e.g., "haircut", "meeting", "dentist")
+     b) Search keyword: Include the specific event/topic to find (e.g., "haircut", "meeting", "Houston", "concert")
      c) Temporal: "past" (past events), "future" (upcoming), "current" (happening now)
      d) Specific date: Include date like "January 30" or "2026-01-30"
    
    - EXAMPLES:
      - "What do I have planned this week?" → tool_input: "week"
      - "Any events today?" → tool_input: "today"
+     - "What events are in Houston?" → tool_input: "Houston"
+     - "What's happening this weekend?" → tool_input: "week"
      - "When is my haircut?" → tool_input: "haircut" (JUST the keyword - finds specific event!)
      - "When's my dentist appointment?" → tool_input: "dentist"
      - "What meetings do I have tomorrow?" → tool_input: "tomorrow meeting"
@@ -192,7 +209,7 @@ Determine if the query needs a tool. Available tools:
    - CRITICAL: When asking about a SPECIFIC event (haircut, meeting, appointment), include the keyword!
    - CRITICAL: Use this for personal schedule/event queries, NOT web_search
 
-10. "get_houston_events" - Use when user asks about Houston area events, concerts, activities, things to do:
+11. "get_houston_events" - Use when user asks about Houston area events, concerts, activities, things to do:
    - "What's happening in Houston this weekend?" → tool: "get_houston_events", tool_input: ""
    - "Any concerts tonight?" → tool: "get_houston_events", tool_input: "concert"
    - "Cycling events near me" → tool: "get_houston_events", tool_input: "cycling"
@@ -204,32 +221,32 @@ Determine if the query needs a tool. Available tools:
 
 === SOCIAL GRAPH & KNOWLEDGE TOOLS ===
 
-11. "get_person_info" - Use when user asks about a SPECIFIC PERSON they've mentioned before:
+12. "get_person_info" - Use when user asks about a SPECIFIC PERSON they've mentioned before:
    - "What do you know about Sarah?" → tool: "get_person_info", tool_input: "Sarah"
    - "Tell me about my friend Jake" → tool: "get_person_info", tool_input: "Jake"
    - "Who is Rachel?" → tool: "get_person_info", tool_input: "Rachel"
    - This retrieves stored information about people in the user's social graph
    - tool_input: The person's name
 
-12. "get_pet_info" - Use when user asks about a SPECIFIC NAMED pet:
+13. "get_pet_info" - Use when user asks about a SPECIFIC NAMED pet:
    - "What do you know about Zane?" → tool: "get_pet_info", tool_input: "Zane"
    - "Tell me about Roxanne" → tool: "get_pet_info", tool_input: "Roxanne"
    - This retrieves stored information about a specific pet by name
    - tool_input: REQUIRED - the pet's name (not optional!)
    - For general pet queries, use "list_pets" instead
 
-13. "get_location_info" - Use when user asks about a PLACE they've mentioned:
+14. "get_location_info" - Use when user asks about a PLACE they've mentioned:
    - "What do you know about Uchi?" → tool: "get_location_info", tool_input: "Uchi"
    - "Tell me about that restaurant" → tool: "get_location_info", tool_input: "<restaurant name from context>"
    - This retrieves stored information about locations
    - tool_input: Location name
 
-14. "list_known_people" - Use when user asks who they've told you about:
+15. "list_known_people" - Use when user asks who they've told you about:
    - "Who have I told you about?" → tool: "list_known_people", tool_input: null
    - "List people I've mentioned" → tool: "list_known_people", tool_input: null
    - "My social network" → tool: "list_known_people", tool_input: null
 
-15. "list_pets" - Use when user asks about their pets in general (not a specific named pet):
+16. "list_pets" - Use when user asks about their pets in general (not a specific named pet):
    - "What pets do I have?" → tool: "list_pets", tool_input: null
    - "Tell me about my dogs" → tool: "list_pets", tool_input: "dog"
    - "What can you tell me about my dogs?" → tool: "list_pets", tool_input: "dog"
@@ -237,17 +254,17 @@ Determine if the query needs a tool. Available tools:
    - "How many cats do I have?" → tool: "list_pets", tool_input: "cat"
    - tool_input: Optional species filter (dog, cat, etc.)
 
-16. "list_locations" - Use when user asks about places they've mentioned:
+17. "list_locations" - Use when user asks about places they've mentioned:
    - "What places have I mentioned?" → tool: "list_locations", tool_input: null
    - "Where have we talked about?" → tool: "list_locations", tool_input: null
 
-17. "get_user_preferences" - Use when user asks about their preferences:
+18. "get_user_preferences" - Use when user asks about their preferences:
    - "What are my food preferences?" → tool: "get_user_preferences", tool_input: "food"
    - "What do I like?" → tool: "get_user_preferences", tool_input: ""
    - "My restaurant preferences" → tool: "get_user_preferences", tool_input: "restaurant"
    - tool_input: Category to filter (or empty for all preferences)
 
-18. "recall_from_period" - Use when user asks about messages from a specific time:
+19. "recall_from_period" - Use when user asks about messages from a specific time:
    - "What did we talk about last week?" → tool: "recall_from_period", tool_input: "last week"
    - "What happened yesterday?" → tool: "recall_from_period", tool_input: "yesterday"
    - "January discussions" → tool: "recall_from_period", tool_input: "January 2026"
@@ -442,11 +459,11 @@ Examples: "User has a friend named Zane who has a bird", "User prefers concise a
 """
 
 
-def create_coordinator_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a coordinator agent with custom model.
     
     Args:
-        model: The model to use (e.g., "openai:gpt-4o", "openai:gpt-4o-mini")
+        model: The model to use (e.g., "openai:gpt-5.2", "openai:gpt-5-mini")
         api_key: Optional API key to use
         
     Returns:
@@ -459,7 +476,7 @@ def create_coordinator_agent(model: str = "openai:gpt-4o", api_key: str | None =
     )
 
 
-def create_streaming_coordinator_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_streaming_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a coordinator agent optimized for streaming (plain text output).
     
     This version uses plain text output instead of structured ResponseGeneration,
@@ -467,7 +484,7 @@ def create_streaming_coordinator_agent(model: str = "openai:gpt-4o", api_key: st
     streaming in group chats.
     
     Args:
-        model: The model to use (e.g., "openai:gpt-4o", "openai:gpt-4o-mini")
+        model: The model to use (e.g., "openai:gpt-5.2", "openai:gpt-5-mini")
         api_key: Optional API key to use
         
     Returns:
@@ -480,7 +497,7 @@ def create_streaming_coordinator_agent(model: str = "openai:gpt-4o", api_key: st
     )
 
 
-def create_intent_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_intent_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create an intent analysis agent with custom model.
     
     Args:
@@ -497,7 +514,7 @@ def create_intent_agent(model: str = "openai:gpt-4o", api_key: str | None = None
     )
 
 
-def create_planning_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_planning_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a planning agent with custom model.
     
     Args:
@@ -514,7 +531,7 @@ def create_planning_agent(model: str = "openai:gpt-4o", api_key: str | None = No
     )
 
 
-def create_tool_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_tool_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a tool selection agent with custom model.
     
     Args:
@@ -531,7 +548,7 @@ def create_tool_agent(model: str = "openai:gpt-4o", api_key: str | None = None) 
     )
 
 
-def create_knowledge_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_knowledge_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a knowledge extraction agent with custom model.
     
     Args:
@@ -548,7 +565,7 @@ def create_knowledge_agent(model: str = "openai:gpt-4o", api_key: str | None = N
     )
 
 
-def create_react_planning_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_react_planning_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a ReAct-style planning agent that breaks down problems into reasoning steps.
     
     Args:
@@ -565,7 +582,7 @@ def create_react_planning_agent(model: str = "openai:gpt-4o", api_key: str | Non
     )
 
 
-def create_step_execution_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_step_execution_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create an agent that executes a single step in ReAct style.
     
     Args:
@@ -582,7 +599,7 @@ def create_step_execution_agent(model: str = "openai:gpt-4o", api_key: str | Non
     )
 
 
-def create_synthesis_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create an agent that synthesizes step results into a final response.
     
     Args:
@@ -599,7 +616,7 @@ def create_synthesis_agent(model: str = "openai:gpt-4o", api_key: str | None = N
     )
 
 
-def create_streaming_synthesis_agent(model: str = "openai:gpt-4o", api_key: str | None = None) -> Agent:
+def create_streaming_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
     """Create a synthesis agent optimized for streaming (plain text output).
     
     Args:
@@ -618,30 +635,30 @@ def create_streaming_synthesis_agent(model: str = "openai:gpt-4o", api_key: str 
 
 # Lazy-loaded agents (only instantiated when API key is available)
 @lru_cache
-def get_coordinator_agent(model: str = "openai:gpt-4o") -> Agent:
+def get_coordinator_agent(model: str = "openai:gpt-5.2") -> Agent:
     """Get or create the coordinator agent."""
     return create_coordinator_agent(model)
 
 
 @lru_cache
-def get_intent_agent(model: str = "openai:gpt-4o") -> Agent:
+def get_intent_agent(model: str = "openai:gpt-5.2") -> Agent:
     """Get or create the intent agent."""
     return create_intent_agent(model)
 
 
 @lru_cache
-def get_planning_agent(model: str = "openai:gpt-4o") -> Agent:
+def get_planning_agent(model: str = "openai:gpt-5.2") -> Agent:
     """Get or create the planning agent."""
     return create_planning_agent(model)
 
 
 @lru_cache
-def get_tool_agent(model: str = "openai:gpt-4o") -> Agent:
+def get_tool_agent(model: str = "openai:gpt-5.2") -> Agent:
     """Get or create the tool agent."""
     return create_tool_agent(model)
 
 
 @lru_cache
-def get_knowledge_agent(model: str = "openai:gpt-4o") -> Agent:
+def get_knowledge_agent(model: str = "openai:gpt-5.2") -> Agent:
     """Get or create the knowledge agent."""
     return create_knowledge_agent(model)

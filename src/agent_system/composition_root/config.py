@@ -42,7 +42,14 @@ class Settings(BaseSettings):
     api_port: int = Field(default=8000, description="API port")
 
     # Agent Configuration
-    default_model: str = Field(default="openai:gpt-4o", description="Default LLM model")
+    default_model: str = Field(
+        default="openai:gpt-5.2-2025-12-11",
+        description="Default LLM model",
+    )
+    fallback_model: str = Field(
+        default="openai:gpt-5-mini-2025-08-07",
+        description="Fallback LLM model for intent/utility when primary fails",
+    )
     max_tokens: int = Field(default=4096, description="Maximum tokens for LLM responses")
     temperature: float = Field(default=0.7, description="LLM temperature")
 

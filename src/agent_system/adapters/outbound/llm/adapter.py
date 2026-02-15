@@ -11,7 +11,7 @@ from agent_system.domain.value_objects import Message, MessageRole
 class OpenAIAdapter(LLMPort):
     """OpenAI adapter using PydanticAI."""
 
-    def __init__(self, api_key: str, default_model: str = "openai:gpt-4o") -> None:
+    def __init__(self, api_key: str, default_model: str = "openai:gpt-5.2") -> None:
         """Initialize the OpenAI adapter.
         
         Args:

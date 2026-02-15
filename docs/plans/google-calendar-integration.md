@@ -196,7 +196,7 @@ class UserPreferences(BaseModel):
     """User preferences and settings."""
     
     # Existing fields...
-    default_model: str = "openai:gpt-4o"
+    default_model: str = "openai:gpt-5.2"
     temperature: float = 0.7
     max_tokens: int = 4096
     auto_plan: bool = True

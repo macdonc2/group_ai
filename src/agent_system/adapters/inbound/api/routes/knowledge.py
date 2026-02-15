@@ -5,9 +5,27 @@ from fastapi import APIRouter, Depends, HTTPException
 from agent_system.adapters.inbound.api.dependencies import CurrentUserId, get_current_user
 from agent_system.composition_root.container import get_container
 from agent_system.domain.entities import User
+from agent_system.domain.value_objects import KnowledgeNodeId
 
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
+
+# Color mapping for all node types (single master graph)
+TYPE_COLORS = {
+    "user": "#3b82f6",       # blue
+    "interaction": "#10b981",  # green
+    "topic": "#f59e0b",       # amber
+    "tool": "#8b5cf6",        # purple
+    "suggestion": "#ec4899",  # pink
+    "person": "#06b6d4",      # cyan
+    "pet": "#84cc16",         # lime
+    "location": "#f97316",    # orange
+}
+
+
+def _node_label(text: str, max_len: int = 30) -> str:
+    """Truncate label for display."""
+    return text[:max_len] + "..." if len(text) > max_len else text
 
 
 @router.get("/graph")
@@ -15,94 +33,138 @@ async def get_user_knowledge_graph(
     current_user_id: CurrentUserId,
     current_user: User = Depends(get_current_user),
 ) -> dict:
-    """Get the knowledge graph data for the current user.
-    
-    Returns nodes and links in a format suitable for visualization.
+    """Get the full knowledge graph for the current user.
+
+    Returns nodes and links for visualization: KnowledgeNodes (user, topic,
+    tool, interaction, suggestion) plus social graph nodes (person, pet,
+    location) as one unified graph.
     """
     container = await get_container()
-    
+
     if not container.knowledge_graph_adapter:
         raise HTTPException(
             status_code=503,
             detail="Knowledge graph service not available"
         )
-    
+
     try:
-        # Fix user node label if it's showing UUID instead of email
-        # This runs a one-time update to correct old nodes
-        await container.knowledge_graph_adapter.update_user_label(
+        kg = container.knowledge_graph_adapter
+
+        # Fix user node label if needed
+        await kg.update_user_label(
             user_id=current_user_id,
             label=current_user.email,
         )
-        
-        # Get all nodes connected to the user
-        from agent_system.domain.entities import KnowledgeNodeType
-        
-        # Get user's nodes
-        user_nodes = await container.knowledge_graph_adapter.get_user_nodes(
+
+        # 1. Knowledge nodes (user, topic, tool, interaction, suggestion)
+        user_nodes = await kg.get_user_nodes(
             user_id=current_user_id,
-            node_type=None,  # All types
+            node_type=None,
         )
-        
-        # Build response with nodes and links
-        nodes = []
-        links = []
-        node_ids = set()
-        
-        # Color mapping for node types
-        type_colors = {
-            "user": "#3b82f6",       # blue
-            "interaction": "#10b981", # green
-            "topic": "#f59e0b",       # amber
-            "tool": "#8b5cf6",        # purple
-            "suggestion": "#ec4899",  # pink
-        }
-        
-        # Add all nodes
+
+        nodes: list[dict] = []
+        node_ids: set[str] = set()
+
         for node in user_nodes:
             node_ids.add(str(node.id))
             nodes.append({
                 "id": str(node.id),
-                "label": node.label[:30] + "..." if len(node.label) > 30 else node.label,
+                "label": _node_label(node.label),
                 "fullLabel": node.label,
                 "type": node.node_type.value,
-                "color": type_colors.get(node.node_type.value, "#6b7280"),
+                "color": TYPE_COLORS.get(node.node_type.value, "#6b7280"),
                 "properties": node.properties,
             })
-        
-        # Get relationships for each node
-        for node in user_nodes:
+
+        # 2. Social graph nodes (person, pet, location)
+        people = await kg.list_known_people(current_user_id)
+        pets = await kg.list_pets(current_user_id)
+        locations = await kg.list_locations(current_user_id)
+
+        for p in people or []:
+            nid = p.get("id") or p.get("name", "")
+            if nid and str(nid) not in node_ids:
+                node_ids.add(str(nid))
+                name = p.get("name", str(nid))
+                rel = p.get("relationship_type", "")
+                full = f"{name}" + (f" ({rel})" if rel else "")
+                nodes.append({
+                    "id": str(nid),
+                    "label": _node_label(name),
+                    "fullLabel": full,
+                    "type": "person",
+                    "color": TYPE_COLORS["person"],
+                    "properties": dict(p),
+                })
+
+        for p in pets or []:
+            nid = p.get("id") or p.get("name", "")
+            if nid and str(nid) not in node_ids:
+                node_ids.add(str(nid))
+                name = p.get("name", str(nid))
+                species = p.get("species", "")
+                full = f"{name}" + (f" ({species})" if species else "")
+                nodes.append({
+                    "id": str(nid),
+                    "label": _node_label(name),
+                    "fullLabel": full,
+                    "type": "pet",
+                    "color": TYPE_COLORS["pet"],
+                    "properties": dict(p),
+                })
+
+        for loc in locations or []:
+            nid = loc.get("id") or loc.get("name", "")
+            if nid and str(nid) not in node_ids:
+                node_ids.add(str(nid))
+                name = loc.get("name", str(nid))
+                loc_type = loc.get("location_type", "")
+                full = f"{name}" + (f" ({loc_type})" if loc_type else "")
+                nodes.append({
+                    "id": str(nid),
+                    "label": _node_label(name),
+                    "fullLabel": full,
+                    "type": "location",
+                    "color": TYPE_COLORS["location"],
+                    "properties": dict(loc),
+                })
+
+        # 3. Relationships: KnowledgeNodes + User->Person/Pet/Location
+        links: list[dict] = []
+        all_node_refs: list[dict] = [{"id": str(n.id)} for n in user_nodes]
+        all_node_refs += [{"id": n["id"]} for n in nodes if n["type"] in ("person", "pet", "location")]
+
+        for node_ref in all_node_refs:
+            nid = node_ref.get("id")
+            if not nid:
+                continue
             try:
-                relationships = await container.knowledge_graph_adapter.get_relationships(
-                    node_id=node.id,
+                rels = await kg.get_relationships(
+                    node_id=KnowledgeNodeId.from_string(str(nid)),
                     direction="both",
                 )
-                
-                for rel in relationships:
-                    source = str(rel.source_id)
-                    target = str(rel.target_id)
-                    
-                    # Only include links where both nodes are in our set
-                    if source in node_ids and target in node_ids:
+                for rel in rels:
+                    src = str(rel.source_id)
+                    tgt = str(rel.target_id)
+                    if src in node_ids and tgt in node_ids:
                         links.append({
-                            "source": source,
-                            "target": target,
+                            "source": src,
+                            "target": tgt,
                             "type": rel.relation_type.value,
                             "label": rel.relation_type.value.replace("_", " "),
                         })
             except Exception:
-                # Skip relationships that fail
                 continue
-        
+
         # Deduplicate links
-        seen_links = set()
-        unique_links = []
+        seen: set[str] = set()
+        unique_links: list[dict] = []
         for link in links:
             key = f"{link['source']}-{link['target']}-{link['type']}"
-            if key not in seen_links:
-                seen_links.add(key)
+            if key not in seen:
+                seen.add(key)
                 unique_links.append(link)
-        
+
         return {
             "nodes": nodes,
             "links": unique_links,
@@ -110,12 +172,12 @@ async def get_user_knowledge_graph(
                 "total_nodes": len(nodes),
                 "total_links": len(unique_links),
                 "node_types": {
-                    node_type: sum(1 for n in nodes if n["type"] == node_type)
-                    for node_type in set(n["type"] for n in nodes)
+                    t: sum(1 for n in nodes if n["type"] == t)
+                    for t in set(n["type"] for n in nodes)
                 }
             }
         }
-        
+
     except Exception as e:
         raise HTTPException(
             status_code=500,

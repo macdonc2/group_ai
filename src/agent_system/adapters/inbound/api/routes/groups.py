@@ -1385,6 +1385,7 @@ async def websocket_chat(
                                     embedding_port=container.embedding_adapter,
                                     openai_api_key=agent_api_key,
                                     default_model=settings.default_model,
+                                    fallback_model=settings.fallback_model,
                                     event_callback=streaming_event_callback,
                                 )
                                 
@@ -1503,169 +1504,176 @@ async def websocket_chat(
                             )
                     
                     # Extract events from the message asynchronously
-                    logger.info(f"=== Starting event extraction for message: {content[:50]}... ===")
-                    try:
-                        from agent_system.adapters.outbound.llm import extract_events_from_text
-                        from agent_system.composition_root.config import get_settings
-                        
-                        # Get API key for event extraction
-                        api_key_for_extraction: str | None = None
-                        async with _database.session() as session:
-                            user_for_key = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
-                            if user_for_key and user_for_key.has_api_key():
-                                try:
-                                    from agent_system.domain.utils.encryption import get_api_key_encryption
-                                    encryption = get_api_key_encryption()
-                                    api_key_for_extraction = encryption.decrypt(user_for_key.encrypted_openai_api_key)
-                                except Exception as decrypt_err:
-                                    logger.warning(f"Failed to decrypt user API key for events: {decrypt_err}")
-                        
-                        # Fall back to system key if user key not available
-                        if not api_key_for_extraction:
-                            settings = get_settings()
-                            api_key_for_extraction = settings.openai_api_key
-                        
-                        if not api_key_for_extraction:
-                            logger.warning("No API key available for event extraction, skipping")
-                        else:
-                            # Fetch recent conversation context for better event extraction
-                            # This allows the extractor to match "We're going to the Queen Legacy show" 
-                            # with the full event details from a recent agent response
-                            recent_context: list[dict[str, str]] = []
-                            try:
-                                async with _database.session() as context_session:
-                                    context_conv_repo = SQLAlchemyGroupConversationRepository(context_session)
-                                    context_conv = await context_conv_repo.get(
-                                        GroupConversationId.from_string(conversation_id)
-                                    )
-                                    if context_conv and context_conv.messages:
-                                        # Get last 10 messages (excluding the current one we just added)
-                                        # StoredGroupMessage has .message.role and .message.content.text
-                                        recent_msgs = list(context_conv.messages)[-11:-1] if len(context_conv.messages) > 1 else []
-                                        for stored_msg in recent_msgs:
-                                            # Access the inner Message object
-                                            inner_msg = stored_msg.message
-                                            role_str = inner_msg.role.value if hasattr(inner_msg.role, 'value') else str(inner_msg.role)
-                                            content_str = inner_msg.content.text if hasattr(inner_msg.content, 'text') else str(inner_msg.content)
-                                            recent_context.append({
-                                                "role": role_str,
-                                                "content": content_str,
-                                            })
-                                        logger.info(f"Loaded {len(recent_context)} messages as context for event extraction")
-                            except Exception as ctx_err:
-                                logger.warning(f"Could not load conversation context: {ctx_err}")
+                    # Skip event extraction for agent queries - these are questions, not event announcements
+                    is_agent_query = content.strip().lower().startswith("@agent")
+                    
+                    if is_agent_query:
+                        logger.info(f"Skipping event extraction for agent query: {content[:50]}...")
+                    else:
+                        logger.info(f"=== Starting event extraction for message: {content[:50]}... ===")
+                        try:
+                            from agent_system.adapters.outbound.llm import extract_events_from_text
+                            from agent_system.composition_root.config import get_settings
                             
-                            logger.info(f"Extracting events from: {content[:100]}")
-                            # Pass current timestamp so relative dates like "today" are resolved correctly
-                            # This is a real-time message, so current time is correct
-                            from datetime import datetime, timezone
-                            message_time = datetime.now(timezone.utc)
-                            result = await extract_events_from_text(
-                                content, 
-                                api_key=api_key_for_extraction,
-                                context=recent_context if recent_context else None,
-                                message_timestamp=message_time,
-                            )
-                            logger.info(f"Event extraction result: {len(result.events)} events, reasoning: {result.reasoning}")
-                            
-                            if result.events:
-                                async with _database.session() as session:
-                                    event_repo = SQLAlchemyExtractedEventRepository(session)
-                                    
-                                    # Get the user's timezone for proper datetime parsing
-                                    from zoneinfo import ZoneInfo
-                                    user_tz_name = "UTC"
+                            # Get API key for event extraction
+                            api_key_for_extraction: str | None = None
+                            async with _database.session() as session:
+                                user_for_key = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
+                                if user_for_key and user_for_key.has_api_key():
                                     try:
-                                        user_repo = SQLAlchemyUserRepository(session)
-                                        user_for_tz = await user_repo.get(UserId.from_string(user_id))
-                                        if user_for_tz and user_for_tz.timezone:
-                                            user_tz_name = user_for_tz.timezone
-                                            logger.info(f"Using user timezone for event parsing: {user_tz_name}")
-                                    except Exception as tz_err:
-                                        logger.warning(f"Could not get user timezone: {tz_err}")
-                                    
-                                    for extracted in result.events:
-                                        logger.info(f"Extracted event: {extracted.title}, confidence: {extracted.confidence}")
-                                        if extracted.confidence >= 0.7:
-                                            # Try to parse the datetime string with smart vague reference handling
-                                            event_datetime = None
-                                            if extracted.datetime_str:
-                                                try:
-                                                    from agent_system.application.services import parse_vague_datetime
-                                                    
-                                                    # Use smart datetime parser with LLM fallback for vague references
-                                                    # "tonight" -> 6 PM, "tomorrow" -> 9 AM, "next week" -> 7 days at 9 AM
-                                                    # Pass message_time as reference so "today" is resolved correctly
-                                                    event_datetime = await parse_vague_datetime(
-                                                        extracted.datetime_str,
-                                                        user_timezone=user_tz_name,
-                                                        reference_time=message_time,
-                                                        api_key=api_key_for_extraction,
-                                                    )
-                                                    
-                                                    if event_datetime:
-                                                        logger.info(f"Parsed datetime (user tz {user_tz_name}): {extracted.datetime_str} -> UTC: {event_datetime}")
-                                                    else:
-                                                        logger.warning(f"Could not parse datetime: '{extracted.datetime_str}'")
-                                                except Exception as parse_err:
-                                                    logger.warning(f"Could not parse datetime '{extracted.datetime_str}': {parse_err}")
-                                            
-                                            # Create domain event
-                                            event = ExtractedEvent.create(
-                                                group_id=GroupId.from_string(group_id),
-                                                title=extracted.title,
-                                                event_type=EventType(extracted.event_type),
-                                                description=extracted.description or extracted.datetime_str,  # Use datetime as description fallback
-                                                event_datetime=event_datetime,
-                                                location=extracted.location,
-                                                confidence=extracted.confidence,
-                                            )
-                                            
-                                            await event_repo.save(event)
-                                            await session.commit()
-                                            logger.info(f"Saved event: {event.title} (id: {event.id})")
-                                            
-                                            # Format local datetime for display
-                                            event_datetime_local = None
-                                            if event_datetime:
-                                                try:
-                                                    from datetime import timezone as dt_tz
-                                                    utc_dt = event_datetime.replace(tzinfo=dt_tz.utc)
-                                                    local_dt = utc_dt.astimezone(user_tz)
-                                                    event_datetime_local = local_dt.strftime("%A, %B %d, %Y at %I:%M %p %Z")
-                                                except Exception:
-                                                    event_datetime_local = event_datetime.isoformat()
-                                            
-                                            # Broadcast event extraction
-                                            await connection_manager.broadcast_event_extracted(
-                                                group_id,
-                                                conversation_id,
-                                                {
-                                                    "id": str(event.id),
-                                                    "title": event.title,
-                                                    "description": event.description,
-                                                    "event_type": event.event_type.value,
-                                                    "event_datetime": event_datetime.isoformat() if event_datetime else extracted.datetime_str,
-                                                    "event_datetime_local": event_datetime_local,
-                                                    "timezone": user_tz_name,
-                                                    "location": event.location,
-                                                    "confidence": event.confidence,
-                                                    "group_id": group_id,
-                                                },
-                                            )
-                                            logger.info(f"Broadcasted event: {event.title}")
-                                        else:
-                                            logger.info(f"Skipped event '{extracted.title}' - confidence too low: {extracted.confidence}")
+                                        from agent_system.domain.utils.encryption import get_api_key_encryption
+                                        encryption = get_api_key_encryption()
+                                        api_key_for_extraction = encryption.decrypt(user_for_key.encrypted_openai_api_key)
+                                    except Exception as decrypt_err:
+                                        logger.warning(f"Failed to decrypt user API key for events: {decrypt_err}")
+                            
+                            # Fall back to system key if user key not available
+                            if not api_key_for_extraction:
+                                settings = get_settings()
+                                api_key_for_extraction = settings.openai_api_key
+                            
+                            if not api_key_for_extraction:
+                                logger.warning("No API key available for event extraction, skipping")
                             else:
-                                logger.info("No events detected in message")
-                    except Exception as e:
-                        logger.error(f"Event extraction failed: {e}", exc_info=True)
+                                # Fetch recent conversation context for better event extraction
+                                # This allows the extractor to match "We're going to the Queen Legacy show" 
+                                # with the full event details from a recent agent response
+                                recent_context: list[dict[str, str]] = []
+                                try:
+                                    async with _database.session() as context_session:
+                                        context_conv_repo = SQLAlchemyGroupConversationRepository(context_session)
+                                        context_conv = await context_conv_repo.get(
+                                            GroupConversationId.from_string(conversation_id)
+                                        )
+                                        if context_conv and context_conv.messages:
+                                            # Get last 10 messages (excluding the current one we just added)
+                                            # StoredGroupMessage has .message.role and .message.content.text
+                                            recent_msgs = list(context_conv.messages)[-11:-1] if len(context_conv.messages) > 1 else []
+                                            for stored_msg in recent_msgs:
+                                                # Access the inner Message object
+                                                inner_msg = stored_msg.message
+                                                role_str = inner_msg.role.value if hasattr(inner_msg.role, 'value') else str(inner_msg.role)
+                                                content_str = inner_msg.content.text if hasattr(inner_msg.content, 'text') else str(inner_msg.content)
+                                                recent_context.append({
+                                                    "role": role_str,
+                                                    "content": content_str,
+                                                })
+                                            logger.info(f"Loaded {len(recent_context)} messages as context for event extraction")
+                                except Exception as ctx_err:
+                                    logger.warning(f"Could not load conversation context: {ctx_err}")
+                                
+                                logger.info(f"Extracting events from: {content[:100]}")
+                                # Pass current timestamp so relative dates like "today" are resolved correctly
+                                # This is a real-time message, so current time is correct
+                                from datetime import datetime, timezone
+                                message_time = datetime.now(timezone.utc)
+                                result = await extract_events_from_text(
+                                    content, 
+                                    api_key=api_key_for_extraction,
+                                    context=recent_context if recent_context else None,
+                                    message_timestamp=message_time,
+                                )
+                                logger.info(f"Event extraction result: {len(result.events)} events, reasoning: {result.reasoning}")
+                                
+                                if result.events:
+                                    async with _database.session() as session:
+                                        event_repo = SQLAlchemyExtractedEventRepository(session)
+                                        
+                                        # Get the user's timezone for proper datetime parsing
+                                        from zoneinfo import ZoneInfo
+                                        user_tz_name = "UTC"
+                                        try:
+                                            user_repo = SQLAlchemyUserRepository(session)
+                                            user_for_tz = await user_repo.get(UserId.from_string(user_id))
+                                            if user_for_tz and user_for_tz.timezone:
+                                                user_tz_name = user_for_tz.timezone
+                                                logger.info(f"Using user timezone for event parsing: {user_tz_name}")
+                                        except Exception as tz_err:
+                                            logger.warning(f"Could not get user timezone: {tz_err}")
+                                        
+                                        for extracted in result.events:
+                                            logger.info(f"Extracted event: {extracted.title}, confidence: {extracted.confidence}")
+                                            if extracted.confidence >= 0.7:
+                                                # Try to parse the datetime string with smart vague reference handling
+                                                event_datetime = None
+                                                if extracted.datetime_str:
+                                                    try:
+                                                        from agent_system.application.services import parse_vague_datetime
+                                                        
+                                                        # Use smart datetime parser with LLM fallback for vague references
+                                                        # "tonight" -> 6 PM, "tomorrow" -> 9 AM, "next week" -> 7 days at 9 AM
+                                                        # Pass message_time as reference so "today" is resolved correctly
+                                                        event_datetime = await parse_vague_datetime(
+                                                            extracted.datetime_str,
+                                                            user_timezone=user_tz_name,
+                                                            reference_time=message_time,
+                                                            api_key=api_key_for_extraction,
+                                                        )
+                                                        
+                                                        if event_datetime:
+                                                            logger.info(f"Parsed datetime (user tz {user_tz_name}): {extracted.datetime_str} -> UTC: {event_datetime}")
+                                                        else:
+                                                            logger.warning(f"Could not parse datetime: '{extracted.datetime_str}'")
+                                                    except Exception as parse_err:
+                                                        logger.warning(f"Could not parse datetime '{extracted.datetime_str}': {parse_err}")
+                                                
+                                                # Create domain event
+                                                event = ExtractedEvent.create(
+                                                    group_id=GroupId.from_string(group_id),
+                                                    title=extracted.title,
+                                                    event_type=EventType(extracted.event_type),
+                                                    description=extracted.description or extracted.datetime_str,  # Use datetime as description fallback
+                                                    event_datetime=event_datetime,
+                                                    location=extracted.location,
+                                                    confidence=extracted.confidence,
+                                                )
+                                                
+                                                await event_repo.save(event)
+                                                await session.commit()
+                                                logger.info(f"Saved event: {event.title} (id: {event.id})")
+                                                
+                                                # Format local datetime for display
+                                                event_datetime_local = None
+                                                if event_datetime:
+                                                    try:
+                                                        from datetime import timezone as dt_tz
+                                                        utc_dt = event_datetime.replace(tzinfo=dt_tz.utc)
+                                                        local_dt = utc_dt.astimezone(user_tz)
+                                                        event_datetime_local = local_dt.strftime("%A, %B %d, %Y at %I:%M %p %Z")
+                                                    except Exception:
+                                                        event_datetime_local = event_datetime.isoformat()
+                                                
+                                                # Broadcast event extraction
+                                                await connection_manager.broadcast_event_extracted(
+                                                    group_id,
+                                                    conversation_id,
+                                                    {
+                                                        "id": str(event.id),
+                                                        "title": event.title,
+                                                        "description": event.description,
+                                                        "event_type": event.event_type.value,
+                                                        "event_datetime": event_datetime.isoformat() if event_datetime else extracted.datetime_str,
+                                                        "event_datetime_local": event_datetime_local,
+                                                        "timezone": user_tz_name,
+                                                        "location": event.location,
+                                                        "confidence": event.confidence,
+                                                        "group_id": group_id,
+                                                    },
+                                                )
+                                                logger.info(f"Broadcasted event: {event.title}")
+                                            else:
+                                                logger.info(f"Skipped event '{extracted.title}' - confidence too low: {extracted.confidence}")
+                                else:
+                                    logger.info("No events detected in message")
+                        except Exception as e:
+                            logger.error(f"Event extraction failed: {e}", exc_info=True)
                     
                     # Extract knowledge entities (people, pets, locations, preferences) asynchronously
                     # This runs in parallel with regular message processing
                     try:
                         from agent_system.adapters.outbound.llm.knowledge_extractor import extract_knowledge_from_text
                         from agent_system.composition_root.config import get_settings
+                        from agent_system.composition_root.container import get_container
                         
                         # Get API key for entity extraction (reuse logic from event extraction)
                         api_key_for_entities: str | None = None
@@ -1684,7 +1692,27 @@ async def websocket_chat(
                             settings = get_settings()
                             api_key_for_entities = settings.openai_api_key
                         
-                        if api_key_for_entities and _neo4j_adapter:
+                        container = await get_container()
+                        knowledge_graph = container.knowledge_graph_adapter if container else None
+                        if api_key_for_entities and knowledge_graph:
+                            # Load recent context for entity extraction
+                            entity_context: list[dict[str, str]] = []
+                            try:
+                                async with _database.session() as context_session:
+                                    context_conv_repo = SQLAlchemyGroupConversationRepository(context_session)
+                                    context_conv = await context_conv_repo.get(
+                                        GroupConversationId.from_string(conversation_id)
+                                    )
+                                    if context_conv and context_conv.messages:
+                                        recent_msgs = list(context_conv.messages)[-11:-1] if len(context_conv.messages) > 1 else []
+                                        for stored_msg in recent_msgs:
+                                            inner_msg = stored_msg.message
+                                            role_str = inner_msg.role.value if hasattr(inner_msg.role, "value") else str(inner_msg.role)
+                                            content_str = inner_msg.content.text if hasattr(inner_msg.content, "text") else str(inner_msg.content)
+                                            entity_context.append({"role": role_str, "content": content_str})
+                            except Exception as ctx_err:
+                                logger.debug(f"Could not load context for entity extraction: {ctx_err}")
+                            
                             # Get existing entities for reference resolution
                             existing_persons: list[str] = []
                             existing_pets: list[str] = []
@@ -1692,13 +1720,13 @@ async def websocket_chat(
                             
                             try:
                                 user_id_obj = UserId.from_string(user_id)
-                                people = await _neo4j_adapter.list_known_people(user_id_obj, limit=20)
+                                people = await knowledge_graph.list_known_people(user_id_obj, limit=20)
                                 existing_persons = [p.get("name", "") for p in people if p.get("name")]
                                 
-                                pets = await _neo4j_adapter.list_pets(user_id_obj)
+                                pets = await knowledge_graph.list_pets(user_id_obj)
                                 existing_pets = [p.get("name", "") for p in pets if p.get("name")]
                                 
-                                locs = await _neo4j_adapter.list_locations(user_id_obj, limit=20)
+                                locs = await knowledge_graph.list_locations(user_id_obj, limit=20)
                                 existing_locations = [l.get("name", "") for l in locs if l.get("name")]
                             except Exception as fetch_err:
                                 logger.debug(f"Could not fetch existing entities: {fetch_err}")
@@ -1707,7 +1735,7 @@ async def websocket_chat(
                             entity_result = await extract_knowledge_from_text(
                                 content,
                                 api_key=api_key_for_entities,
-                                context=recent_context if recent_context else None,
+                                context=entity_context if entity_context else None,
                                 existing_persons=existing_persons,
                                 existing_pets=existing_pets,
                                 existing_locations=existing_locations,
@@ -1719,7 +1747,7 @@ async def websocket_chat(
                             # Store persons
                             for person in entity_result.persons:
                                 if person.confidence >= 0.7:
-                                    await _neo4j_adapter.store_person(
+                                    await knowledge_graph.store_person(
                                         user_id=user_id_obj,
                                         name=person.name,
                                         aliases=person.aliases,
@@ -1731,7 +1759,7 @@ async def websocket_chat(
                             # Store pets
                             for pet in entity_result.pets:
                                 if pet.confidence >= 0.7:
-                                    await _neo4j_adapter.store_pet(
+                                    await knowledge_graph.store_pet(
                                         user_id=user_id_obj,
                                         name=pet.name,
                                         aliases=pet.aliases,
@@ -1745,7 +1773,7 @@ async def websocket_chat(
                             # Store locations
                             for location in entity_result.locations:
                                 if location.confidence >= 0.7:
-                                    await _neo4j_adapter.store_location(
+                                    await knowledge_graph.store_location(
                                         user_id=user_id_obj,
                                         name=location.name,
                                         aliases=location.aliases,
@@ -1760,7 +1788,7 @@ async def websocket_chat(
                             for pref in entity_result.preferences:
                                 if pref.confidence >= 0.7:
                                     sentiment = 0.8 if pref.sentiment == "likes" else (-0.8 if pref.sentiment == "dislikes" else 0.5)
-                                    await _neo4j_adapter.store_preference(
+                                    await knowledge_graph.store_preference(
                                         user_id=user_id_obj,
                                         category=pref.category,
                                         value=pref.value,
@@ -1773,7 +1801,7 @@ async def websocket_chat(
                             # Create relationships between entities
                             for rel in entity_result.relationships:
                                 if rel.confidence >= 0.7:
-                                    await _neo4j_adapter.link_entities(
+                                    await knowledge_graph.link_entities(
                                         user_id=user_id_obj,
                                         source_type=rel.source_type,
                                         source_name=rel.source_name,

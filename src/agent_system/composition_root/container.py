@@ -197,6 +197,7 @@ class Container:
             embedding_port=self.embedding_adapter,
             openai_api_key=self.settings.openai_api_key,
             default_model=self.settings.default_model,
+            fallback_model=self.settings.fallback_model,
             temperature=self.settings.temperature,
             max_tokens=self.settings.max_tokens,
         )

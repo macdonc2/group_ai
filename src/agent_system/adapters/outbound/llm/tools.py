@@ -868,25 +868,45 @@ async def recall_about_topic(
             except Exception as e:
                 results["semantic_error"] = str(e)
         
-        # Fallback: Search knowledge graph nodes for keyword matches
+        # Fallback: Use Neo4j keyword-based recall (MessageEmbedding + KnowledgeNode)
         if knowledge_graph_port:
             try:
+                keyword_results = await knowledge_graph_port.recall_about_topic(
+                    user_id=user_id_obj,
+                    topic=topic,
+                    limit=5,
+                )
+                for rec in keyword_results:
+                    content = rec.get("content", "")
+                    role = rec.get("role", "knowledge")
+                    source_type = rec.get("source_type", "knowledge")
+                    if content and not any(
+                        r.get("content") == content for r in results["semantic_matches"]
+                    ):
+                        results["from_knowledge_graph"].append({
+                            "type": source_type,
+                            "label": content[:200],
+                            "properties": {"content": content, "role": role},
+                        })
+                
+                # Also search knowledge graph nodes for topic mentions
                 user_nodes = await knowledge_graph_port.get_user_nodes(
                     user_id=user_id_obj,
                     node_type=None,
                 )
-                
-                # Find nodes that mention the topic
                 for node in user_nodes:
                     label_lower = node.label.lower()
                     props_str = str(node.properties).lower()
-                    
                     if topic_lower in label_lower or topic_lower in props_str:
-                        results["from_knowledge_graph"].append({
-                            "type": node.node_type.value,
-                            "label": node.label,
-                            "properties": node.properties,
-                        })
+                        if not any(
+                            r.get("label", "").startswith(node.label[:50])
+                            for r in results["from_knowledge_graph"]
+                        ):
+                            results["from_knowledge_graph"].append({
+                                "type": node.node_type.value,
+                                "label": node.label,
+                                "properties": node.properties,
+                            })
             except Exception as e:
                 results["knowledge_graph_error"] = str(e)
         
@@ -1071,6 +1091,49 @@ async def recall_group_topic(
             success=False,
             data=None,
             message=f"Error searching group history for '{topic}': {str(e)}",
+        )
+
+
+# ============ Internal Docs Search Tool ============
+
+async def search_internal_docs_tool(query: str, max_sections: int = 5) -> ToolResult:
+    """Search internal documentation about how the app works.
+
+    Use when users ask about: knowledge graph, semantic search, conversational
+    history, memory, how the system remembers information, or general "how does
+    X work" questions about the app.
+
+    Args:
+        query: Search terms (e.g. "knowledge graph", "semantic search", "memory")
+        max_sections: Maximum sections to return (default 5)
+
+    Returns:
+        ToolResult with relevant doc sections
+    """
+    try:
+        from agent_system.docs import search_internal_docs
+
+        results = search_internal_docs(query, max_sections=max_sections)
+        if not results:
+            return ToolResult(
+                success=True,
+                data=[],
+                message="No internal documentation found matching that query.",
+            )
+        formatted = [
+            {"title": r["title"], "content": r["content"], "relevance": r["relevance"]}
+            for r in results
+        ]
+        return ToolResult(
+            success=True,
+            data=formatted,
+            message=f"Found {len(results)} relevant sections. Use this content to answer the user accurately.",
+        )
+    except Exception as e:
+        return ToolResult(
+            success=False,
+            data=None,
+            message=f"Error searching internal docs: {str(e)}",
         )
 
 
@@ -2101,6 +2164,11 @@ AVAILABLE_TOOLS = {
         "function": web_search,
         "description": "Search the web for information",
         "parameters": {"query": "string", "num_results": "int (optional, default 5)"},
+    },
+    "search_internal_docs": {
+        "function": search_internal_docs_tool,
+        "description": "Search internal docs about how the app works (knowledge graph, semantic search, memory, conversational history). Use when users ask 'how does X work', 'how does the knowledge graph work', 'how does semantic search work', etc.",
+        "parameters": {"query": "string (search terms, e.g. 'knowledge graph', 'semantic search', 'memory')"},
     },
     "get_user_profile": {
         "function": get_user_profile,

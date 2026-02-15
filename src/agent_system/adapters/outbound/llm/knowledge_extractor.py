@@ -264,7 +264,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
     """Get a model instance for knowledge extraction.
 
     Args:
-        model_string: Model string like "openai:gpt-4o" or "gpt-4o"
+        model_string: Model string like "openai:gpt-5.2" or "gpt-5.2"
         api_key: Optional API key to use
 
     Returns:
@@ -283,7 +283,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
 
 
 def create_knowledge_extractor_agent(
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
     api_key: str | None = None,
 ) -> Agent[None, KnowledgeExtractionResult]:
     """Create an agent for extracting knowledge from conversation text.
@@ -304,7 +304,7 @@ def create_knowledge_extractor_agent(
 
 async def extract_knowledge_from_text(
     text: str,
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
     api_key: str | None = None,
     context: list[dict[str, str]] | None = None,
     existing_persons: list[str] | None = None,
@@ -374,7 +374,7 @@ async def extract_knowledge_from_text(
 
 async def extract_knowledge_from_conversation(
     messages: list[dict[str, str]],
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
     api_key: str | None = None,
     existing_persons: list[str] | None = None,
     existing_pets: list[str] | None = None,
@@ -494,7 +494,7 @@ Analyze the text and return the entity type with confidence."""
 
 
 def create_entity_type_detector_agent(
-    model: str = "openai:gpt-4o-mini",
+    model: str = "openai:gpt-5-mini",
     api_key: str | None = None,
 ) -> Agent[None, EntityTypeResult]:
     """Create an agent for detecting entity types from text."""
@@ -516,7 +516,7 @@ def create_entity_type_detector_agent(
 async def detect_entity_type(
     entity_name: str,
     text_snippets: list[str],
-    model: str = "openai:gpt-4o-mini",
+    model: str = "openai:gpt-5-mini",
     api_key: str | None = None,
 ) -> EntityTypeResult:
     """Detect the type of an entity from text snippets mentioning it.
