@@ -33,48 +33,49 @@ logger = logging.getLogger(__name__)
 
 
 def setup_user_api_key(user: User, settings) -> str:
-    """Set up the API key for the user, using their key if available.
-    
-    This sets the OPENAI_API_KEY environment variable which PydanticAI reads.
-    
+    """Set up the API key for the user.
+
+    Priority: system key (from env/config) > user's personal encrypted key.
+    This ensures the centrally managed key is always used when available,
+    while still allowing user-provided keys as a fallback.
+
     Args:
         user: The current user
         settings: Application settings
-        
+
     Returns:
         The API key being used
-        
+
     Raises:
-        ValueError: If no API key is available (neither user nor system key)
+        ValueError: If no API key is available (neither system nor user key)
     """
     api_key: str | None = None
-    
-    # First try user's personal key
-    if user.has_api_key():
+
+    # Prefer the system-wide key when available (centrally managed & verified)
+    if settings.openai_api_key:
+        api_key = settings.openai_api_key
+        logger.debug("Using system API key for %s", user.email)
+
+    # Fall back to user's personal encrypted key
+    if not api_key and user.has_api_key():
         try:
             from agent_system.domain.utils.encryption import get_api_key_encryption
             encryption = get_api_key_encryption()
             decrypted_key = encryption.decrypt(user.encrypted_openai_api_key)
             api_key = decrypted_key
-            logger.debug(f"Using user's personal API key for {user.email}")
+            logger.debug("Using user's personal API key for %s", user.email)
         except Exception as e:
-            logger.warning(f"Failed to decrypt user API key: {e}")
+            logger.warning("Failed to decrypt user API key: %s", e)
             api_key = None
-    
-    # Fall back to system key if user key not available
-    if not api_key and settings.openai_api_key:
-        api_key = settings.openai_api_key
-        logger.debug(f"User {user.email} has no valid API key, using system default")
-    
-    # Raise error if no key available
+
     if not api_key:
         raise ValueError(
             "No OpenAI API key available. Please configure your API key in Settings."
         )
-    
+
     # Set environment variable for PydanticAI
     os.environ["OPENAI_API_KEY"] = api_key
-    
+
     return api_key
 
 
@@ -182,6 +183,7 @@ async def chat_with_agent(
         embedding_port=embedding_port,
         openai_api_key=api_key,
         default_model=settings.default_model,
+        fallback_model=settings.fallback_model,
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
     )
@@ -386,6 +388,7 @@ async def chat_with_agent_stream(
                 embedding_port=embedding_port,
                 openai_api_key=api_key,
                 default_model=settings.default_model,
+                fallback_model=settings.fallback_model,
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens,
                 event_callback=event_callback,

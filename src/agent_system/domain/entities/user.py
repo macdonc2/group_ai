@@ -11,7 +11,7 @@ from agent_system.domain.value_objects import UserId
 class UserPreferences(BaseModel):
     """User preferences and settings."""
 
-    default_model: str = "openai:gpt-4o"
+    default_model: str = "openai:gpt-5.2"
     temperature: float = 0.7
     max_tokens: int = 4096
     auto_plan: bool = True  # Automatically create plans for complex tasks

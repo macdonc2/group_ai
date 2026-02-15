@@ -33,6 +33,22 @@ interface KnowledgeGraphProps {
   onClose: () => void;
 }
 
+// Color mapping for all node types (matches backend TYPE_COLORS)
+const NODE_TYPE_COLORS: Record<string, string> = {
+  user: '#3b82f6',
+  interaction: '#10b981',
+  topic: '#f59e0b',
+  tool: '#8b5cf6',
+  suggestion: '#ec4899',
+  person: '#06b6d4',
+  pet: '#84cc16',
+  location: '#f97316',
+};
+
+function getNodeColor(type: string): string {
+  return NODE_TYPE_COLORS[type] ?? '#6b7280';
+}
+
 export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -267,14 +283,7 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
                     <h3 className="text-white font-medium capitalize mb-3 flex items-center gap-2">
                       <span
                         className="w-3 h-3 rounded-full"
-                        style={{
-                          backgroundColor: 
-                            type === 'user' ? '#3b82f6' :
-                            type === 'interaction' ? '#10b981' :
-                            type === 'topic' ? '#f59e0b' :
-                            type === 'tool' ? '#8b5cf6' :
-                            type === 'suggestion' ? '#ec4899' : '#6b7280'
-                        }}
+                        style={{ backgroundColor: getNodeColor(type) }}
                       />
                       {type} ({nodes.length})
                     </h3>
@@ -345,14 +354,7 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
                   <div key={type} className="flex items-center gap-1.5 sm:gap-2">
                     <span
                       className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full shrink-0"
-                      style={{
-                        backgroundColor: 
-                          type === 'user' ? '#3b82f6' :
-                          type === 'interaction' ? '#10b981' :
-                          type === 'topic' ? '#f59e0b' :
-                          type === 'tool' ? '#8b5cf6' :
-                          type === 'suggestion' ? '#ec4899' : '#6b7280'
-                      }}
+                      style={{ backgroundColor: getNodeColor(type) }}
                     />
                     <span className="text-gray-300 capitalize truncate">{type}</span>
                     <span className="text-gray-500">({count})</span>

@@ -72,10 +72,12 @@ DO NOT EXTRACT:
 CRITICAL: In a group chat, phrases like "I'd like to...", "I want to...", "Anyone up for..." with a TIME are considered event suggestions, NOT hypotheticals. The speaker is implicitly inviting others.
 
 CRITICAL - USING CONVERSATION CONTEXT:
-When you see recent conversation history, USE IT to extract complete event details:
-- If someone says "We're going to the Queen Legacy show" and recent context mentions "Queen Legacy - A Tribute to Queen" on "Sunday, February 01 at 03:00 AM at Scout Bar", extract the FULL event with all details from context!
-- Look for event listings, times, venues, and descriptions in the context that match what the user is referencing
-- The user may use shorthand names - match them to events in recent context
+The context is provided ONLY to help fill in details for events mentioned in the CURRENT MESSAGE.
+- ONLY extract events that are ANNOUNCED or CONFIRMED in the CURRENT MESSAGE being analyzed
+- DO NOT extract events that were mentioned in old context messages - those have already been processed!
+- If someone says "We're going to the Queen Legacy show" in the CURRENT MESSAGE and context has full details, use those details
+- The user may use shorthand names - match them to events in context for DETAILS only
+- NEVER re-extract events from the conversation history - only from the current message!
 
 For each event, identify:
 1. WHAT: A brief title and description (use details from context if available)
@@ -95,7 +97,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
     """Get a model instance for event extraction.
     
     Args:
-        model_string: Model string like "openai:gpt-4o" or "gpt-4o"
+        model_string: Model string like "openai:gpt-5.2" or "gpt-5.2"
         api_key: Optional API key to use
         
     Returns:
@@ -114,7 +116,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
 
 
 def create_event_extractor_agent(
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
     api_key: str | None = None,
 ) -> Agent[None, EventExtractionResult]:
     """Create an agent for extracting events from conversation text.
@@ -135,7 +137,7 @@ def create_event_extractor_agent(
 
 async def extract_events_from_text(
     text: str,
-    model: str = "openai:gpt-4o",
+    model: str = "openai:gpt-5.2",
     api_key: str | None = None,
     context: list[dict[str, str]] | None = None,
     message_timestamp: datetime | None = None,

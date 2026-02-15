@@ -51,14 +51,14 @@ def _get_model_for_title(model_string: str, api_key: str | None = None) -> OpenA
 
 async def generate_conversation_title(
     first_message: str,
-    model: str = "openai:gpt-4o-mini",
+    model: str = "openai:gpt-5-mini",
     api_key: str | None = None,
 ) -> str:
     """Generate a meaningful title from the first message of a conversation.
     
     Args:
         first_message: The first user message in the conversation
-        model: The LLM model to use (default: gpt-4o-mini for speed/cost)
+        model: The LLM model to use (default: gpt-5-mini for speed/cost)
         api_key: Optional API key to use
         
     Returns:

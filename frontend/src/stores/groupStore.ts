@@ -172,11 +172,24 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   },
 
   addEvent: (event: Partial<ExtractedEvent>) => {
-    // Add a new event from WebSocket notification
+    // Add a new event from WebSocket notification (avoid duplicates)
     if (event.id) {
-      set((state) => ({
-        events: [event as ExtractedEvent, ...state.events],
-      }));
+      set((state) => {
+        // Check if event already exists
+        const exists = state.events.some(e => e.id === event.id);
+        if (exists) {
+          // Update existing event instead of adding duplicate
+          return {
+            events: state.events.map(e => 
+              e.id === event.id ? { ...e, ...event } as ExtractedEvent : e
+            ),
+          };
+        }
+        // Add new event
+        return {
+          events: [event as ExtractedEvent, ...state.events],
+        };
+      });
     }
   },
 

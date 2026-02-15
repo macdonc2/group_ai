@@ -29,7 +29,7 @@ class IntentAnalysis(BaseModel):
         str | None,
         Field(
             default=None,
-            description="Tool to use if one is needed. Options: 'web_search' (for real-time info), 'calculate' (for math), 'define_word' (for definitions), 'random_fact' (for trivia), 'get_current_datetime' (for time), 'summarize_user_knowledge' (when user asks 'what do you know about me'), 'recall_about_topic' (CRITICAL: when user asks about a SPECIFIC person, pet, or topic like 'Tell me about Bo' or 'What do you know about Zane'), 'get_upcoming_events' (when user asks about their schedule, plans, or events - 'What do I have planned?', 'Any events this week?'), or null if no tool needed"
+            description="Tool to use if one is needed. Options: 'web_search' (for real-time info NOT related to user's events/schedule), 'calculate' (for math), 'define_word' (for definitions), 'random_fact' (for trivia), 'get_current_datetime' (for time), 'summarize_user_knowledge' (when user asks 'what do you know about me'), 'recall_about_topic' (CRITICAL: when user asks about a SPECIFIC person, pet, or topic like 'Tell me about Bo' or 'What do you know about Zane'), 'get_upcoming_events' (ALWAYS use for ANY question about events, plans, schedule, or things happening - including city/local events like 'Houston events', 'What's happening this weekend?', 'What do I have planned?', 'Any events this week?'. The user stores local events in the app.), or null if no tool needed"
         )
     ]
     tool_input: Annotated[
