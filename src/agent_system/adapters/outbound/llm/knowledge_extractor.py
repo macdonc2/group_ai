@@ -368,7 +368,7 @@ async def extract_knowledge_from_text(
             locations=[],
             relationships=[],
             preferences=[],
-            reasoning=f"Extraction failed: {str(e)}",
+            reasoning=f"Extraction failed (text): {str(e)}",
         )
 
 
@@ -431,5 +431,127 @@ async def extract_knowledge_from_conversation(
             locations=[],
             relationships=[],
             preferences=[],
-            reasoning=f"Extraction failed: {str(e)}",
+            reasoning=f"Extraction failed (conversation): {str(e)}",
+        )
+
+
+# ============ Entity Type Detection ============
+
+
+class EntityTypeResult(BaseModel):
+    """Result of entity type detection."""
+
+    entity_name: Annotated[str, Field(description="The entity name being analyzed")]
+    entity_type: Annotated[
+        Literal["pet", "person", "location", "unknown"],
+        Field(description="The type of entity"),
+    ]
+    species: Annotated[
+        str | None,
+        Field(default=None, description="For pets: the species (dog, cat, bird, etc.)"),
+    ]
+    breed: Annotated[
+        str | None,
+        Field(default=None, description="For pets: the breed if mentioned"),
+    ]
+    relationship: Annotated[
+        str | None,
+        Field(default=None, description="For people: relationship to user (spouse, friend, etc.)"),
+    ]
+    description: Annotated[
+        str | None,
+        Field(default=None, description="Brief description of the entity"),
+    ]
+    confidence: Annotated[
+        float,
+        Field(ge=0.0, le=1.0, description="Confidence in the entity type determination"),
+    ]
+
+
+ENTITY_TYPE_DETECTION_PROMPT = """You are an entity type classifier. Given text snippets that mention an entity name, determine what type of entity it is.
+
+ENTITY TYPES:
+- "pet": An animal owned by the user (dog, cat, bird, fish, etc.)
+- "person": A human being (family member, friend, colleague, etc.)
+- "location": A place (restaurant, city, office, park, etc.)
+- "unknown": Cannot determine from the given text
+
+IMPORTANT:
+- Look for keywords that indicate type:
+  - Pet indicators: "my dog", "my cat", "pet", animal names, species mentions
+  - Person indicators: "my wife", "my friend", family titles, human activities
+  - Location indicators: "restaurant", "at the", addresses, city names
+- Pay attention to context clues (what activities are described)
+- If someone has an unusual name that could be a pet or person, look for context clues
+
+EXAMPLES:
+- "Zane is my dog and he's an old man baby" → pet (species: dog)
+- "Sarah and I went to dinner" → person (likely spouse/partner/friend)
+- "We love going to Uchi for sushi" → location (restaurant)
+- "Bo Boy is my older male, black cat" → pet (species: cat)
+
+Analyze the text and return the entity type with confidence."""
+
+
+def create_entity_type_detector_agent(
+    model: str = "openai:gpt-4o-mini",
+    api_key: str | None = None,
+) -> Agent[None, EntityTypeResult]:
+    """Create an agent for detecting entity types from text."""
+    key = api_key or os.environ.get("OPENAI_API_KEY")
+
+    if key and ":" in model:
+        _, model_name = model.split(":", 1)
+        model_instance = OpenAIModel(model_name, provider=OpenAIProvider(api_key=key))
+    else:
+        model_instance = model  # type: ignore
+
+    return Agent(
+        model_instance,
+        output_type=EntityTypeResult,
+        system_prompt=ENTITY_TYPE_DETECTION_PROMPT,
+    )
+
+
+async def detect_entity_type(
+    entity_name: str,
+    text_snippets: list[str],
+    model: str = "openai:gpt-4o-mini",
+    api_key: str | None = None,
+) -> EntityTypeResult:
+    """Detect the type of an entity from text snippets mentioning it.
+
+    Args:
+        entity_name: The name of the entity to classify
+        text_snippets: List of text snippets that mention the entity
+        model: The LLM model to use
+        api_key: Optional API key
+
+    Returns:
+        EntityTypeResult with the detected type and metadata
+    """
+    agent = create_entity_type_detector_agent(model, api_key)
+
+    # Build the prompt with the entity name and snippets
+    prompt_parts = [
+        f"Entity name to classify: {entity_name}",
+        "",
+        "Text snippets mentioning this entity:",
+    ]
+    for i, snippet in enumerate(text_snippets[:5], 1):  # Limit to 5 snippets
+        # Truncate long snippets
+        snippet_text = snippet[:300] if len(snippet) > 300 else snippet
+        prompt_parts.append(f"{i}. {snippet_text}")
+
+    prompt = "\n".join(prompt_parts)
+
+    try:
+        result = await agent.run(prompt)
+        return result.output
+    except Exception as e:
+        logger.error(f"Entity type detection failed for {entity_name}: {e}")
+        return EntityTypeResult(
+            entity_name=entity_name,
+            entity_type="unknown",
+            confidence=0.0,
         )

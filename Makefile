@@ -1,4 +1,4 @@
-.PHONY: setup install dev backend frontend test lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall
+.PHONY: setup install dev backend frontend test lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall build-backend push-backend rollout-backend deploy-backend build-frontend push-frontend rollout-frontend deploy-frontend
 
 # ============================================================================
 # Development
@@ -136,6 +136,50 @@ helm-uninstall:
 
 # Full deployment (build, push, deploy)
 deploy: docker-release helm-deploy helm-status
+
+# ============================================================================
+# Quick Backend Deployment (faster iteration)
+# ============================================================================
+
+# Build backend only
+build-backend:
+	@echo "Building backend image for linux/amd64..."
+	docker build --platform linux/amd64 -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
+
+# Push backend only
+push-backend: acr-login
+	docker push $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG)
+
+# Rollout restart backend (pull new image)
+rollout-backend:
+	kubectl rollout restart deployment/agent-system-backend -n $(NAMESPACE)
+	kubectl rollout status deployment/agent-system-backend -n $(NAMESPACE) --timeout=90s
+
+# Quick deploy backend (build, push, rollout)
+deploy-backend: build-backend push-backend rollout-backend
+	@echo "Backend deployed successfully!"
+
+# Build frontend only
+build-frontend:
+	@echo "Building frontend image for linux/amd64..."
+	docker build --platform linux/amd64 -f infra/docker/Dockerfile.frontend -t $(ACR_REGISTRY)/pydantic-ai-frontend:$(IMAGE_TAG) .
+
+# Push frontend only
+push-frontend: acr-login
+	docker push $(ACR_REGISTRY)/pydantic-ai-frontend:$(IMAGE_TAG)
+
+# Rollout restart frontend
+rollout-frontend:
+	kubectl rollout restart deployment/agent-system-frontend -n $(NAMESPACE)
+	kubectl rollout status deployment/agent-system-frontend -n $(NAMESPACE) --timeout=90s
+
+# Quick deploy frontend (build, push, rollout)
+deploy-frontend: build-frontend push-frontend rollout-frontend
+	@echo "Frontend deployed successfully!"
+
+# ============================================================================
+# Logs and Debugging
+# ============================================================================
 
 # View logs
 logs-backend:

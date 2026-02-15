@@ -1722,6 +1722,113 @@ class Neo4jAdapter(KnowledgeGraphPort):
                 })
         return results
 
+    async def recall_about_topic(
+        self,
+        user_id: UserId,
+        topic: str,
+        limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Search for mentions of a topic in user's conversation history.
+        
+        Searches both MessageEmbedding content and KnowledgeNode labels
+        to find relevant information about an entity or topic.
+        
+        Args:
+            user_id: The user's ID
+            topic: The topic/entity name to search for
+            limit: Maximum results
+            
+        Returns:
+            List of relevant text snippets mentioning the topic
+        """
+        results = []
+        
+        # Search MessageEmbedding for topic mentions
+        # CRITICAL: Prioritize USER messages over assistant messages!
+        # User messages contain defining info like "Zane is my dog"
+        # Assistant messages are just responses that mention the name
+        message_query = """
+        MATCH (m:MessageEmbedding {user_id: $user_id})
+        WHERE toLower(m.content) CONTAINS toLower($topic)
+        RETURN 
+            m.content as content,
+            m.role as role,
+            m.created_at as created_at,
+            'message' as source_type,
+            CASE WHEN m.role = 'user' THEN 0 ELSE 1 END as priority
+        ORDER BY priority ASC, m.created_at DESC
+        LIMIT $limit
+        """
+        
+        # Also search KnowledgeNode labels
+        # CRITICAL: Prioritize nodes that DEFINE what the entity IS
+        # e.g., "User has a dog named Zane" should come before "Zane's birthday"
+        # Priority 0: topic/fact nodes with defining keywords (dog, pet, cat, spouse, etc.)
+        # Priority 1: other topic/fact nodes
+        # Priority 2: interaction nodes
+        knowledge_query = """
+        MATCH (k:KnowledgeNode)
+        WHERE (k.user_id = $user_id OR k.user_id IS NULL)
+          AND toLower(k.label) CONTAINS toLower($topic)
+        WITH k, toLower(k.label) as lbl
+        WITH k, lbl,
+             CASE 
+                 WHEN k.node_type IN ['topic', 'fact', 'entity', 'preference', 'personal'] 
+                      AND (lbl CONTAINS 'dog' OR lbl CONTAINS 'pet' OR lbl CONTAINS 'cat' 
+                           OR lbl CONTAINS 'spouse' OR lbl CONTAINS 'wife' OR lbl CONTAINS 'husband'
+                           OR lbl CONTAINS 'friend' OR lbl CONTAINS 'brother' OR lbl CONTAINS 'sister'
+                           OR lbl CONTAINS 'son' OR lbl CONTAINS 'daughter' OR lbl CONTAINS 'parent'
+                           OR lbl CONTAINS 'is my' OR lbl CONTAINS 'is a' OR lbl CONTAINS 'is the')
+                 THEN 0
+                 WHEN k.node_type IN ['topic', 'fact', 'entity', 'preference', 'personal'] THEN 1
+                 ELSE 2
+             END as priority
+        RETURN 
+            k.label as content,
+            k.node_type as role,
+            k.created_at as created_at,
+            'knowledge' as source_type,
+            priority
+        ORDER BY priority ASC, k.created_at DESC
+        LIMIT $limit
+        """
+        
+        params = {
+            "user_id": str(user_id),
+            "topic": topic,
+            "limit": limit,
+        }
+        
+        async with self.driver.session(database=self._database) as session:
+            # Get message results
+            result = await session.run(message_query, **params)
+            async for record in result:
+                results.append({
+                    "content": record["content"],
+                    "role": record["role"],
+                    "created_at": record["created_at"],
+                    "source_type": record["source_type"],
+                })
+            
+            # Get knowledge node results - INSERT AT FRONT since they have defining info
+            knowledge_results = []
+            result = await session.run(knowledge_query, **params)
+            async for record in result:
+                # Avoid duplicates
+                content = record["content"]
+                if not any(r["content"] == content for r in results):
+                    knowledge_results.append({
+                        "content": content,
+                        "role": record["role"],
+                        "created_at": record["created_at"],
+                        "source_type": record["source_type"],
+                    })
+        
+        # Prioritize knowledge nodes (topic/fact) over messages
+        # Knowledge nodes contain defining info like "Zane is my dog"
+        combined = knowledge_results + results
+        return combined[:limit]
+
     # ============ Preference Operations ============
 
     async def store_preference(

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 import type { Message, Suggestion, TraceNode, ConversationListItem, StreamEvent } from '../types';
 
 interface ChatState {
@@ -57,19 +58,21 @@ const WORKFLOW_NODES = [
   'FinalizeKnowledge',
 ];
 
-export const useChatStore = create<ChatState>((set, get) => ({
-  // Initial state
-  conversationId: null,
-  messages: [],
-  suggestions: [],
-  traceNodes: [],
-  isStreaming: false,
-  conversations: [],
-  isSidebarOpen: true,
-  isTracePanelOpen: true,
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set, get) => ({
+      // Initial state
+      conversationId: null,
+      messages: [],
+      suggestions: [],
+      traceNodes: [],
+      isStreaming: false,
+      conversations: [],
+      isSidebarOpen: true,
+      isTracePanelOpen: true,
 
-  // Actions
-  setConversationId: (id) => set({ conversationId: id }),
+      // Actions
+      setConversationId: (id) => set({ conversationId: id }),
   
   addMessage: (message) => set((state) => ({
     messages: [...state.messages, message],
@@ -244,4 +247,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
   // UI actions
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   toggleTracePanel: () => set((state) => ({ isTracePanelOpen: !state.isTracePanelOpen })),
-}));
+    }),
+    {
+      name: 'chat-storage',
+      // Only persist conversationId and UI preferences - not transient state
+      partialize: (state) => ({
+        conversationId: state.conversationId,
+        isSidebarOpen: state.isSidebarOpen,
+        isTracePanelOpen: state.isTracePanelOpen,
+      }),
+    }
+  )
+);

@@ -73,6 +73,8 @@ from agent_system.adapters.outbound.llm.knowledge_extractor import (
     ExtractedPreference,
     ExtractedRelationship,
     KnowledgeExtractionResult,
+    detect_entity_type,
+    EntityTypeResult,
 )
 
 __all__ = [
@@ -145,4 +147,7 @@ __all__ = [
     "ExtractedLocation",
     "ExtractedRelationship",
     "ExtractedPreference",
+    # Entity type detection
+    "detect_entity_type",
+    "EntityTypeResult",
 ]

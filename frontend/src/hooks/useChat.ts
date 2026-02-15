@@ -1,4 +1,4 @@
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { createSSEConnection } from '../lib/sse';
 import { api } from '../lib/api';
@@ -18,6 +18,38 @@ export function useChat() {
   } = useChatStore();
   
   const abortRef = useRef<{ abort: () => void } | null>(null);
+  const initialLoadDone = useRef(false);
+  
+  // Load persisted conversation on mount (if conversationId exists but messages are empty)
+  useEffect(() => {
+    if (initialLoadDone.current) return;
+    
+    // Check if we have a persisted conversationId but no messages loaded
+    const state = useChatStore.getState();
+    if (state.conversationId && state.messages.length === 0) {
+      initialLoadDone.current = true;
+      // Load the persisted conversation
+      api.getConversation(state.conversationId)
+        .then((conversation) => {
+          conversation.messages.forEach((msg: ConversationDetail['messages'][0]) => {
+            const message: Message = {
+              id: msg.id,
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content,
+              timestamp: new Date(msg.timestamp),
+            };
+            useChatStore.getState().addMessage(message);
+          });
+        })
+        .catch((error) => {
+          console.error('Failed to load persisted conversation:', error);
+          // Clear the invalid conversation ID
+          useChatStore.getState().setConversationId(null);
+        });
+    } else {
+      initialLoadDone.current = true;
+    }
+  }, []);
   
   const sendMessage = useCallback(async (content: string) => {
     // Abort any existing connection

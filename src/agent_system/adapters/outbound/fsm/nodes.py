@@ -266,6 +266,7 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 # ENTITY CONTEXT INJECTION: Look up any named entities BEFORE planning
                 # This ensures the planner knows Zane is a dog, Sarah is a spouse, etc.
                 entity_context = ""
+                logger.info(f"Entity lookup check: entities={ctx.state.entities}, has_kg_port={ctx.deps.knowledge_graph_port is not None}")
                 if ctx.state.entities and ctx.deps.knowledge_graph_port:
                     entity_info_parts = []
                     
@@ -293,61 +294,108 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                             seen.add(e_lower)
                             unique_entities.append(e)
                     
+                    logger.info(f"Processing {len(unique_entities)} unique entities: {unique_entities}")
                     for entity_name in unique_entities[:8]:
                         # Skip common words and phrases
                         if entity_name.lower() in ["birthday", "today", "tomorrow", "party", "the", "a", "an"]:
+                            logger.debug(f"Skipping common word: {entity_name}")
                             continue
                         
+                        logger.info(f"Looking up entity: '{entity_name}'")
                         try:
-                            # Try to find this entity in the knowledge graph
-                            # Check if it's a pet
-                            pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
-                            for pet in (pets or []):
-                                pet_name = pet.get("name", "").lower()
-                                if entity_name.lower() in pet_name or pet_name in entity_name.lower():
-                                    species = pet.get("species", "pet")
-                                    breed = pet.get("breed", "")
-                                    personality = pet.get("personality", [])
-                                    info = f"'{entity_name}' is the user's {species}"
-                                    if breed:
-                                        info += f" ({breed})"
-                                    if personality:
-                                        info += f", personality: {', '.join(personality[:3])}"
-                                    entity_info_parts.append(info)
-                                    logger.info(f"Entity lookup: {entity_name} -> {species}")
-                                    break
+                            found_info = False
                             
-                            # Check if it's a person
-                            if not any(entity_name.lower() in p for p in entity_info_parts):
-                                people = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
-                                for person in (people or []):
-                                    person_name = person.get("name", "").lower()
-                                    if entity_name.lower() in person_name or person_name in entity_name.lower():
-                                        rel = person.get("relationship_type", "known person")
-                                        context = person.get("context_notes", "")
+                            # CRITICAL: Check knowledge graph FIRST - it has the most reliable info
+                            # KnowledgeNodes contain facts like "User has a dog named Zane"
+                            # This is more reliable than typed nodes which can be misclassified
+                            logger.info(f"Searching knowledge graph for '{entity_name}'...")
+                            recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                                ctx.state.user.id,
+                                entity_name,
+                                limit=5
+                            )
+                            if recall_result:
+                                # Extract text snippets - log what we're sending to LLM
+                                snippets = [r.get("content", "") for r in recall_result if r.get("content")]
+                                source_types = [r.get("source_type", "unknown") for r in recall_result]
+                                if snippets:
+                                    logger.info(f"Found {len(snippets)} mentions of '{entity_name}' (sources: {source_types})")
+                                    for i, snip in enumerate(snippets[:3]):
+                                        logger.info(f"  Snippet {i+1}: {snip[:100]}...")
+                                    
+                                    # Use LLM to detect entity type from snippets
+                                    from agent_system.adapters.outbound.llm.knowledge_extractor import detect_entity_type
+                                    
+                                    entity_type_result = await detect_entity_type(
+                                        entity_name=entity_name,
+                                        text_snippets=snippets,
+                                        api_key=ctx.deps.openai_api_key,
+                                    )
+                                    
+                                    if entity_type_result.entity_type == "pet":
+                                        species = entity_type_result.species or "pet"
+                                        info = f"'{entity_name}' is the user's {species}"
+                                        if entity_type_result.description:
+                                            info += f" ({entity_type_result.description})"
+                                        entity_info_parts.append(info)
+                                        logger.info(f"Entity type detected (KG): {entity_name} -> {species} (confidence: {entity_type_result.confidence})")
+                                        found_info = True
+                                    elif entity_type_result.entity_type == "person":
+                                        rel = entity_type_result.relationship or "known person"
                                         info = f"'{entity_name}' is the user's {rel}"
-                                        if context:
-                                            info += f" ({context[:50]})"
+                                        if entity_type_result.description:
+                                            info += f" ({entity_type_result.description})"
                                         entity_info_parts.append(info)
-                                        logger.info(f"Entity lookup: {entity_name} -> {rel}")
-                                        break
+                                        logger.info(f"Entity type detected (KG): {entity_name} -> {rel} (confidence: {entity_type_result.confidence})")
+                                        found_info = True
+                                    elif entity_type_result.entity_type == "location":
+                                        info = f"'{entity_name}' is a location/place"
+                                        if entity_type_result.description:
+                                            info += f" ({entity_type_result.description})"
+                                        entity_info_parts.append(info)
+                                        logger.info(f"Entity type detected (KG): {entity_name} -> location (confidence: {entity_type_result.confidence})")
+                                        found_info = True
+                                    else:
+                                        # Unknown type - just include raw snippets
+                                        snippet_summary = snippets[0][:150] if snippets else ""
+                                        if snippet_summary:
+                                            info = f"About '{entity_name}': {snippet_summary}"
+                                            entity_info_parts.append(info)
+                                            logger.info(f"Entity type unknown for '{entity_name}', using raw snippet")
+                                            found_info = True
                             
-                            # Fallback: Use recall_about_topic
-                            if not any(entity_name.lower() in p.lower() for p in entity_info_parts):
-                                recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
-                                    ctx.state.user.id,
-                                    entity_name,
-                                    limit=3
-                                )
-                                if recall_result:
-                                    # Summarize what we know
-                                    snippets = [r.get("content", "")[:100] for r in recall_result[:2]]
-                                    if snippets:
-                                        info = f"About '{entity_name}': {' | '.join(snippets)}"
+                            # Fallback: Check typed nodes only if knowledge graph didn't find anything
+                            if not found_info:
+                                logger.info(f"No knowledge graph info for '{entity_name}', checking typed nodes...")
+                                # Check if it's a pet
+                                pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
+                                for pet in (pets or []):
+                                    pet_name = pet.get("name", "").lower()
+                                    if entity_name.lower() in pet_name or pet_name in entity_name.lower():
+                                        species = pet.get("species", "pet")
+                                        breed = pet.get("breed", "")
+                                        info = f"'{entity_name}' is the user's {species}"
+                                        if breed:
+                                            info += f" ({breed})"
                                         entity_info_parts.append(info)
-                                        logger.info(f"Entity recall: {entity_name} -> found {len(recall_result)} mentions")
+                                        logger.info(f"Entity lookup (PetNode): {entity_name} -> {species}")
+                                        found_info = True
+                                        break
+                                
+                                # Check if it's a person
+                                if not found_info:
+                                    people = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
+                                    for person in (people or []):
+                                        person_name = person.get("name", "").lower()
+                                        if entity_name.lower() in person_name or person_name in entity_name.lower():
+                                            rel = person.get("relationship_type", "known person")
+                                            info = f"'{entity_name}' is the user's {rel}"
+                                            entity_info_parts.append(info)
+                                            logger.info(f"Entity lookup (PersonNode): {entity_name} -> {rel}")
+                                            found_info = True
+                                            break
                         except Exception as entity_err:
-                            logger.debug(f"Entity lookup failed for {entity_name}: {entity_err}")
+                            logger.warning(f"Entity lookup failed for {entity_name}: {entity_err}")
                     
                     if entity_info_parts:
                         entity_context = "\n\nIMPORTANT ENTITY CONTEXT (use this when planning):\n" + "\n".join(f"- {p}" for p in entity_info_parts)
@@ -937,6 +985,36 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             }
             logger.debug(f"Houston events args: query={query}, category={category}")
         
+        elif tool_name == "list_pets":
+            # List pets with optional species filter
+            # tool_input should be species like "dog", "cat", or empty for all
+            species = None
+            if tool_input:
+                input_lower = tool_input.lower().strip()
+                if input_lower in ["dog", "dogs", "cat", "cats", "bird", "birds", "fish", "rabbit", "hamster"]:
+                    # Normalize to singular
+                    species = input_lower.rstrip("s")
+            ctx.state.tool_arguments = {"species": species} if species else {}
+            logger.debug(f"list_pets args: species={species}")
+        
+        elif tool_name == "get_pet_info":
+            # Get specific pet info - requires name
+            name = tool_input.strip() if tool_input else ""
+            if not name:
+                # No name provided - suggest using list_pets instead
+                ctx.state.tool_arguments = {}
+            else:
+                ctx.state.tool_arguments = {"name": name}
+            logger.debug(f"get_pet_info args: name={name}")
+        
+        elif tool_name == "list_known_people":
+            # List known people - no arguments needed
+            ctx.state.tool_arguments = {}
+        
+        elif tool_name == "list_locations":
+            # List locations - no arguments needed  
+            ctx.state.tool_arguments = {}
+        
         else:
             # Unknown tool - set empty arguments to avoid errors
             ctx.state.tool_arguments = {}
@@ -1024,6 +1102,10 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                             ctx.state.tool_result = f"Search results:\n{formatted}"
                         elif tool_name == "get_houston_events":
                             # Houston events: message already contains fully formatted output
+                            # Don't append raw data
+                            ctx.state.tool_result = result.message
+                        elif tool_name == "get_upcoming_events":
+                            # User's personal events: message already formatted as table
                             # Don't append raw data
                             ctx.state.tool_result = result.message
                         else:
@@ -1866,11 +1948,13 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
                         await ctx.deps.knowledge_graph_port.store_pet(
                             user_id=ctx.state.user.id,
                             name=pet.name,
+                            aliases=pet.aliases,
                             species=pet.species,
                             breed=pet.breed,
-                            personality=pet.personality,
+                            personality=pet.traits,  # ExtractedPet uses 'traits' field
+                            food_preferences=pet.food_preferences,
                         )
-                        logger.debug(f"Stored pet: {pet.name}")
+                        logger.info(f"Stored pet: {pet.name} (species={pet.species}, confidence={pet.confidence})")
                 
                 # Store extracted locations
                 for location in entity_result.locations:

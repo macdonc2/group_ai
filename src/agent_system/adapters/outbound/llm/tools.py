@@ -1212,13 +1212,18 @@ async def get_upcoming_events(
         # Build query conditions
         conditions = [ExtractedEventModel.group_id.in_(search_group_ids)]
         
-        # Date range condition
-        date_condition = or_(
-            and_(
-                ExtractedEventModel.event_datetime >= start_date,
-                ExtractedEventModel.event_datetime <= end_date,
-            ),
-            ExtractedEventModel.event_datetime.is_(None),  # Include events without datetime
+        # Convert date range to UTC for database comparison
+        # start_date and end_date are naive in user's timezone, DB stores UTC
+        # ZoneInfo works with .replace(tzinfo=) for naive datetimes
+        start_date_utc = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+        end_date_utc = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+        
+        # Date range condition - ONLY include events with a specific datetime
+        # Events without datetime are not useful for "what do I have planned" queries
+        date_condition = and_(
+            ExtractedEventModel.event_datetime.isnot(None),
+            ExtractedEventModel.event_datetime >= start_date_utc,
+            ExtractedEventModel.event_datetime <= end_date_utc,
         )
         conditions.append(date_condition)
         
