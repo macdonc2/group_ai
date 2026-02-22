@@ -2167,8 +2167,8 @@ AVAILABLE_TOOLS = {
     },
     "search_internal_docs": {
         "function": search_internal_docs_tool,
-        "description": "Search internal docs about how the app works (knowledge graph, semantic search, memory, conversational history). Use when users ask 'how does X work', 'how does the knowledge graph work', 'how does semantic search work', etc.",
-        "parameters": {"query": "string (search terms, e.g. 'knowledge graph', 'semantic search', 'memory')"},
+        "description": "Search internal documentation about the app's features and how they work. Covers: getting started, chat, groups, events, calendar sync, memory, knowledge graph, social graph, tools/capabilities, settings, and account management. Use when users ask 'how does X work', 'how do I do X', 'what is X', 'how do groups work', 'how do I connect my calendar', 'what tools do you have', 'how does memory work', etc.",
+        "parameters": {"query": "string (search terms, e.g. 'groups', 'calendar sync', 'events', 'knowledge graph', 'settings')"},
     },
     "get_user_profile": {
         "function": get_user_profile,

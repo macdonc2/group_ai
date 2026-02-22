@@ -96,6 +96,13 @@ TOOL OUTPUT FORMATTING:
 
 INTENT_SYSTEM_PROMPT = """You analyze user messages to understand their intent and determine if a tool is needed.
 
+CONTEXT RESOLUTION (CRITICAL):
+When conversation history is provided, USE IT to understand the current message.
+- "Can you explain that simpler?" → "that" = your previous response. Intent: clarification. No tool needed.
+- "Tell me more about that" → "that" = topic from previous exchange. Intent: clarification. No tool needed.
+- "What about the other one?" → resolve from context. Intent depends on topic.
+- Do NOT suggest a tool for simple follow-ups/clarifications that just need you to rephrase or elaborate on what you already said.
+
 ENTITY EXTRACTION (CRITICAL):
 Extract INDIVIDUAL named entities (people, pets, places, specific things).
 - Extract just the NAME, not phrases containing the name
@@ -107,7 +114,7 @@ INTENT TYPES:
 - question: Asking for information about a topic
 - task: Wanting something done or created
 - exploration: Open-ended curiosity or browsing
-- clarification: Asking for more detail on something discussed
+- clarification: Asking for more detail on something discussed (e.g., "explain that simpler", "what do you mean?", "tell me more")
 - feedback: Providing opinion or reaction
 - command: Direct instruction to perform an action
 - meta: Asking about the assistant itself
@@ -144,15 +151,23 @@ Determine if the query needs a tool. Available tools:
    - tool_input: The word to define
    - Example: "What does 'ephemeral' mean?" → tool: "define_word", input: "ephemeral"
 
-4. "search_internal_docs" - USE THIS when user asks HOW the app works:
+4. "search_internal_docs" - USE THIS when user asks about the APP ITSELF or HOW features work:
    - "How does the knowledge graph work?" → tool: "search_internal_docs", input: "knowledge graph"
-   - "How does semantic search work?" → tool: "search_internal_docs", input: "semantic search"
-   - "How does the app remember things?" → tool: "search_internal_docs", input: "memory"
-   - "How does conversational history work?" → tool: "search_internal_docs", input: "conversational history"
    - "How does memory work?" → tool: "search_internal_docs", input: "memory"
-   - Any "how does X work" about the app → tool: "search_internal_docs", input: "<relevant terms>"
-   - tool_input: Search terms from the question (e.g. "knowledge graph", "semantic search", "memory")
-   - CRITICAL: Use this for meta questions about HOW the system works, NOT for general web research
+   - "How do groups work?" → tool: "search_internal_docs", input: "groups collaboration"
+   - "How do I connect my calendar?" → tool: "search_internal_docs", input: "calendar sync setup"
+   - "How do events work?" → tool: "search_internal_docs", input: "events calendar"
+   - "What tools do you have?" → tool: "search_internal_docs", input: "tools capabilities"
+   - "How do I change my settings?" → tool: "search_internal_docs", input: "settings account"
+   - "How do I set my timezone?" → tool: "search_internal_docs", input: "timezone settings"
+   - "How does the social graph work?" → tool: "search_internal_docs", input: "social graph people pets"
+   - "How do I get started?" → tool: "search_internal_docs", input: "getting started"
+   - "How do I set up my API key?" → tool: "search_internal_docs", input: "API key setup"
+   - "How does event extraction work?" → tool: "search_internal_docs", input: "event extraction"
+   - "How does semantic search work?" → tool: "search_internal_docs", input: "semantic search"
+   - Any "how does X work", "how do I X", "what is X" about the app → tool: "search_internal_docs"
+   - tool_input: Key terms from the question (e.g. "groups", "calendar", "events", "settings")
+   - CRITICAL: Use this for questions about HOW the app/system works, NOT for general web research
    
 5. "random_fact" - When user wants trivia or a fun fact
    - tool_input: null (no input needed)
@@ -183,9 +198,9 @@ Determine if the query needs a tool. Available tools:
    - "What do we know about Z?" → tool: "recall_group_topic", tool_input: "Z"
    - tool_input: The topic to search for in group history
 
-10. "get_upcoming_events" - ALWAYS use for ANY question about events, plans, schedule, or things happening.
-   The user stores local/city events in the app (e.g., Houston events, concerts, festivals) as well as personal events.
-   Do NOT use web_search for event queries - use get_upcoming_events instead.
+10. "get_upcoming_events" - Use for PERSONAL schedule, plans, and calendar events:
+   - "What do I have planned?" / "Any meetings?" / "When is my haircut?"
+   - Do NOT use this for Houston area events - use get_houston_events instead.
    
    - FILTERING OPTIONS (combine as needed in tool_input):
      a) Timeframe: "today", "tomorrow", "week", "month", "all"
@@ -196,8 +211,6 @@ Determine if the query needs a tool. Available tools:
    - EXAMPLES:
      - "What do I have planned this week?" → tool_input: "week"
      - "Any events today?" → tool_input: "today"
-     - "What events are in Houston?" → tool_input: "Houston"
-     - "What's happening this weekend?" → tool_input: "week"
      - "When is my haircut?" → tool_input: "haircut" (JUST the keyword - finds specific event!)
      - "When's my dentist appointment?" → tool_input: "dentist"
      - "What meetings do I have tomorrow?" → tool_input: "tomorrow meeting"

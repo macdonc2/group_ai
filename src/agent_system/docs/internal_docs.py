@@ -5,7 +5,16 @@ from importlib.resources import files
 from pathlib import Path
 
 
-DOC_FILES = ["knowledge-graph-reference.md"]
+DOC_FILES = [
+    "getting-started.md",
+    "chat-and-conversations.md",
+    "groups-and-collaboration.md",
+    "events-and-calendar.md",
+    "memory-and-knowledge.md",
+    "tools-and-capabilities.md",
+    "settings-and-account.md",
+    "knowledge-graph-reference.md",
+]
 
 
 def load_internal_docs() -> str:

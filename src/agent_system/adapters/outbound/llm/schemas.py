@@ -29,14 +29,14 @@ class IntentAnalysis(BaseModel):
         str | None,
         Field(
             default=None,
-            description="Tool to use if one is needed. Options: 'web_search' (for real-time info NOT related to user's events/schedule), 'calculate' (for math), 'define_word' (for definitions), 'random_fact' (for trivia), 'get_current_datetime' (for time), 'summarize_user_knowledge' (when user asks 'what do you know about me'), 'recall_about_topic' (CRITICAL: when user asks about a SPECIFIC person, pet, or topic like 'Tell me about Bo' or 'What do you know about Zane'), 'get_upcoming_events' (ALWAYS use for ANY question about events, plans, schedule, or things happening - including city/local events like 'Houston events', 'What's happening this weekend?', 'What do I have planned?', 'Any events this week?'. The user stores local events in the app.), or null if no tool needed"
+            description="Tool to use if one is needed. Options: 'web_search' (for real-time info NOT related to events/schedule/app features), 'calculate' (for math), 'define_word' (for definitions), 'random_fact' (for trivia), 'get_current_datetime' (for time), 'summarize_user_knowledge' (when user asks 'what do you know about me'), 'recall_about_topic' (CRITICAL: when user asks about a SPECIFIC person, pet, or topic like 'Tell me about Bo' or 'What do you know about Zane'), 'get_upcoming_events' (for PERSONAL schedule/plans - 'What do I have planned?', 'Any meetings this week?', 'When is my haircut?'), 'get_houston_events' (CRITICAL: for Houston area events, concerts, activities, things to do - 'Houston events', 'What's happening this weekend?', 'Any concerts tonight?', 'Events in Montrose'. This searches the curated Houston events database.), 'search_internal_docs' (CRITICAL: when user asks about the APP ITSELF or how features work - 'How do groups work?', 'How do I connect my calendar?', 'What tools do you have?', 'How does memory work?', 'How do I set my timezone?', 'How does the knowledge graph work?', 'How do I get started?'. Searches built-in documentation.), or null if no tool needed"
         )
     ]
     tool_input: Annotated[
         str | None,
         Field(
             default=None,
-            description="The extracted input for the tool. For calculate: the mathematical expression (e.g., '1+3-4'). For web_search: a specific search query WITH date/location context (e.g., 'Houston events January 2026' not just 'events'). For define_word: the word to define. For get_upcoming_events: combine timeframe ('today', 'tomorrow', 'week', 'month'), keywords ('haircut', 'meeting'), temporal ('past', 'future'), or specific dates ('January 30') - e.g., 'haircut' to find a haircut appointment, 'past meeting' for past meetings."
+            description="The extracted input for the tool. For calculate: the mathematical expression (e.g., '1+3-4'). For web_search: a specific search query WITH date/location context (e.g., 'Houston events January 2026' not just 'events'). For define_word: the word to define. For get_upcoming_events: combine timeframe ('today', 'tomorrow', 'week', 'month'), keywords ('haircut', 'meeting'), temporal ('past', 'future'), or specific dates ('January 30') - e.g., 'haircut' to find a haircut appointment, 'past meeting' for past meetings. For search_internal_docs: key terms about the feature (e.g., 'groups', 'calendar sync', 'events', 'knowledge graph', 'settings', 'getting started', 'tools capabilities')."
         )
     ]
 
@@ -98,7 +98,7 @@ Think of yourself as an articulate friend who loves diving deep into topics. Nev
     ]
     suggestions: Annotated[
         list[str],
-        Field(default_factory=list, description="2-3 quick chip suggestions for what the user might want to explore next"),
+        Field(default_factory=list, description="2-3 SHORT, SPECIFIC follow-up suggestions as action chips. Make them contextual to the conversation - reference entities, topics, or tools used. Examples: 'Events near Montrose', 'Tell me about Zane', 'Cycling this weekend'. NOT generic like 'Learn more' or 'Fun fact'."),
     ]
 
 

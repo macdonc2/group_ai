@@ -53,16 +53,20 @@ class AnalyzeIntent(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         # Build context-aware prompt for intent analysis
         history_messages = ctx.state.conversation.get_context_messages()
         if history_messages:
-            recent_context = "\n".join([
-                f"{m.role.value}: {m.content.text[:200]}"
-                for m in history_messages[-5:]
-            ])
+            recent = history_messages[-6:]
+            context_lines = []
+            for m in recent:
+                text = m.content.text
+                if len(text) > 500:
+                    text = text[:500] + "..."
+                context_lines.append(f"{m.role.value}: {text}")
+            recent_context = "\n".join(context_lines)
             prompt = f"""Recent conversation:
 {recent_context}
 
 Current message to analyze: {ctx.state.user_input}
 
-Analyze the intent of the current message in context of the conversation."""
+Analyze the intent of the current message IN CONTEXT of the conversation above. If the user says "that", "it", "this", etc., resolve what they are referring to from the conversation history."""
         else:
             prompt = ctx.state.user_input
 
@@ -920,6 +924,7 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             timeframe = "week"  # default
             search_query = None
             temporal_filter = "future"  # default
+            explicit_temporal = False
             specific_date = None
             
             if tool_input:
@@ -940,10 +945,13 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 # Parse temporal filter
                 if "past" in input_lower:
                     temporal_filter = "past"
+                    explicit_temporal = True
                 elif "current" in input_lower or "now" in input_lower or "happening" in input_lower:
                     temporal_filter = "current"
+                    explicit_temporal = True
                 elif "future" in input_lower or "upcoming" in input_lower:
                     temporal_filter = "future"
+                    explicit_temporal = True
                 
                 # Extract search query (look for patterns like "search:haircut" or just keywords)
                 import re
@@ -984,6 +992,12 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     if month_day_match:
                         specific_date = f"{month_day_match.group(1).capitalize()} {month_day_match.group(2)}"
             
+            # When a keyword search is provided without explicit temporal filter,
+            # search all timeframes so past events are still discoverable.
+            if search_query and not explicit_temporal:
+                temporal_filter = "all"
+                timeframe = "all"
+
             group_id = ctx.state.group_context.get("group_id", "") if ctx.state.group_context else None
             ctx.state.tool_arguments = {
                 "user_id": str(ctx.state.user.id),
@@ -1515,25 +1529,48 @@ For conversational responses:
         if is_meta_question:
             # User is asking about the agent itself - provide capability info
             prompt_parts.append("""[Your Capabilities]
-You are an AI assistant with the following tools and abilities:
+You are an AI assistant with persistent memory and a wide range of tools.
 
-TOOLS AVAILABLE:
+INFORMATION TOOLS:
 - Web Search: Search the internet for current information
-- Calculator: Perform mathematical calculations  
+- Calculator: Perform mathematical calculations
 - Word Definitions: Look up word meanings and definitions
 - Random Facts: Share interesting trivia and facts
-- Date/Time: Get current date and time information
-- User Profile: Access and update user preferences
-- Conversation History: Review past conversations
-- Analytics: Analyze conversation patterns
+- Date/Time: Get current date and time in the user's timezone
+- Internal Docs Search: Answer questions about how this app works
 
-GENERAL ABILITIES:
-- Natural conversation with memory across sessions
-- Learning user preferences and interests over time
-- Creating plans for complex multi-step tasks
-- Providing thoughtful, engaging responses
+MEMORY & KNOWLEDGE:
+- Remembers conversations across sessions using semantic search
+- Learns about people, pets, and places the user mentions (social graph)
+- Tracks user preferences and interests over time
+- Can recall what was discussed about any topic, person, or pet
+- Can recall conversations from specific time periods
+- Knowledge graph visualization shows everything learned
 
-When asked about your capabilities, describe these clearly and offer to demonstrate any of them.
+EVENTS & CALENDAR:
+- Personal events: Finds events extracted from group chats (past and future)
+- Houston events: Searches a curated database of Houston area events (concerts, cycling, sports, arts, food, etc.)
+- Google Calendar sync: Events can be synced to the user's Google Calendar
+
+GROUP COLLABORATION:
+- Real-time group chat with multiple users
+- @agent or @assistant mention to invoke AI help in groups
+- Automatic event extraction from group messages
+- Group summaries and consensus queries
+- Per-member privacy controls
+
+SOCIAL GRAPH:
+- Tracks people, pets, and locations mentioned in conversations
+- Can list and look up details about any entity
+- Learns relationships, personalities, and context over time
+
+SETTINGS & PROFILE:
+- API key management (personal or system-wide)
+- Timezone configuration
+- Google Calendar connection
+- Adjustable response preferences (creativity, verbosity, auto-planning)
+
+When asked about capabilities, describe them clearly and offer to demonstrate. For detailed how-to questions, search internal docs for thorough answers.
 """)
         else:
             # Regular conversation - only include relevant user context
@@ -1605,11 +1642,12 @@ The tool result above contains a MARKDOWN TABLE. You MUST:
 Continue this conversation with a SUBSTANTIVE, thoughtful response. Requirements:
 {table_instruction}
 1. DEPTH: Give a full response (3-6 sentences minimum), not a brief one-liner
-2. CONTEXT: Track who/what is being discussed - resolve "he/she/it" from the conversation
+2. CONTEXT: Track who/what is being discussed - resolve "he/she/it/that/this" from the conversation history above. When the user says "explain that simpler" or "tell me more about that", look at YOUR PREVIOUS response to determine what "that" refers to and respond accordingly. NEVER ask the user to clarify what "that" means if it's obvious from the conversation.
 3. ENGAGEMENT: Share your thoughts, reactions, and relevant observations  
 4. FLOW: Weave in natural follow-up questions rather than just asking one at the end
 5. NO Q&A: Don't just ask a question back - actually engage with what they shared
 6. TOOL AWARENESS: If the user asks "how did you know that?" or "what did you do?", reference the tools you used (shown in parentheses in the history)
+7. FOLLOW-UPS: When the user asks for a simpler explanation, shorter version, or more detail about something you just said, provide it directly without hedging or asking what they meant.
 
 If they're telling a story, react to it meaningfully. If they shared something surprising, acknowledge the impact. Add relevant context or gentle insights when appropriate.
 
@@ -1871,20 +1909,55 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
             # Knowledge extraction is optional - don't break the workflow
             logger.debug(f"Knowledge extraction skipped: {e}")
 
-        # Generate suggestions if not already set
+        # Generate contextual suggestions if not already set
         if not ctx.state.suggestions:
             suggestions = []
-            
-            if ctx.state.intent:
-                if ctx.state.intent.intent_type.value == "question":
+            entities = ctx.state.entities or []
+            tool_used = ctx.state.tool_name
+
+            if tool_used == "get_houston_events":
+                suggestions.append(Suggestion(
+                    title="Filter by category",
+                    description="Show me just music events, or cycling, or comedy",
+                    relevance_score=0.8,
+                    based_on=entities,
+                    action_type="follow_up",
+                ))
+                suggestions.append(Suggestion(
+                    title="This weekend",
+                    description="What's happening this weekend in Houston?",
+                    relevance_score=0.7,
+                    based_on=entities,
+                    action_type="follow_up",
+                ))
+            elif tool_used == "get_upcoming_events":
+                suggestions.append(Suggestion(
+                    title="Sync to Google Calendar",
+                    description="Sync these events to your Google Calendar",
+                    relevance_score=0.7,
+                    based_on=entities,
+                    action_type="follow_up",
+                ))
+            elif tool_used == "recall_about_topic" and entities:
+                for ent in entities[:2]:
                     suggestions.append(Suggestion(
-                        title="Learn more",
-                        description="Would you like me to search for more information on this topic?",
-                        relevance_score=0.7,
-                        based_on=[],
-                        action_type="web_search",
+                        title=f"More about {ent.title()}",
+                        description=f"Tell me more about {ent}",
+                        relevance_score=0.8,
+                        based_on=[ent],
+                        action_type="follow_up",
                     ))
-                elif ctx.state.intent.intent_type.value == "task":
+            elif tool_used == "web_search":
+                suggestions.append(Suggestion(
+                    title="Dig deeper",
+                    description="Search for more details on this topic",
+                    relevance_score=0.7,
+                    based_on=entities,
+                    action_type="web_search",
+                ))
+
+            if ctx.state.intent:
+                if ctx.state.intent.intent_type.value == "task" and not suggestions:
                     suggestions.append(Suggestion(
                         title="Create a plan",
                         description="I can create a detailed plan to accomplish this task.",
@@ -1892,16 +1965,41 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
                         based_on=[],
                         action_type="create_plan",
                     ))
-            
-            suggestions.append(Suggestion(
-                title="Fun fact",
-                description="Want to hear a random interesting fact?",
-                relevance_score=0.5,
-                based_on=[],
-                action_type="random_fact",
-            ))
-            
-            ctx.state.suggestions = suggestions
+
+            # Add entity-based suggestions from the conversation
+            if entities and len(suggestions) < 3:
+                for ent in entities[:2]:
+                    if not any(ent.lower() in s.title.lower() for s in suggestions):
+                        suggestions.append(Suggestion(
+                            title=f"What do you know about {ent.title()}?",
+                            description=f"Recall everything I know about {ent}",
+                            relevance_score=0.6,
+                            based_on=[ent],
+                            action_type="follow_up",
+                        ))
+
+            # Contextual suggestions from the social graph
+            if ctx.deps.knowledge_graph_port and len(suggestions) < 3:
+                try:
+                    graph_suggestions = await ctx.deps.knowledge_graph_port.get_contextual_suggestions(
+                        user_id=ctx.state.user.id,
+                        mentioned_entities=entities[:5],
+                        limit=3,
+                    )
+                    for cs in graph_suggestions[:2]:
+                        name = cs.get("name", "")
+                        if name and not any(name.lower() in s.title.lower() for s in suggestions):
+                            suggestions.append(Suggestion(
+                                title=f"Ask about {name}",
+                                description=f"What do you know about {name}?",
+                                relevance_score=cs.get("relevance", 0.5),
+                                based_on=[name],
+                                action_type="follow_up",
+                            ))
+                except Exception:
+                    pass
+
+            ctx.state.suggestions = suggestions[:3]
         
         # Mark workflow as complete
         ctx.state.is_complete = True
