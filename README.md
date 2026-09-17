@@ -232,7 +232,7 @@ Optional Neo4j integration for persistent memory and context:
 
 ### Wrestler Themes
 
-The header **Theme** picker dresses the whole app as Macho Man Randy Savage, Hulk Hogan, Bret "The Hitman" Hart or "Mean" Gene Okerlund: palette, headshot avatar, welcome copy, and the agent answers **in that wrestler's voice** (persona rules are appended to the response agents' system prompts; substance is unchanged). The choice is remembered per browser and sent as `persona` on chat requests. Headshots are CC-licensed crops from Wikimedia Commons (`frontend/public/themes/ATTRIBUTION.md`).
+The header **Theme** picker dresses the whole app as Macho Man Randy Savage, Hulk Hogan, Bret "The Hitman" Hart, "Mean" Gene Okerlund or The Ultimate Warrior: palette, headshot avatar, welcome copy, and the agent answers **in that wrestler's voice** (persona rules are appended to the response agents' system prompts; substance is unchanged). The choice is remembered per browser and sent as `persona` on chat requests. Headshots are CC-licensed crops from Wikimedia Commons (`frontend/public/themes/ATTRIBUTION.md`).
 
 ### Deep Research
 

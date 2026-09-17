@@ -118,7 +118,7 @@ async def test_full_lifecycle(client: AsyncClient):
     job = r.json()
     assert job["status"] == "queued" and job["question"] == "Does X beat Y on Z?" and job["depth"] == 2
     assert job["persona"] == "hulk_hogan"
-    bad = await client.post("/api/v1/research", json={"question": "another long question", "persona": "ultimate_warrior"}, headers=_auth())
+    bad = await client.post("/api/v1/research", json={"question": "another long question", "persona": "andre_the_giant"}, headers=_auth())
     assert bad.status_code == 202 and bad.json()["persona"] is None
     assert client.fake.started[0] == job["id"]  # type: ignore[attr-defined]
 

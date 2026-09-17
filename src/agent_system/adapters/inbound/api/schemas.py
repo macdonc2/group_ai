@@ -206,7 +206,7 @@ class AgentRequest(BaseModel):
 
     message: Annotated[str, Field(min_length=1, description="User message")]
     conversation_id: str | None = None
-    persona: str | None = Field(default=None, description="Optional wrestler persona key (macho_man, hulk_hogan, bret_hart, mean_gene)")
+    persona: str | None = Field(default=None, description="Optional wrestler persona key (macho_man, hulk_hogan, bret_hart, mean_gene, ultimate_warrior)")
 
 
 class StreamEvent(BaseModel):

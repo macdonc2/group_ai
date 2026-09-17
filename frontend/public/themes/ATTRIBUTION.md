@@ -10,5 +10,6 @@ the credit line for whichever theme was used.
 | hulk_hogan.jpg | Hulk Hogan, El Paso, 1989 | https://commons.wikimedia.org/wiki/File:Hulk_Hogan_Pointing.jpg | John McKeon | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
 | bret_hart.jpg | Bret "The Hitman" Hart, 2012 | https://commons.wikimedia.org/wiki/File:Bret_Hitman_Hart_2012_crop.png | Tabercil | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
 | mean_gene.jpg | "Mean" Gene Okerlund, WrestleMania XXV Axxess | https://commons.wikimedia.org/wiki/File:Mene_Gene_Okerlund.jpg | Mark Hodgins | [CC BY 2.0](https://creativecommons.org/licenses/by/2.0/) |
+| ultimate_warrior.jpg | The Ultimate Warrior, April 2014 | https://commons.wikimedia.org/wiki/File:The_Ultimate_Warrior_entrance_April_7th_2014_(cropped).jpg | Megan Elice Meadows | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
 
 The two CC BY-SA crops are themselves shared under CC BY-SA 2.0.

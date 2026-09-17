@@ -4,7 +4,7 @@
  * src/agent_system/adapters/outbound/llm/personas.py.
  */
 
-export type WrestlerKey = 'macho_man' | 'hulk_hogan' | 'bret_hart' | 'mean_gene';
+export type WrestlerKey = 'macho_man' | 'hulk_hogan' | 'bret_hart' | 'mean_gene' | 'ultimate_warrior';
 export type WrestlerChoice = WrestlerKey | 'none';
 
 export interface Wrestler {
@@ -85,9 +85,23 @@ export const WRESTLERS: Record<WrestlerKey, Wrestler> = {
     ttsTone: 'polished broadcast announcer, brisk and urbane',
     palette: { accent: '#1D3F7A', accent2: '#C9A227', glow: '#E8C766', ink: '#0B2545', soft: 'rgba(232, 199, 102, 0.10)' },
   },
+  ultimate_warrior: {
+    key: 'ultimate_warrior',
+    name: 'The Ultimate Warrior',
+    shortName: 'The Warrior',
+    tagline: 'FEEL THE POWER OF THE WARRIOR!',
+    welcome: 'The Warriors have spoken. What is your destiny?',
+    prompt: 'Speak, Warrior. From Parts Unknown…',
+    thinking: 'Loading the spaceship with the rocket fuel…',
+    icon: '/themes/ultimate_warrior.jpg',
+    credit: 'Photo: Megan Elice Meadows, CC BY-SA 2.0, via Wikimedia Commons',
+    font: "'Bangers', 'Anton', system-ui, sans-serif",
+    ttsTone: 'breathless, cosmic, growling intensity',
+    palette: { accent: '#00B8D4', accent2: '#FF2D95', glow: '#FFEB3B', ink: '#0A2E36', soft: 'rgba(255, 235, 59, 0.10)' },
+  },
 };
 
-export const WRESTLER_KEYS: WrestlerKey[] = ['macho_man', 'hulk_hogan', 'bret_hart', 'mean_gene'];
+export const WRESTLER_KEYS: WrestlerKey[] = ['macho_man', 'hulk_hogan', 'bret_hart', 'mean_gene', 'ultimate_warrior'];
 
 export function getWrestler(choice: WrestlerChoice | null | undefined): Wrestler | null {
   return choice && choice !== 'none' ? WRESTLERS[choice] ?? null : null;
