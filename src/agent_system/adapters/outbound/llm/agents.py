@@ -200,6 +200,10 @@ Determine if the query needs a tool. Available tools:
    - "Tell me about Bo" → tool: "recall_about_topic", tool_input: "Bo"
    - "What do you know about Zane?" → tool: "recall_about_topic", tool_input: "Zane"
    - "Remind me about the cat discussion" → tool: "recall_about_topic", tool_input: "cat"
+   - "What do you know about my wife and pets?" → tool: "recall_about_topic", tool_input: "wife and pets"
+   - "Tell me about my family" → tool: "recall_about_topic", tool_input: "family"
+   - "What's my wife's name?" → tool: "recall_about_topic", tool_input: "wife"
+   - It understands relationship words (wife, husband, family, friends) and species (cats, dogs) and returns the stored people and pets with their names.
    - THIS IS CRITICAL: When user references something specific from past conversations, USE THIS TOOL
    - tool_input: The entity/topic name to look up
    - IMPORTANT: RESOLVE PRONOUNS! If user says "his interests" and conversation is about "Zane", use tool_input: "Zane interests" NOT "his interests"

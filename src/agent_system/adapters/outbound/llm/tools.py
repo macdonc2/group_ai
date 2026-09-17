@@ -738,6 +738,12 @@ async def summarize_user_knowledge(
         tool_names = list(set(t["name"] for t in tools_used))
         
         summary_parts = []
+        # The social graph is what people mean by "what do you know about me"
+        people_facts, pet_facts = await social_graph_facts("everything about me", UserId.from_string(user_id), knowledge_graph_port)
+        if people_facts:
+            summary_parts.append(f"**People in your life ({len(people_facts)}):**\n" + "\n".join(f"  • {f}" for f in people_facts))
+        if pet_facts:
+            summary_parts.append(f"**Your pets ({len(pet_facts)}):**\n" + "\n".join(f"  • {f}" for f in pet_facts))
         
         if topic_names:
             # Group similar topics
@@ -785,7 +791,8 @@ async def summarize_user_knowledge(
                 "tools_used": tool_names,
                 "user_info": user_info,
             },
-            message=f"Found {len(user_nodes)} nodes in knowledge graph: {len(topics)} topics, {len(interactions)} interactions, {len(tools_used)} tool uses",
+            message=(f"Here's what I know about you ({len(user_nodes)} knowledge nodes):\n\n"
+                     + ("\n\n".join(summary_parts) if summary_parts else "Nothing stored yet.")),
         )
         
     except Exception as e:
@@ -794,6 +801,93 @@ async def summarize_user_knowledge(
             data=None,
             message=f"Error summarizing knowledge: {str(e)}",
         )
+
+
+_RELATIONSHIP_WORDS = {
+    "wife": {"spouse", "wife", "partner"}, "husband": {"spouse", "husband", "partner"},
+    "spouse": {"spouse", "wife", "husband", "partner"},
+    "partner": {"partner", "spouse", "wife", "husband", "girlfriend", "boyfriend"},
+    "girlfriend": {"girlfriend", "partner"}, "boyfriend": {"boyfriend", "partner"},
+    "family": {"spouse", "wife", "husband", "partner", "parent", "mother", "father", "mom", "dad",
+               "sibling", "brother", "sister", "child", "son", "daughter", "family", "grandmother", "grandfather"},
+    "parents": {"parent", "mother", "father", "mom", "dad"}, "mom": {"mother", "mom", "parent"},
+    "dad": {"father", "dad", "parent"}, "kids": {"child", "son", "daughter"}, "children": {"child", "son", "daughter"},
+    "siblings": {"sibling", "brother", "sister"}, "brother": {"brother", "sibling"}, "sister": {"sister", "sibling"},
+    "friends": {"friend", "best friend"}, "friend": {"friend", "best friend"},
+    "coworkers": {"colleague", "coworker", "boss", "manager"}, "colleagues": {"colleague", "coworker"},
+}
+_PET_WORDS = {"pet": None, "pets": None, "animals": None, "animal": None, "dog": "dog", "dogs": "dog", "puppy": "dog",
+              "cat": "cat", "cats": "cat", "kitten": "cat", "bird": "bird", "birds": "bird", "fish": "fish", "horse": "horse"}
+_BROAD_WORDS = ("myself", "my life", "everything", "household", "home life", "profile", "about me")
+
+
+def _person_facts(p: dict) -> str:
+    name = p.get("name", "someone")
+    rel = p.get("relationship_type")
+    bits = [f"**{name}**" + (f" — your {rel}" if rel else "")]
+    if p.get("aliases"):
+        bits.append(f"also called {', '.join(str(a) for a in p['aliases'])}")
+    if p.get("context_notes"):
+        bits.append(str(p["context_notes"]).strip())
+    if p.get("mention_count"):
+        bits.append(f"mentioned {p['mention_count']}×")
+    return "; ".join(bits)
+
+
+def _pet_facts(p: dict) -> str:
+    name = p.get("name", "a pet")
+    species = p.get("species")
+    head = f"**{name}**" + (f" — your {species}" if species else " — your pet") + (f" ({p['breed']})" if p.get("breed") else "")
+    bits = [head]
+    if p.get("aliases"):
+        bits.append(f"also called {', '.join(str(a) for a in p['aliases'])}")
+    if p.get("personality"):
+        bits.append("personality: " + ", ".join(str(x) for x in p["personality"]))
+    if p.get("food_preferences"):
+        bits.append("food: " + ", ".join(str(x) for x in p["food_preferences"]))
+    if p.get("health_notes"):
+        bits.append("health: " + str(p["health_notes"]).strip())
+    return "; ".join(bits)
+
+
+async def social_graph_facts(topic: str, user_id_obj: Any, knowledge_graph_port: Any) -> tuple[list[str], list[str]]:
+    """People and pets in the social graph that a topic is about.
+
+    Matches by name/alias, relationship word ("wife", "family", "friends"),
+    species word ("cats"), and returns everyone for broad topics ("about me").
+    Returns (people_facts, pet_facts) as formatted lines.
+    """
+    if not knowledge_graph_port:
+        return [], []
+    words = [w.strip(".,!?'\"()") for w in topic.lower().split()]
+    joined = " ".join(words)
+    wanted_rels: set[str] = set()
+    for w in words:
+        wanted_rels |= _RELATIONSHIP_WORDS.get(w, set())
+    wanted_species = {s for w, s in _PET_WORDS.items() if w in words and s}
+    want_all_pets = any(w in _PET_WORDS and _PET_WORDS[w] is None for w in words)
+    broad = any(b in joined for b in _BROAD_WORDS)
+
+    try:
+        people = await knowledge_graph_port.list_known_people(user_id_obj, relationship_type=None, limit=100) or []
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"list_known_people failed: {e}")
+        people = []
+    try:
+        pets = await knowledge_graph_port.list_pets(user_id_obj, species=None) or []
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"list_pets failed: {e}")
+        pets = []
+
+    def name_hit(entity: dict) -> bool:
+        names = [str(entity.get("name") or "").lower()] + [str(a).lower() for a in (entity.get("aliases") or [])]
+        return any(n and (n in words or (" " in n and n in joined)) for n in names)
+
+    people_facts = [_person_facts(p) for p in people
+                    if broad or name_hit(p) or str(p.get("relationship_type") or "").lower() in wanted_rels]
+    pet_facts = [_pet_facts(p) for p in pets
+                 if broad or want_all_pets or name_hit(p) or str(p.get("species") or "").lower() in wanted_species]
+    return people_facts, pet_facts
 
 
 async def recall_about_topic(
@@ -873,6 +967,16 @@ async def recall_about_topic(
                 except Exception:
                     pass
         
+        # ── Social graph by relationship / species / name ("my wife and pets") ──
+        try:
+            people_facts, pet_facts = await social_graph_facts(topic, user_id_obj, knowledge_graph_port)
+            if people_facts:
+                results["people"] = people_facts
+            if pet_facts:
+                results["pets"] = pet_facts
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"social graph lookup failed for '{topic}': {e}")
+
         if structured_facts:
             results["structured_profile"] = structured_facts
         
@@ -965,7 +1069,7 @@ async def recall_about_topic(
         semantic_count = len(results["semantic_matches"])
         kg_count = len(results["from_knowledge_graph"])
         
-        has_structured = bool(results.get("structured_profile"))
+        has_structured = bool(results.get("structured_profile") or results.get("people") or results.get("pets"))
         if semantic_count == 0 and kg_count == 0 and not has_structured:
             return ToolResult(
                 success=True,
@@ -982,9 +1086,19 @@ async def recall_about_topic(
             for fact in results["structured_profile"]:
                 summary_parts.append(f"  • {fact}")
             summary_parts.append("")
+        if results.get("people"):
+            summary_parts.append("**People (stored facts you've told me):**")
+            for fact in results["people"]:
+                summary_parts.append(f"  • {fact}")
+            summary_parts.append("")
+        if results.get("pets"):
+            summary_parts.append("**Pets (stored facts you've told me):**")
+            for fact in results["pets"]:
+                summary_parts.append(f"  • {fact}")
+            summary_parts.append("")
         
         if semantic_count > 0:
-            summary_parts.append(f"**Found {semantic_count} Related Conversations:**\n")
+            summary_parts.append(f"**{semantic_count} related past messages** (things you asked or said before, not stored facts):\n")
             for i, match in enumerate(results["semantic_matches"][:8], 1):
                 role_label = "You said" if match["role"] == "user" else "I said"
                 content_preview = match["content"][:300]

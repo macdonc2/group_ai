@@ -67,6 +67,9 @@ markers = [
 filterwarnings = [
     "error::DeprecationWarning",
     "ignore:datetime.datetime.utcnow:DeprecationWarning",
+    # third-party import-time noise; PyMuPDF segfaults if the SWIG warning is raised as an error
+    "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+    "ignore:'crypt' is deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]
