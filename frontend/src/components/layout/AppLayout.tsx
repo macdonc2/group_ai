@@ -196,7 +196,7 @@ export function AppLayout() {
   };
 
   return (
-    <div className={`h-screen flex bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 ${wrestler ? 'wt-app' : ''}`}>
+    <div className={`app-shell flex overflow-hidden bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 ${wrestler ? 'wt-app' : ''}`}>
       {/* Mobile sidebar overlay */}
       {showMobileSidebar && (
         <div 
@@ -214,7 +214,7 @@ export function AppLayout() {
         ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
       `}>
         {/* Mobile close button */}
-        <div className="flex md:hidden items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex md:hidden items-center justify-between p-3 safe-area-inset-top border-b border-slate-200 dark:border-slate-700">
           <span className="font-semibold text-sm">Navigation</span>
           <button
             onClick={() => setShowMobileSidebar(false)}
@@ -290,7 +290,7 @@ export function AppLayout() {
       {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0 wt-main">
         {/* Header */}
-        <header className={`h-14 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-2 sm:px-4 shrink-0 ${wrestler ? 'wt-header' : ''}`}>
+        <header className={`min-h-14 safe-area-inset-top border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-2 sm:px-4 shrink-0 ${wrestler ? 'wt-header' : ''}`}>
           <div className="flex items-center gap-2">
             {/* Mobile menu button */}
             <button
@@ -429,7 +429,7 @@ export function AppLayout() {
             
             <button
               onClick={() => setShowKnowledgeGraph(true)}
-              className="p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
+              className="hidden sm:inline-flex p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
               title="View Knowledge Graph"
             >
               <Share2 size={18} />
@@ -483,7 +483,7 @@ export function AppLayout() {
               hidden md:block ${showMobileMembers ? '!block' : ''}
             `}>
               {/* Mobile close button */}
-              <div className="flex md:hidden items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700">
+              <div className="flex md:hidden items-center justify-between p-3 safe-area-inset-top border-b border-slate-200 dark:border-slate-700">
                 <span className="font-semibold text-sm">Members</span>
                 <button
                   onClick={() => setShowMobileMembers(false)}
@@ -559,7 +559,7 @@ export function AppLayout() {
                 onClick={() => setShowMobileTrace(false)}
               />
               <div className="fixed inset-y-0 right-0 z-50 lg:hidden w-80 max-w-[85vw] bg-white dark:bg-slate-900 shadow-xl flex flex-col">
-                <div className="flex items-center justify-between p-3 border-b border-slate-200 dark:border-slate-700 shrink-0">
+                <div className="flex items-center justify-between p-3 safe-area-inset-top border-b border-slate-200 dark:border-slate-700 shrink-0">
                   <span className="font-semibold text-sm flex items-center gap-2">
                     <Activity size={16} />
                     Workflow Trace
