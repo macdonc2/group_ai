@@ -1549,12 +1549,19 @@ async def get_houston_events(
         
         adapter = HoustonEventsAdapter()
         try:
+            note = ""
             if query or category:
                 events = await adapter.search_events(
                     query=query,
                     category=category,
                     limit=limit,
                 )
+                if not events:
+                    # A phrase like "this weekend" is not a title to match on.
+                    # Better to show what's on than to claim nothing is.
+                    events = await adapter.get_latest_events(limit=limit)
+                    if events:
+                        note = f"_No listings matched \"{query or category}\" by name, so here is what's on:_\n\n"
             else:
                 events = await adapter.get_latest_events(limit=limit)
             
@@ -1566,7 +1573,7 @@ async def get_houston_events(
                 )
             
             # Format for display
-            formatted = format_houston_events_for_display(events)
+            formatted = note + format_houston_events_for_display(events)
             
             # Also return structured data
             events_data = [
@@ -1595,6 +1602,122 @@ async def get_houston_events(
             data=None,
             message=f"Error fetching Houston events: {str(e)}",
         )
+
+
+# ============ Calendar Tools ============
+
+def _to_naive_utc(dt: datetime) -> datetime:
+    """Google bodies are written as naive UTC + 'Z'; normalise whatever we got."""
+    from datetime import timezone as _tz
+
+    if dt.tzinfo is not None:
+        return dt.astimezone(_tz.utc).replace(tzinfo=None)
+    return dt
+
+
+async def add_to_calendar(
+    title: str,
+    when: str | None = None,
+    location: str | None = None,
+    description: str | None = None,
+    session=None,
+    user_id: str | None = None,
+    **kwargs,
+) -> ToolResult:
+    """Put an event on the user's Google Calendar.
+
+    If `title` matches a Houston event in the events database, that event's
+    date, venue and link are used. Otherwise `when` (natural language such as
+    "Saturday at 7pm") is interpreted in the user's timezone.
+    """
+    from zoneinfo import ZoneInfo
+
+    from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
+    from agent_system.application.services import CalendarSyncService
+    from agent_system.application.services.datetime_parser import parse_vague_datetime
+    from agent_system.composition_root.container import get_container
+    from agent_system.domain.value_objects import UserId
+
+    if session is None or not user_id:
+        return ToolResult(success=False, data=None, message="Calendar tool needs a signed-in user.")
+    container = await get_container()
+    if not container.google_calendar_adapter:
+        return ToolResult(success=False, data=None, message="Google Calendar integration is not configured on this server.")
+    user = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
+    if not user:
+        return ToolResult(success=False, data=None, message="User not found.")
+    if not user.has_google_calendar_connected():
+        return ToolResult(
+            success=False, data=None,
+            message="Google Calendar isn't connected yet. Connect it under the user menu → Google Calendar, then ask again.",
+        )
+
+    tz = ZoneInfo(user.timezone or "UTC")
+    title = (title or "").strip()
+    if not title:
+        return ToolResult(success=False, data=None, message="What should I put on the calendar? Give me the event name.")
+
+    # 1. A Houston event by that name? Use its real date, venue and link.
+    matched = None
+    try:
+        from agent_system.adapters.outbound.houston_events import HoustonEventsAdapter
+
+        adapter = HoustonEventsAdapter()
+        try:
+            words = [w for w in title.split() if len(w) > 2][:4]
+            for probe in (title, " ".join(words[:3]), " ".join(words[:2])):
+                if not probe:
+                    continue
+                hits = await adapter.search_events(query=probe, limit=5)
+                hits = [h for h in hits if h.start_time]
+                if hits:
+                    matched = hits[0]
+                    break
+        finally:
+            await adapter.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("houston lookup failed in add_to_calendar: %s", exc)
+
+    if matched:
+        start_utc = _to_naive_utc(matched.start_time)
+        end_utc = _to_naive_utc(matched.end_time) if matched.end_time else None
+        event_title = matched.title
+        location = location or matched.location
+        description = description or " ".join(p for p in [matched.description or "", f"Tickets/info: {matched.url}" if matched.url else ""] if p).strip() or None
+    else:
+        text = when or title
+        parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC")
+        if not parsed:
+            return ToolResult(
+                success=False, data=None,
+                message=f"I couldn't find an event called \"{title}\" in the Houston listings and couldn't work out a date from \"{text}\". Tell me the day and time and I'll add it.",
+            )
+        start_utc = _to_naive_utc(parsed)
+        end_utc = None
+        event_title = title
+
+    try:
+        created = await CalendarSyncService(container.google_calendar_adapter).create_event_for_user(
+            user, event_title, start_utc, end_utc, description=description, location=location,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Google Calendar create failed: %s", exc)
+        return ToolResult(success=False, data=None, message=f"Google Calendar refused the event: {str(exc)[:200]}")
+    if not created:
+        return ToolResult(success=False, data=None, message="Couldn't get access to your Google Calendar. Try reconnecting it in settings.")
+
+    from datetime import timezone as _tz
+
+    local_start = start_utc.replace(tzinfo=_tz.utc).astimezone(tz)
+    when_text = local_start.strftime("%A, %B %-d at %-I:%M %p %Z")
+    where = f" at {location}" if location else ""
+    return ToolResult(
+        success=True,
+        data={"google_event_id": created[0], "calendar_id": created[1], "title": event_title,
+              "start": local_start.isoformat(), "location": location, "matched_houston_event": bool(matched)},
+        message=f"Added to your Google Calendar: {event_title} on {when_text}{where}."
+                + (f" Details and link: {matched.url}" if matched and matched.url else ""),
+    )
 
 
 # ============ Social Graph Tools ============
@@ -2399,6 +2522,17 @@ AVAILABLE_TOOLS = {
             "search_query": "string (optional keyword to filter by, e.g., 'haircut', 'meeting')",
             "temporal_filter": "string (past, current, future, or all - default: future)",
             "specific_date": "string (optional specific date, e.g., '2026-01-30', 'January 30')",
+        },
+        "requires_session": True,
+    },
+    "add_to_calendar": {
+        "function": add_to_calendar,
+        "description": "Put an event on the user's Google Calendar. Use when the user says 'put X on my calendar', 'add X to my calendar', 'schedule X', 'remind me about X on Friday'. Matches Houston events by name automatically; otherwise interprets the date/time in the user's timezone.",
+        "parameters": {
+            "title": "string (event name, e.g. 'Punk Rock Garage Sale' or 'Dentist')",
+            "when": "string (optional natural-language date/time, e.g. 'Saturday at 7pm')",
+            "location": "string (optional)",
+            "description": "string (optional)",
         },
         "requires_session": True,
     },

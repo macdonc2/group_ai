@@ -11,6 +11,7 @@ from agent_system.domain.entities import (
     User,
 )
 from agent_system.domain.ports import GoogleCalendarPort
+from agent_system.domain.value_objects import EventId
 from agent_system.domain.utils.encryption import get_api_key_encryption
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,41 @@ class CalendarSyncService:
         except Exception as e:
             logger.error(f"Failed to sync event {event.id} to Google Calendar: {e}")
             return event.mark_sync_failed()
+
+    async def create_event_for_user(
+        self,
+        user: User,
+        title: str,
+        start_utc: datetime,
+        end_utc: datetime | None = None,
+        description: str | None = None,
+        location: str | None = None,
+    ) -> tuple[str, str] | None:
+        """Create a one-off event on the user's Google Calendar (an explicit
+        "put this on my calendar" request, so the sync opt-in is not required,
+        only a connected calendar).
+
+        Returns (google_event_id, calendar_id) or None when not connected.
+        """
+        access_token = await self._get_access_token(user)
+        if not access_token:
+            return None
+        calendar_id = user.preferences.google_calendar_id or "primary"
+        calendar_event = CalendarEvent(
+            id=EventId.generate(),
+            user_id=user.id,
+            title=title,
+            description=description,
+            start_datetime=start_utc,
+            end_datetime=end_utc or start_utc + timedelta(hours=2),
+            location=location,
+            source=CalendarEventSource.MANUAL,
+        )
+        google_event_id, _etag = await self.google_calendar.create_event(
+            access_token=access_token, calendar_id=calendar_id, event=calendar_event,
+        )
+        logger.info(f"Created ad-hoc Google Calendar event {google_event_id} for {user.email}")
+        return google_event_id, calendar_id
 
     async def delete_event_from_google(
         self,

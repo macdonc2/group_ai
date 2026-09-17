@@ -244,6 +244,14 @@ Determine if the query needs a tool. Available tools:
    - Categories: music, cycling, sports, arts, food, festivals, comedy, theater
    - This searches an AI-curated database of Houston events updated daily
 
+11b. "add_to_calendar" - Use when the user wants something PUT ON their calendar (a command, not a question):
+   - "Put the Punk Rock Garage Sale on my calendar" → tool: "add_to_calendar", tool_input: "Punk Rock Garage Sale"
+   - "Add the BBQ Throwdown to my calendar" → tool: "add_to_calendar", tool_input: "BBQ Throwdown"
+   - "Schedule dentist Tuesday at 3pm" → tool: "add_to_calendar", tool_input: "dentist Tuesday at 3pm"
+   - "Remind me about the jazz festival Saturday" → tool: "add_to_calendar", tool_input: "jazz festival Saturday"
+   - tool_input: the event name, plus any date/time words the user gave. Resolve "that", "it", "the second one" from the conversation to the actual event name.
+   - CRITICAL: "put/add ... on/to my calendar", "schedule", "book", "remind me" mean add_to_calendar, NOT get_houston_events and NOT get_upcoming_events.
+
 === SOCIAL GRAPH & KNOWLEDGE TOOLS ===
 
 12. "get_person_info" - Use when user asks about a SPECIFIC PERSON they've mentioned before:

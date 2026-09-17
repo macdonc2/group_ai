@@ -155,8 +155,17 @@ rollout-backend:
 	kubectl rollout restart deployment/agent-system-backend -n $(NAMESPACE)
 	kubectl rollout status deployment/agent-system-backend -n $(NAMESPACE) --timeout=90s
 
-# Quick deploy backend (build, push, rollout)
-deploy-backend: build-backend push-backend rollout-backend
+# Refuse to restart the backend while a Deep Research run is in flight
+# (runs live inside the API process; a rollout would interrupt them).
+wait-research-idle:
+	@for i in $$(seq 1 90); do \
+	  n=$$(curl -sf --max-time 5 https://agent.macdonml.com/health/research | sed -n 's/.*"active_research_jobs": *\([0-9]*\).*/\1/p'); \
+	  if [ -z "$$n" ] || [ "$$n" = "0" ]; then echo "No research runs in flight."; exit 0; fi; \
+	  echo "$$n research run(s) in flight; waiting 20s ($$i/90)..."; sleep 20; \
+	done; echo "Still busy after 30 minutes; aborting rollout."; exit 1
+
+# Quick deploy backend (build, push, wait for idle, rollout)
+deploy-backend: build-backend push-backend wait-research-idle rollout-backend
 	@echo "Backend deployed successfully!"
 
 # Build frontend only

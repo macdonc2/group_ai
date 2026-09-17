@@ -144,6 +144,16 @@ class HoustonEventsAdapter:
         return filtered[:limit]
 
 
+def _houston_local(dt: datetime) -> datetime:
+    """Event times come from the events service in UTC; readers are in Houston."""
+    from datetime import timezone as _tz
+    from zoneinfo import ZoneInfo
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=_tz.utc)
+    return dt.astimezone(ZoneInfo("America/Chicago"))
+
+
 def format_houston_events_for_display(events: list[HoustonEvent]) -> str:
     """Format Houston events for display in agent responses.
     
@@ -167,14 +177,14 @@ def format_houston_events_for_display(events: list[HoustonEvent]) -> str:
         
         # Date/time formatting
         if event.start_time:
-            start_str = event.start_time.strftime("%A, %B %d, %Y at %I:%M %p")
+            start_str = _houston_local(event.start_time).strftime("%A, %B %d, %Y at %I:%M %p %Z")
             if event.end_time:
                 # Same day? Just show end time
                 if event.start_time.date() == event.end_time.date():
-                    end_str = event.end_time.strftime("%I:%M %p")
+                    end_str = _houston_local(event.end_time).strftime("%I:%M %p")
                     lines.append(f"📅 **When:** {start_str} - {end_str}")
                 else:
-                    end_str = event.end_time.strftime("%A, %B %d at %I:%M %p")
+                    end_str = _houston_local(event.end_time).strftime("%A, %B %d at %I:%M %p")
                     lines.append(f"📅 **When:** {start_str} - {end_str}")
             else:
                 lines.append(f"📅 **When:** {start_str}")

@@ -1090,6 +1090,13 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 ctx.state.tool_arguments = {"name": name}
             logger.debug(f"get_pet_info args: name={name}")
         
+        elif tool_name == "add_to_calendar":
+            # The tool matches Houston events by name and otherwise parses the
+            # date words itself, so pass the whole input as both title and when.
+            text = (tool_input or ctx.state.user_input or "").strip()
+            ctx.state.tool_arguments = {"title": text, "when": text}
+            logger.debug(f"add_to_calendar args: {text!r}")
+
         elif tool_name == "list_known_people":
             # List known people - no arguments needed
             ctx.state.tool_arguments = {}
@@ -1430,7 +1437,8 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                     # Detect structured event listings (Houston events, etc.)
                     if '## Houston Events' in observation or '### 1. [' in observation:
                         logger.info("Detected structured event data - bypassing synthesis to preserve links")
-                        ctx.state.response = f"Here's what I found:\n\n{observation}"
+                        lead = await _persona_lead_in(ctx, observation)
+                        ctx.state.response = f"{lead}\n\n{observation}"
                         
                         await ctx.deps.emit_event("react_synthesis_complete", "GenerateResponse", "Structured data returned directly", {
                             "bypassed_synthesis": True,
@@ -1636,7 +1644,8 @@ For conversational responses:
             # Detect structured event listings
             if '## Houston Events' in tool_result or ('### 1. [' in tool_result and 'https://' in tool_result):
                 logger.info(f"Detected structured event data in tool_result - bypassing LLM synthesis ({len(tool_result)} chars)")
-                ctx.state.response = f"Here's what I found:\n\n{tool_result}"
+                lead = await _persona_lead_in(ctx, tool_result)
+                ctx.state.response = f"{lead}\n\n{tool_result}"
                 
                 await ctx.deps.emit_event("node_complete", "GenerateResponse", "Structured event data returned directly", {
                     "response_length": len(ctx.state.response),
@@ -2394,3 +2403,35 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
         # Create and return result
         result = WorkflowResult.from_state(ctx.state)
         return End(result)
+
+
+async def _persona_lead_in(ctx, listing: str) -> str:
+    """The structured-listing bypass skips the LLM, which also skipped the
+    wrestler. When a persona is on, get a short in-character lead-in (with two
+    or three picks) and keep the listing verbatim underneath."""
+    persona = getattr(ctx.deps, "persona", None)
+    if not persona:
+        return "Here's what I found:"
+    try:
+        from agent_system.adapters.outbound.llm.agents import _get_model
+        from agent_system.adapters.outbound.llm.personas import persona_suffix
+        from pydantic_ai import Agent
+
+        agent = Agent(
+            _get_model(ctx.deps.fallback_model, ctx.deps.openai_api_key),
+            output_type=str,
+            system_prompt=(
+                "Write a SHORT in-character lead-in (3-5 sentences, plain text, no markdown, no list) "
+                "for an event listing that will be shown verbatim right after your words. Name two or "
+                "three picks from the listing by their exact titles and say why, in character. Do not "
+                "repeat the listing, do not invent events, do not include links."
+                + persona_suffix(persona)
+            ),
+        )
+        prompt = f"User asked: {ctx.state.user_input}\n\nListing (shown to the user after your lead-in):\n{listing[:4000]}"
+        result = await agent.run(prompt)
+        text = (result.output or "").strip()
+        return text or "Here's what I found:"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"persona lead-in failed: {exc}")
+        return "Here's what I found:"

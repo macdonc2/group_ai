@@ -111,6 +111,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(research_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     
+    @app.get("/health/research")
+    async def research_health() -> dict[str, Any]:
+        """How many research jobs this process is running right now.
+
+        No auth and no job details: the deploy guard polls it so a rollout
+        never restarts the pod under a live run.
+        """
+        from agent_system.adapters.outbound.research.runner import get_runner
+
+        try:
+            runner = get_runner()
+            active = sum(1 for live in runner._jobs.values() if not live.done)
+        except RuntimeError:
+            active = 0
+        return {"active_research_jobs": active}
+
     @app.get("/health")
     async def health_check() -> dict[str, Any]:
         """Health check endpoint."""
