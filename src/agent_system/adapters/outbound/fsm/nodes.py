@@ -15,6 +15,40 @@ from agent_system.adapters.outbound.fsm.state import (
 logger = logging.getLogger(__name__)
 
 
+_TENTATIVE_HINTS = ("not as accepted", "not accepted", "tentative", "unaccepted", "as maybe", "as optional", "pencil")
+
+
+def calendar_tool_args(tool_input: str, user_input: str) -> dict:
+    """Arguments for add_to_calendar from the intent step's tool_input.
+
+    Accepts a plain event name with date words, or a JSON object of the form
+    {"events": [{"title", "when", "location"}], "status": "tentative"}.
+    A tentative request in the user's own words wins even if the JSON lacks it.
+    """
+    import json as _json
+
+    text = (tool_input or "").strip()
+    wants_tentative = any(h in user_input.lower() for h in _TENTATIVE_HINTS)
+    args: dict = {}
+    if text.startswith("{") or text.startswith("["):
+        try:
+            obj = _json.loads(text)
+        except ValueError:
+            obj = None
+        if isinstance(obj, list):
+            obj = {"events": obj}
+        if isinstance(obj, dict) and obj.get("events"):
+            args = {"events": obj["events"], "status": obj.get("status")}
+        elif isinstance(obj, dict) and obj.get("title"):
+            args = {"title": obj["title"], "when": obj.get("when") or obj["title"],
+                    "location": obj.get("location"), "status": obj.get("status")}
+    if not args:
+        args = {"title": text, "when": text}
+    if wants_tentative and not args.get("status"):
+        args["status"] = "tentative"
+    return args
+
+
 @dataclass
 class ReceiveInput(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
     """Initial node that receives user input and prepares the workflow."""
@@ -57,8 +91,11 @@ class AnalyzeIntent(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             context_lines = []
             for m in recent:
                 text = m.content.text
-                if len(text) > 500:
-                    text = text[:500] + "..."
+                # Assistant turns carry the suggestions the user refers back to
+                # ("add the ones you suggested"), so keep more of them.
+                cap = 2500 if m.role.value == "assistant" else 800
+                if len(text) > cap:
+                    text = text[:cap] + "..."
                 context_lines.append(f"{m.role.value}: {text}")
             recent_context = "\n".join(context_lines)
             prompt = f"""Recent conversation:
@@ -1091,11 +1128,11 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             logger.debug(f"get_pet_info args: name={name}")
         
         elif tool_name == "add_to_calendar":
-            # The tool matches Houston events by name and otherwise parses the
-            # date words itself, so pass the whole input as both title and when.
+            # tool_input is a plain event name (+ date words) or a JSON object
+            # {"events": [...], "status": "tentative"} for several at once.
             text = (tool_input or ctx.state.user_input or "").strip()
-            ctx.state.tool_arguments = {"title": text, "when": text}
-            logger.debug(f"add_to_calendar args: {text!r}")
+            ctx.state.tool_arguments = calendar_tool_args(text, ctx.state.user_input or "")
+            logger.debug(f"add_to_calendar args: {ctx.state.tool_arguments!r}")
 
         elif tool_name == "list_known_people":
             # List known people - no arguments needed

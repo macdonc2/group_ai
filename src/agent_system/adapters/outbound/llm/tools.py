@@ -1729,21 +1729,66 @@ def _to_naive_utc(dt: datetime) -> datetime:
     return dt
 
 
+_TENTATIVE_WORDS = {"tentative", "unaccepted", "not accepted", "not-accepted", "maybe", "optional", "hold", "pencil"}
+
+
+def _coming_saturday(tz) -> "datetime":
+    """Midnight (naive, local) of the coming Saturday; today if it's the weekend."""
+    from datetime import datetime as _dt
+
+    today = _dt.now(tz).date()
+    ahead = 0 if today.weekday() in (5, 6) else (5 - today.weekday()) % 7
+    from datetime import timedelta as _td
+    d = today + _td(days=ahead)
+    return _dt(d.year, d.month, d.day)
+
+
+async def _find_houston_event(title: str):
+    """Best Houston listing for an event name, or None."""
+    try:
+        from agent_system.adapters.outbound.houston_events import HoustonEventsAdapter
+
+        adapter = HoustonEventsAdapter()
+        try:
+            words = [w for w in title.split() if len(w) > 2][:4]
+            for probe in (title, " ".join(words[:3]), " ".join(words[:2])):
+                if not probe:
+                    continue
+                hits = await adapter.search_events(query=probe, limit=5)
+                hits = [h for h in hits if h.start_time]
+                if hits:
+                    return hits[0]
+        finally:
+            await adapter.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.info("houston lookup failed in add_to_calendar: %s", exc)
+    return None
+
+
 async def add_to_calendar(
-    title: str,
+    title: str | None = None,
     when: str | None = None,
     location: str | None = None,
     description: str | None = None,
+    events: list[dict] | None = None,
+    status: str | None = None,
     session=None,
     user_id: str | None = None,
     **kwargs,
 ) -> ToolResult:
-    """Put an event on the user's Google Calendar.
+    """Put one or more events on the user's Google Calendar.
 
-    If `title` matches a Houston event in the events database, that event's
-    date, venue and link are used. Otherwise `when` (natural language such as
-    "Saturday at 7pm") is interpreted in the user's timezone.
+    Either a single event (`title`, optional `when`/`location`/`description`)
+    or several via `events=[{"title", "when", "location", "description"}, ...]`.
+    `status="tentative"` creates them as tentative (not accepted).
+
+    Per item: a Houston event by that name gets its real date, venue and link;
+    otherwise `when` (natural language) is interpreted in the user's timezone;
+    otherwise (only for `events` lists) it becomes an all-day placeholder on
+    the coming Saturday; a single undated event asks for a date instead.
     """
+    from datetime import timedelta
+    from datetime import timezone as _tz
     from zoneinfo import ZoneInfo
 
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
@@ -1766,71 +1811,98 @@ async def add_to_calendar(
             message="Google Calendar isn't connected yet. Connect it under the user menu → Google Calendar, then ask again.",
         )
 
+    specs = [dict(e) for e in (events or []) if isinstance(e, dict) and str(e.get("title") or "").strip()]
+    if not specs and (title or "").strip():
+        specs = [{"title": title, "when": when, "location": location, "description": description}]
+    if not specs:
+        return ToolResult(success=False, data=None, message="What should I put on the calendar? Give me the event name(s).")
+
+    tentative = str(status or "").strip().lower() in _TENTATIVE_WORDS
     tz = ZoneInfo(user.timezone or "UTC")
-    title = (title or "").strip()
-    if not title:
-        return ToolResult(success=False, data=None, message="What should I put on the calendar? Give me the event name.")
+    sync = CalendarSyncService(container.google_calendar_adapter)
+    created_items: list[dict] = []
+    lines: list[str] = []
+    failed: list[str] = []
 
-    # 1. A Houston event by that name? Use its real date, venue and link.
-    matched = None
-    try:
-        from agent_system.adapters.outbound.houston_events import HoustonEventsAdapter
+    for spec in specs:
+        ev_title = str(spec.get("title") or "").strip()
+        ev_when = str(spec.get("when") or "").strip() or None
+        ev_location = str(spec.get("location") or "").strip() or None
+        ev_description = str(spec.get("description") or "").strip() or None
+        all_day = False
+        matched = await _find_houston_event(ev_title)
+        if matched:
+            start_utc = _to_naive_utc(matched.start_time)
+            end_utc = _to_naive_utc(matched.end_time) if matched.end_time else None
+            ev_title = matched.title
+            ev_location = ev_location or matched.location
+            ev_description = ev_description or " ".join(
+                p for p in [matched.description or "", f"Tickets/info: {matched.url}" if matched.url else ""] if p
+            ).strip() or None
+        else:
+            parsed = None
+            for text in (ev_when, ev_title if not ev_when else None):
+                if text:
+                    parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC")
+                    if parsed:
+                        break
+            if parsed:
+                start_utc = _to_naive_utc(parsed)
+                end_utc = None
+            elif not events:
+                # A single event with no date: ask rather than guess.
+                return ToolResult(
+                    success=False, data=None,
+                    message=f"I couldn't find an event called \"{ev_title}\" in the Houston listings and couldn't work out a date from \"{ev_when or ev_title}\". Tell me the day and time and I'll add it.",
+                )
+            else:
+                # A list of outings with no fixed time: hold the coming Saturday as an all-day block.
+                start_utc = _coming_saturday(tz)
+                end_utc = start_utc + timedelta(days=1)
+                all_day = True
+                ev_description = ev_description or "No fixed time was given; pick one when you're ready."
 
-        adapter = HoustonEventsAdapter()
         try:
-            words = [w for w in title.split() if len(w) > 2][:4]
-            for probe in (title, " ".join(words[:3]), " ".join(words[:2])):
-                if not probe:
-                    continue
-                hits = await adapter.search_events(query=probe, limit=5)
-                hits = [h for h in hits if h.start_time]
-                if hits:
-                    matched = hits[0]
-                    break
-        finally:
-            await adapter.close()
-    except Exception as exc:  # noqa: BLE001
-        logger.info("houston lookup failed in add_to_calendar: %s", exc)
-
-    if matched:
-        start_utc = _to_naive_utc(matched.start_time)
-        end_utc = _to_naive_utc(matched.end_time) if matched.end_time else None
-        event_title = matched.title
-        location = location or matched.location
-        description = description or " ".join(p for p in [matched.description or "", f"Tickets/info: {matched.url}" if matched.url else ""] if p).strip() or None
-    else:
-        text = when or title
-        parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC")
-        if not parsed:
-            return ToolResult(
-                success=False, data=None,
-                message=f"I couldn't find an event called \"{title}\" in the Houston listings and couldn't work out a date from \"{text}\". Tell me the day and time and I'll add it.",
+            created = await sync.create_event_for_user(
+                user, ev_title, start_utc, end_utc, description=ev_description, location=ev_location,
+                tentative=tentative, all_day=all_day,
             )
-        start_utc = _to_naive_utc(parsed)
-        end_utc = None
-        event_title = title
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Google Calendar create failed for %r: %s", ev_title, exc)
+            failed.append(f"{ev_title} (Google Calendar refused it: {str(exc)[:120]})")
+            continue
+        if not created:
+            return ToolResult(success=False, data=None, message="Couldn't get access to your Google Calendar. Try reconnecting it in settings.")
 
-    try:
-        created = await CalendarSyncService(container.google_calendar_adapter).create_event_for_user(
-            user, event_title, start_utc, end_utc, description=description, location=location,
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Google Calendar create failed: %s", exc)
-        return ToolResult(success=False, data=None, message=f"Google Calendar refused the event: {str(exc)[:200]}")
-    if not created:
-        return ToolResult(success=False, data=None, message="Couldn't get access to your Google Calendar. Try reconnecting it in settings.")
+        if all_day:
+            when_text = start_utc.strftime("%A, %B %-d") + " (all day, no fixed time)"
+            local_iso = start_utc.date().isoformat()
+        else:
+            local_start = start_utc.replace(tzinfo=_tz.utc).astimezone(tz)
+            when_text = local_start.strftime("%A, %B %-d at %-I:%M %p %Z")
+            local_iso = local_start.isoformat()
+        where = f" at {ev_location}" if ev_location else ""
+        link = f" — {matched.url}" if matched and matched.url else ""
+        lines.append(f"• {ev_title} — {when_text}{where}{link}")
+        created_items.append({
+            "google_event_id": created[0], "calendar_id": created[1], "title": ev_title, "start": local_iso,
+            "location": ev_location, "all_day": all_day, "tentative": tentative, "matched_houston_event": bool(matched),
+        })
 
-    from datetime import timezone as _tz
+    if not created_items:
+        return ToolResult(success=False, data={"failed": failed}, message="Nothing was added. " + "; ".join(failed))
 
-    local_start = start_utc.replace(tzinfo=_tz.utc).astimezone(tz)
-    when_text = local_start.strftime("%A, %B %-d at %-I:%M %p %Z")
-    where = f" at {location}" if location else ""
+    status_note = " as tentative (not accepted)" if tentative else ""
+    head = (f"Added {len(created_items)} events to your Google Calendar{status_note}:"
+            if len(created_items) > 1 else f"Added to your Google Calendar{status_note}:")
+    message = head + "\n" + "\n".join(lines)
+    if failed:
+        message += "\nCouldn't add: " + "; ".join(failed)
     return ToolResult(
         success=True,
-        data={"google_event_id": created[0], "calendar_id": created[1], "title": event_title,
-              "start": local_start.isoformat(), "location": location, "matched_houston_event": bool(matched)},
-        message=f"Added to your Google Calendar: {event_title} on {when_text}{where}."
-                + (f" Details and link: {matched.url}" if matched and matched.url else ""),
+        data={"events": created_items, "tentative": tentative, "failed": failed,
+              **({k: v for k, v in created_items[0].items()} if len(created_items) == 1 else {})},
+        message=message,
     )
 
 
@@ -2647,6 +2719,8 @@ AVAILABLE_TOOLS = {
             "when": "string (optional natural-language date/time, e.g. 'Saturday at 7pm')",
             "location": "string (optional)",
             "description": "string (optional)",
+            "events": "list of {title, when, location, description} for several events at once",
+            "status": "'tentative' to add them as not-accepted holds (optional)",
         },
         "requires_session": True,
     },

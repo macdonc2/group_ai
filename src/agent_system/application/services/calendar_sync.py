@@ -140,10 +140,15 @@ class CalendarSyncService:
         end_utc: datetime | None = None,
         description: str | None = None,
         location: str | None = None,
+        tentative: bool = False,
+        all_day: bool = False,
     ) -> tuple[str, str] | None:
         """Create a one-off event on the user's Google Calendar (an explicit
         "put this on my calendar" request, so the sync opt-in is not required,
         only a connected calendar).
+
+        `tentative` creates it with Google's "tentative" status (shown as not
+        accepted). `all_day` treats start/end as dates.
 
         Returns (google_event_id, calendar_id) or None when not connected.
         """
@@ -157,9 +162,11 @@ class CalendarSyncService:
             title=title,
             description=description,
             start_datetime=start_utc,
-            end_datetime=end_utc or start_utc + timedelta(hours=2),
+            end_datetime=end_utc or (start_utc + timedelta(days=1) if all_day else start_utc + timedelta(hours=2)),
             location=location,
             source=CalendarEventSource.MANUAL,
+            is_all_day=all_day,
+            status="tentative" if tentative else "confirmed",
         )
         google_event_id, _etag = await self.google_calendar.create_event(
             access_token=access_token, calendar_id=calendar_id, event=calendar_event,

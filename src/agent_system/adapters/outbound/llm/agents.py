@@ -254,6 +254,12 @@ Determine if the query needs a tool. Available tools:
    - "Schedule dentist Tuesday at 3pm" → tool: "add_to_calendar", tool_input: "dentist Tuesday at 3pm"
    - "Remind me about the jazz festival Saturday" → tool: "add_to_calendar", tool_input: "jazz festival Saturday"
    - tool_input: the event name, plus any date/time words the user gave. Resolve "that", "it", "the second one" from the conversation to the actual event name.
+   - SEVERAL events, or a status: tool_input is a JSON object, e.g.
+     {"events": [{"title": "Punk Rock Garage Sale", "when": "Sunday 2pm", "location": "Bad Astronaut Brewing"}, {"title": "urbanCHEF cooking class", "when": "Saturday 6pm"}], "status": "tentative"}
+   - "the ones you suggested" / "those" / "all of them" = every suggestion in the MOST RECENT assistant message (the newest list, not an earlier one), one entry each, real names, never a summary sentence.
+   - A suggestion without a fixed time gets a sensible "when" inside the window the user asked about (e.g. "Saturday 12pm" for a weekend outing); if none fits, omit "when" and the tool holds the coming Saturday all day.
+   - "not as accepted", "tentative", "as a maybe", "optional", "pencil in" → "status": "tentative".
+   - NEVER put instructions or the user's sentence in the title; titles are event names only.
    - CRITICAL: "put/add ... on/to my calendar", "schedule", "book", "remind me" mean add_to_calendar, NOT get_houston_events and NOT get_upcoming_events.
 
 === SOCIAL GRAPH & KNOWLEDGE TOOLS ===

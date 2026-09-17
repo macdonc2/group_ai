@@ -45,6 +45,7 @@ class CalendarEvent(BaseModel):
     end_datetime: datetime | None = None
     location: str | None = None
     is_all_day: bool = False
+    status: str = "confirmed"  # "confirmed" | "tentative" (Google Calendar event status)
 
     # Sync metadata
     source: CalendarEventSource

@@ -345,6 +345,9 @@ class GoogleCalendarAdapter(GoogleCalendarPort):
         if event.location:
             body["location"] = event.location
 
+        if event.status == "tentative":
+            body["status"] = "tentative"
+
         if event.is_all_day:
             body["start"] = {"date": event.start_datetime.strftime("%Y-%m-%d")}
             if event.end_datetime:
