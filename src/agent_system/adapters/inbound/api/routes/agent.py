@@ -137,9 +137,10 @@ async def chat_with_agent(
         await conv_repo.save(conversation)
         is_new_conversation = True
     
-    # Add user message to conversation
+    # Add user message to conversation; remember which voice it was spoken in
     user_message = Message.user(data.message)
     conversation = conversation.add_message(user_message)
+    conversation = conversation.with_persona(data.persona if is_valid_persona(data.persona) else None)
     
     # Generate title for new conversations (using user's API key)
     if is_new_conversation:
@@ -369,6 +370,7 @@ async def chat_with_agent_stream(
             # Add user message
             user_message = Message.user(message)
             conversation = conversation.add_message(user_message)
+            conversation = conversation.with_persona(persona if is_valid_persona(persona) else None)
             
             # Get active plan
             current_plan = None

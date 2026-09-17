@@ -295,3 +295,25 @@ class TestContradiction:
         assert resolved.resolved
         assert resolved.resolution == "Confirmed as Golden Retriever mix"
         assert resolved.resolved_at is not None
+
+
+class TestConversationPersona:
+    """A conversation remembers the wrestler it was last spoken in."""
+
+    def test_default_is_plain(self):
+        from agent_system.domain.entities.conversation import Conversation
+        from agent_system.domain.value_objects import UserId
+
+        conv = Conversation.create(user_id=UserId.generate())
+        assert conv.persona is None
+
+    def test_with_persona_round_trips_and_clears(self):
+        from agent_system.domain.entities.conversation import Conversation
+        from agent_system.domain.value_objects import UserId
+
+        conv = Conversation.create(user_id=UserId.generate()).update_metadata(custom_data={"keep": 1})
+        themed = conv.with_persona("bret_hart")
+        assert themed.persona == "bret_hart" and themed.metadata.custom_data["keep"] == 1
+        assert themed.with_persona("bret_hart") is themed  # no-op when unchanged
+        assert themed.with_persona(None).persona is None
+        assert themed.with_persona("").persona is None

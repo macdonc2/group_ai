@@ -106,6 +106,18 @@ class Conversation(BaseModel):
             }
         )
 
+    @property
+    def persona(self) -> str | None:
+        """Wrestler persona last used in this conversation (None = plain voice)."""
+        return self.metadata.custom_data.get("persona") or None
+
+    def with_persona(self, persona: str | None) -> "Conversation":
+        """Remember the persona this conversation was last spoken in."""
+        if self.persona == (persona or None):
+            return self
+        custom = {**self.metadata.custom_data, "persona": persona or None}
+        return self.update_metadata(custom_data=custom)
+
     def update_metadata(self, **kwargs: Any) -> "Conversation":
         """Update conversation metadata."""
         new_metadata = self.metadata.model_copy(update=kwargs)

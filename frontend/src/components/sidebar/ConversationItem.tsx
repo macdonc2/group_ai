@@ -1,6 +1,7 @@
 import { cn, formatTimestamp, truncate } from '../../lib/utils';
 import type { ConversationListItem } from '../../types';
 import { MessageSquare, Trash2 } from 'lucide-react';
+import { getWrestler, isWrestlerKey } from '../../lib/wrestlers';
 
 interface ConversationItemProps {
   conversation: ConversationListItem;
@@ -17,6 +18,7 @@ export function ConversationItem({
 }: ConversationItemProps) {
   const title = conversation.title || `Conversation ${conversation.id.slice(0, 8)}`;
   const updatedAt = new Date(conversation.updated_at);
+  const wrestler = isWrestlerKey(conversation.persona) ? getWrestler(conversation.persona) : null;
   
   return (
     <div
@@ -28,7 +30,16 @@ export function ConversationItem({
       )}
       onClick={onSelect}
     >
-      <MessageSquare className="w-4 h-4 shrink-0" />
+      {wrestler ? (
+        <img
+          src={wrestler.icon}
+          alt={wrestler.shortName}
+          title={`Spoken by ${wrestler.name}`}
+          className="w-5 h-5 shrink-0 rounded-full object-cover ring-1 ring-black/10 dark:ring-white/20"
+        />
+      ) : (
+        <MessageSquare className="w-4 h-4 shrink-0" />
+      )}
       
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">

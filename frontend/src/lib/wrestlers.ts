@@ -103,6 +103,10 @@ export const WRESTLERS: Record<WrestlerKey, Wrestler> = {
 
 export const WRESTLER_KEYS: WrestlerKey[] = ['macho_man', 'hulk_hogan', 'bret_hart', 'mean_gene', 'ultimate_warrior'];
 
+export function isWrestlerKey(value: unknown): value is WrestlerKey {
+  return typeof value === 'string' && (WRESTLER_KEYS as string[]).includes(value);
+}
+
 export function getWrestler(choice: WrestlerChoice | null | undefined): Wrestler | null {
   return choice && choice !== 'none' ? WRESTLERS[choice] ?? null : null;
 }

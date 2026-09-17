@@ -49,6 +49,7 @@ async def list_conversations(
             active_plan_id=str(conv.active_plan_id) if conv.active_plan_id else None,
             created_at=conv.created_at,
             updated_at=conv.updated_at,
+            persona=conv.persona,
         )
         for conv in conversations
     ]
@@ -80,6 +81,7 @@ async def create_conversation(
         active_plan_id=str(conversation.active_plan_id) if conversation.active_plan_id else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        persona=conversation.persona,
     )
 
 
@@ -122,6 +124,7 @@ async def get_conversation(
         active_plan_id=str(conversation.active_plan_id) if conversation.active_plan_id else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        persona=conversation.persona,
         messages=messages,
     )
 
@@ -156,6 +159,14 @@ async def update_conversation(
     
     if updates:
         conversation = conversation.update_metadata(**updates)
+    if data.persona is not None:
+        from agent_system.adapters.outbound.llm.personas import is_valid_persona
+        wanted = data.persona.strip().lower()
+        if wanted and wanted != "none" and not is_valid_persona(wanted):
+            raise HTTPException(status_code=422, detail=f"Unknown persona '{data.persona}'")
+        conversation = conversation.with_persona(wanted if wanted and wanted != "none" else None)
+        updates["persona"] = wanted
+    if updates:
         await repo.update(conversation)
     
     return ConversationRead(
@@ -168,6 +179,7 @@ async def update_conversation(
         active_plan_id=str(conversation.active_plan_id) if conversation.active_plan_id else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        persona=conversation.persona,
     )
 
 
@@ -206,6 +218,7 @@ async def archive_conversation(
         active_plan_id=str(conversation.active_plan_id) if conversation.active_plan_id else None,
         created_at=conversation.created_at,
         updated_at=conversation.updated_at,
+        persona=conversation.persona,
     )
 
 

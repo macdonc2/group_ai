@@ -15,6 +15,12 @@ interface ThemeState {
   setLayout: (layout: Layout) => void;
 }
 
+/** Hook for the chat layer: called after the user picks a wrestler (not on rehydrate). */
+let onWrestlerChanged: ((wrestler: WrestlerChoice) => void) | null = null;
+export function setWrestlerChangeListener(fn: ((wrestler: WrestlerChoice) => void) | null) {
+  onWrestlerChanged = fn;
+}
+
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set) => ({
@@ -26,6 +32,7 @@ export const useThemeStore = create<ThemeState>()(
       setWrestler: (wrestler) => {
         applyWrestler(wrestler);
         set({ wrestler });
+        onWrestlerChanged?.(wrestler);
       },
     }),
     {

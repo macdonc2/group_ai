@@ -101,6 +101,7 @@ class ConversationRead(BaseModel):
     active_plan_id: str | None
     created_at: datetime
     updated_at: datetime
+    persona: str | None = Field(default=None, description="Wrestler persona last used in this conversation")
 
 
 class ConversationUpdate(BaseModel):
@@ -109,6 +110,8 @@ class ConversationUpdate(BaseModel):
     title: str | None = None
     summary: str | None = None
     tags: list[str] | None = None
+    # "none" (or "") clears the stored persona; omit the field to leave it alone
+    persona: str | None = None
 
 
 class MessageCreate(BaseModel):

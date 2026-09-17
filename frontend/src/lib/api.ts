@@ -94,6 +94,14 @@ export const api = {
     });
   },
 
+  /** Remember the wrestler a conversation is spoken in ('none' clears it). */
+  setConversationPersona: async (id: string, persona: string): Promise<ConversationListItem> => {
+    return fetchApi<ConversationListItem>(`/conversations/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ persona }),
+    });
+  },
+
   deleteConversation: async (id: string): Promise<void> => {
     await fetchApi(`/conversations/${id}`, {
       method: 'DELETE',

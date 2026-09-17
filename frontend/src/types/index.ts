@@ -27,6 +27,8 @@ export interface Conversation {
   messageCount: number;
   createdAt: Date;
   updatedAt: Date;
+  /** Wrestler persona this conversation was last spoken in (null = plain). */
+  persona?: string | null;
 }
 
 export interface ConversationDetail extends Conversation {
@@ -85,6 +87,8 @@ export interface ConversationListItem {
   active_plan_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Wrestler persona this conversation was last spoken in (null = plain). */
+  persona?: string | null;
 }
 
 // Group Types

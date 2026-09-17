@@ -2,8 +2,16 @@ import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { createSSEConnection } from '../lib/sse';
 import { api } from '../lib/api';
-import { useThemeStore } from '../stores/themeStore';
+import { useThemeStore, setWrestlerChangeListener } from '../stores/themeStore';
+import { isWrestlerKey } from '../lib/wrestlers';
 import type { Message, ConversationDetail } from '../types';
+
+/** A conversation carries the voice it was last spoken in; switch the whole app to it. */
+function adoptConversationPersona(persona: string | null | undefined) {
+  if (persona && isWrestlerKey(persona) && useThemeStore.getState().wrestler !== persona) {
+    useThemeStore.getState().setWrestler(persona);
+  }
+}
 
 export function useChat() {
   const {
@@ -20,6 +28,19 @@ export function useChat() {
   
   const abortRef = useRef<{ abort: () => void } | null>(null);
   const initialLoadDone = useRef(false);
+
+  // Picking a wrestler while a conversation is open re-tags that conversation
+  // right away, so the sidebar and the next reload agree with what's on screen.
+  useEffect(() => {
+    setWrestlerChangeListener((wrestler) => {
+      const id = useChatStore.getState().conversationId;
+      if (!id) return;
+      api.setConversationPersona(id, wrestler)
+        .then((updated) => useChatStore.getState().updateConversation(id, { persona: updated.persona ?? null }))
+        .catch((error) => console.error('Failed to save conversation persona:', error));
+    });
+    return () => setWrestlerChangeListener(null);
+  }, []);
   
   // Load persisted conversation on mount (if conversationId exists but messages are empty)
   useEffect(() => {
@@ -32,6 +53,7 @@ export function useChat() {
       // Load the persisted conversation
       api.getConversation(state.conversationId)
         .then((conversation) => {
+          adoptConversationPersona(conversation.persona);
           conversation.messages.forEach((msg: ConversationDetail['messages'][0]) => {
             const message: Message = {
               id: msg.id,
@@ -134,6 +156,7 @@ export function useChat() {
     
     try {
       const conversation = await api.getConversation(id);
+      adoptConversationPersona(conversation.persona);
       
       // Convert and add messages
       conversation.messages.forEach((msg: ConversationDetail['messages'][0]) => {

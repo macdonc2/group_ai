@@ -37,6 +37,7 @@ interface ChatState {
   setConversations: (conversations: ConversationListItem[]) => void;
   addConversation: (conversation: ConversationListItem) => void;
   removeConversation: (id: string) => void;
+  updateConversation: (id: string, patch: Partial<ConversationListItem>) => void;
   
   // UI actions
   toggleSidebar: () => void;
@@ -238,6 +239,10 @@ export const useChatStore = create<ChatState>()(
   
   addConversation: (conversation) => set((state) => ({
     conversations: [conversation, ...state.conversations],
+  })),
+  
+  updateConversation: (id, patch) => set((state) => ({
+    conversations: state.conversations.map((c) => (c.id === id ? { ...c, ...patch } : c)),
   })),
   
   removeConversation: (id) => set((state) => ({
