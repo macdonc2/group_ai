@@ -4,11 +4,13 @@ import { useChatStore } from '../../stores/chatStore';
 import { Loader2 } from 'lucide-react';
 import { useThemeStore } from '../../stores/themeStore';
 import { getWrestler } from '../../lib/wrestlers';
+import { useContentWidth } from '../../lib/layout';
 
 export function MessageList() {
   const messages = useChatStore((state) => state.messages);
   const isStreaming = useChatStore((state) => state.isStreaming);
   const wrestler = getWrestler(useThemeStore((s) => s.wrestler));
+  const width = useContentWidth('chat');
   const scrollRef = useRef<HTMLDivElement>(null);
   
   // Auto-scroll to bottom on new messages
@@ -37,7 +39,7 @@ export function MessageList() {
       ref={scrollRef}
       className="flex-1 overflow-y-auto"
     >
-      <div className="max-w-3xl mx-auto py-4">
+      <div className={`${width} mx-auto py-4`}>
         {messages.map((message) => (
           <MessageBubble key={message.id} message={message} />
         ))}

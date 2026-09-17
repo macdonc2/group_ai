@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '../../lib/api';
+import { useContentWidth } from '../../lib/layout';
 import type { ResearchFigure, ResearchSource } from '../../types';
 
 interface ReportViewProps {
@@ -23,9 +24,10 @@ export function ReportView({ jobId, markdown, figures, sources, streaming = fals
   const figMap = useMemo(() => new Map(figures.map((f) => [f.ordinal, f])), [figures]);
   const body = useMemo(() => linkCitations(markdown), [markdown]);
   const refs = useMemo(() => new Set(sources.map((s) => s.ref)), [sources]);
+  const width = useContentWidth('report');
 
   return (
-    <article className="max-w-3xl mx-auto px-4 sm:px-6 py-6 text-slate-800 dark:text-slate-100 leading-relaxed">
+    <article className={`${width} mx-auto px-4 sm:px-6 py-6 text-slate-800 dark:text-slate-100 leading-relaxed`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         urlTransform={(url) => (FIGURE_SRC.test(url) ? url : defaultUrlTransform(url))}

@@ -3,6 +3,7 @@ import { FlaskConical, GraduationCap, Wrench, BarChart3, ArrowRight, Gauge } fro
 import { cn } from '../../lib/utils';
 import { useThemeStore } from '../../stores/themeStore';
 import { getWrestler } from '../../lib/wrestlers';
+import { useContentWidth } from '../../lib/layout';
 
 interface ResearchComposerProps {
   onStart: (question: string, depth: 1 | 2 | 3) => void;
@@ -26,6 +27,7 @@ export function ResearchComposer({ onStart, error }: ResearchComposerProps) {
   const [depth, setDepth] = useState<1 | 2 | 3>(1);
   const ref = useRef<HTMLTextAreaElement>(null);
   const wrestler = getWrestler(useThemeStore((s) => s.wrestler));
+  const width = useContentWidth('composer');
 
   useEffect(() => {
     const el = ref.current;
@@ -42,7 +44,7 @@ export function ResearchComposer({ onStart, error }: ResearchComposerProps) {
 
   return (
     <div className="flex-1 overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-4 py-8 sm:py-14">
+      <div className={`${width} mx-auto px-4 py-8 sm:py-14`}>
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 mb-3">
             <FlaskConical className="w-6 h-6" />

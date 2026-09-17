@@ -7,6 +7,7 @@ import { ResearchList, ResearchView } from '../research';
 import { useResearch } from '../../hooks/useResearch';
 import { ThemeToggle } from './ThemeToggle';
 import { WrestlerPicker } from './WrestlerPicker';
+import { LayoutToggle } from './LayoutToggle';
 import { applyWrestler, getWrestler } from '../../lib/wrestlers';
 import { GroupList, GroupChat, GroupMembers, CreateGroupModal } from '../groups';
 import { UserManagement, ChangePassword, ApiKeySettings, TimezoneSettings, CalendarSettings } from '../settings';
@@ -435,6 +436,7 @@ export function AppLayout() {
             </button>
             
             <WrestlerPicker />
+            <LayoutToggle />
             <ThemeToggle />
           </div>
         </header>

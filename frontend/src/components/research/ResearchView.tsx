@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Activity, AlertTriangle, ChevronDown, ChevronUp, ExternalLink, Loader2, RotateCcw } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useContentWidth } from '../../lib/layout';
 import { useResearchStore } from '../../stores/researchStore';
 import { LaneProgress } from './LaneProgress';
 import { ListenButton } from './ListenButton';
@@ -24,6 +25,7 @@ export function ResearchView({ onStart, onRerun, onRefreshDetail }: ResearchView
   const error = useResearchStore((s) => s.error);
   const [showProgress, setShowProgress] = useState(true);
   const [showSources, setShowSources] = useState(false);
+  const width = useContentWidth('research');
 
   if (!detail) {
     return <ResearchComposer onStart={onStart} error={error} />;
@@ -39,7 +41,7 @@ export function ResearchView({ onStart, onRerun, onRefreshDetail }: ResearchView
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
       {/* Sticky title bar */}
       <div className="border-b border-slate-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur px-4 py-3 shrink-0">
-        <div className="max-w-5xl mx-auto flex items-start gap-3">
+        <div className={`${width} mx-auto flex items-start gap-3`}>
           <div className="flex-1 min-w-0">
             <p className="text-xs uppercase tracking-wide text-slate-400 dark:text-slate-500">Research question{(detail.depth ?? 1) > 1 ? ` · ${detail.depth === 3 ? 'deep' : 'standard'} depth` : ''}</p>
             <p className="text-sm sm:text-base font-medium leading-snug break-words">{detail.question}</p>
@@ -73,7 +75,7 @@ export function ResearchView({ onStart, onRerun, onRefreshDetail }: ResearchView
       </div>
 
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-5xl mx-auto px-4 py-4 space-y-4">
+        <div className={`${width} mx-auto px-4 py-4 space-y-4`}>
           {failed && (
             <div className="flex items-start gap-2 text-sm text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
               <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />

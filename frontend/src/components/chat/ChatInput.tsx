@@ -3,6 +3,7 @@ import { Send, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { useThemeStore } from '../../stores/themeStore';
 import { getWrestler } from '../../lib/wrestlers';
+import { useContentWidth } from '../../lib/layout';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -14,6 +15,7 @@ export function ChatInput({ onSend, disabled, placeholder = 'Type a message...' 
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const wrestler = getWrestler(useThemeStore((s) => s.wrestler));
+  const width = useContentWidth('chat');
   
   // Auto-resize textarea
   useEffect(() => {
@@ -41,7 +43,7 @@ export function ChatInput({ onSend, disabled, placeholder = 'Type a message...' 
   
   return (
     <div className="border-t border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-2 sm:p-4 safe-area-inset-bottom">
-      <div className="max-w-3xl mx-auto">
+      <div className={`${width} mx-auto`}>
         <div className="flex items-end gap-2 bg-slate-100 dark:bg-slate-800 rounded-lg p-2">
           <textarea
             ref={textareaRef}

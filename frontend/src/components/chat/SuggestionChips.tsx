@@ -1,6 +1,7 @@
 import { useChatStore } from '../../stores/chatStore';
 import { Lightbulb, Search, Sparkles } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useContentWidth } from '../../lib/layout';
 
 interface SuggestionChipsProps {
   onSelect: (suggestion: string) => void;
@@ -13,13 +14,14 @@ const ICON_MAP: Record<string, React.ReactNode> = {
 };
 
 export function SuggestionChips({ onSelect }: SuggestionChipsProps) {
+  const width = useContentWidth('chat');
   const suggestions = useChatStore((state) => state.suggestions);
   
   if (suggestions.length === 0) return null;
   
   return (
     <div className="border-t border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 px-4 py-3">
-      <div className="max-w-3xl mx-auto">
+      <div className={`${width} mx-auto`}>
         <p className="text-xs text-slate-500 dark:text-slate-400 mb-2">Suggestions</p>
         <div className="flex flex-wrap gap-2">
           {suggestions.map((suggestion, index) => (
