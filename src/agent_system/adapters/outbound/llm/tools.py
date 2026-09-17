@@ -1,12 +1,15 @@
 """Tools available to the agent for various capabilities."""
 
 import asyncio
+import logging
 import urllib.parse
 from datetime import datetime
 from typing import Any
 
 import httpx
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class ToolResult(BaseModel):
@@ -825,6 +828,54 @@ async def recall_about_topic(
         topic_lower = topic.lower()
         user_id_obj = UserId.from_string(user_id)
         
+        # ── Structured entity lookup (PersonNode / PetNode) ──
+        # These contain the most authoritative info: relationship, context_notes, breed, etc.
+        structured_facts: list[str] = []
+        if knowledge_graph_port:
+            try:
+                person = await knowledge_graph_port.get_person(
+                    user_id=user_id_obj, name=topic,
+                )
+                if person:
+                    rel = person.get("relationship_type", "known person")
+                    notes = person.get("context_notes", "")
+                    aliases = person.get("aliases", [])
+                    structured_facts.append(f"{topic} is the user's {rel}")
+                    if notes:
+                        structured_facts.append(f"Context: {notes}")
+                    if aliases:
+                        structured_facts.append(f"Also known as: {', '.join(aliases)}")
+                    logger.info(f"PersonNode found for '{topic}': rel={rel}, notes={notes[:120] if notes else 'none'}")
+            except Exception:
+                pass
+            
+            if not structured_facts:
+                try:
+                    pet = await knowledge_graph_port.get_pet(
+                        user_id=user_id_obj, name=topic,
+                    )
+                    if pet:
+                        species = pet.get("species", "pet")
+                        breed = pet.get("breed", "")
+                        personality = pet.get("personality", [])
+                        food = pet.get("food_preferences", [])
+                        health = pet.get("health_notes", "")
+                        structured_facts.append(f"{topic} is the user's {species}")
+                        if breed:
+                            structured_facts.append(f"Breed: {breed}")
+                        if personality:
+                            structured_facts.append(f"Personality: {', '.join(personality)}")
+                        if food:
+                            structured_facts.append(f"Food preferences: {', '.join(food)}")
+                        if health:
+                            structured_facts.append(f"Health notes: {health}")
+                        logger.info(f"PetNode found for '{topic}': {species}")
+                except Exception:
+                    pass
+        
+        if structured_facts:
+            results["structured_profile"] = structured_facts
+        
         # Primary: Semantic search using embeddings
         if embedding_port and knowledge_graph_port:
             try:
@@ -914,7 +965,8 @@ async def recall_about_topic(
         semantic_count = len(results["semantic_matches"])
         kg_count = len(results["from_knowledge_graph"])
         
-        if semantic_count == 0 and kg_count == 0:
+        has_structured = bool(results.get("structured_profile"))
+        if semantic_count == 0 and kg_count == 0 and not has_structured:
             return ToolResult(
                 success=True,
                 data=results,
@@ -923,6 +975,13 @@ async def recall_about_topic(
         
         # Format the findings
         summary_parts = []
+        
+        # Structured profile at top (most authoritative)
+        if results.get("structured_profile"):
+            summary_parts.append(f"**Profile — {topic}:**")
+            for fact in results["structured_profile"]:
+                summary_parts.append(f"  • {fact}")
+            summary_parts.append("")
         
         if semantic_count > 0:
             summary_parts.append(f"**Found {semantic_count} Related Conversations:**\n")
@@ -1309,20 +1368,7 @@ async def get_upcoming_events(
         result = await session.execute(event_query)
         events = result.scalars().all()
         
-        # Build response message
-        if search_query:
-            no_results_msg = f"No events found matching '{search_query}'. Try a different search term."
-        else:
-            no_results_msg = f"No events found for {timeframe_desc}. Your schedule is clear!"
-        
-        if not events:
-            return ToolResult(
-                success=True,
-                data=[],
-                message=no_results_msg,
-            )
-        
-        # Format events for display (convert UTC to user's timezone)
+        # Format extracted events for display (convert UTC to user's timezone)
         event_list = []
         for event in events:
             event_info = {
@@ -1331,31 +1377,134 @@ async def get_upcoming_events(
                 "description": event.description,
                 "location": event.location,
                 "confirmed": event.is_confirmed,
+                "source": "group_chat",
             }
             if event.event_datetime:
-                # Convert from UTC to user's timezone
                 try:
                     utc_dt = event.event_datetime.replace(tzinfo=dt_timezone.utc)
                     local_dt = utc_dt.astimezone(user_tz)
                     event_info["datetime"] = local_dt.strftime("%A, %B %d at %I:%M %p %Z")
+                    event_info["sort_dt"] = local_dt
                 except Exception:
                     event_info["datetime"] = event.event_datetime.strftime("%A, %B %d at %I:%M %p")
+                    event_info["sort_dt"] = event.event_datetime
             else:
                 event_info["datetime"] = "Time not specified"
+                event_info["sort_dt"] = datetime.min
             event_list.append(event_info)
         
+        # Also pull events from Google Calendar if connected
+        gcal_events: list[dict] = []
+        try:
+            from agent_system.composition_root.container import get_container
+            from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
+            from agent_system.domain.value_objects import UserId
+            
+            container = await get_container()
+            logger.info(f"Google Calendar adapter available: {container.google_calendar_adapter is not None}")
+            if container.google_calendar_adapter:
+                user_repo = SQLAlchemyUserRepository(session)
+                user = await user_repo.get(UserId.from_string(user_id))
+                has_gcal = user.has_google_calendar_connected() if user else False
+                gcal_enabled = user.preferences.google_calendar_enabled if user else False
+                logger.info(f"User gcal connected: {has_gcal}, enabled: {gcal_enabled}")
+                if user and has_gcal and gcal_enabled:
+                    from agent_system.application.services import CalendarSyncService
+                    sync_service = CalendarSyncService(container.google_calendar_adapter)
+                    
+                    # start_date/end_date are naive in user's local tz;
+                    # pull_events_from_google / Google API expects naive UTC
+                    gcal_time_min = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+                    gcal_time_max = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+                    logger.info(f"Pulling Google Calendar events: {gcal_time_min} to {gcal_time_max} UTC")
+                    
+                    raw_gcal = await sync_service.pull_events_from_google(
+                        user, time_min=gcal_time_min, time_max=gcal_time_max, max_results=50,
+                    )
+                    logger.info(f"Google Calendar returned {len(raw_gcal)} events")
+                    
+                    for ge in raw_gcal:
+                        title = ge.get("title", "Untitled")
+                        if search_query and search_query.lower() not in title.lower() and search_query.lower() not in (ge.get("description") or "").lower():
+                            continue
+                        
+                        ev_info: dict = {
+                            "title": title,
+                            "type": "calendar",
+                            "description": ge.get("description"),
+                            "location": ge.get("location"),
+                            "confirmed": True,
+                            "source": "google_calendar",
+                        }
+                        
+                        start_dt = ge.get("start_datetime")
+                        if start_dt:
+                            try:
+                                if isinstance(start_dt, str):
+                                    start_dt = datetime.fromisoformat(start_dt)
+                                # CalendarEvent stores naive UTC; convert to user's tz
+                                if start_dt.tzinfo is None:
+                                    start_dt = start_dt.replace(tzinfo=dt_timezone.utc)
+                                local_dt = start_dt.astimezone(user_tz)
+                                ev_info["datetime"] = local_dt.strftime("%A, %B %d at %I:%M %p %Z")
+                                ev_info["sort_dt"] = local_dt
+                            except Exception:
+                                ev_info["datetime"] = str(start_dt)
+                                ev_info["sort_dt"] = datetime.min
+                        elif ge.get("is_all_day"):
+                            ev_info["datetime"] = "All day"
+                            ev_info["sort_dt"] = datetime.min
+                        else:
+                            ev_info["datetime"] = "Time not specified"
+                            ev_info["sort_dt"] = datetime.min
+                        
+                        gcal_events.append(ev_info)
+        except Exception as e:
+            logger.error(f"Google Calendar pull failed: {e}", exc_info=True)
+        
+        event_list.extend(gcal_events)
+        
+        # Sort all events by datetime (normalize to aware UTC for comparison)
+        def _sort_key(ev: dict) -> datetime:
+            dt = ev.get("sort_dt", datetime.min)
+            if dt == datetime.min:
+                return datetime.min.replace(tzinfo=dt_timezone.utc)
+            if dt.tzinfo is None:
+                return dt.replace(tzinfo=user_tz).astimezone(dt_timezone.utc)
+            return dt.astimezone(dt_timezone.utc)
+        
+        event_list.sort(key=_sort_key)
+        
+        # Build response
+        if search_query:
+            no_results_msg = f"No events found matching '{search_query}'. Try a different search term."
+        else:
+            no_results_msg = f"No events found for {timeframe_desc}. Your schedule is clear!"
+        
+        if not event_list:
+            return ToolResult(
+                success=True,
+                data=[],
+                message=no_results_msg,
+            )
+        
         # Build summary as markdown table
-        summary_lines = [f"📅 **Found {len(events)} event(s) for {timeframe_desc}:**\n"]
-        summary_lines.append("| Status | Event | When | Location | Notes |")
+        summary_lines = [f"📅 **Found {len(event_list)} event(s) for {timeframe_desc}:**\n"]
+        summary_lines.append("| Source | Event | When | Location | Notes |")
         summary_lines.append("|:------:|-------|------|----------|-------|")
         
         for ev in event_list:
-            status = "✅" if ev["confirmed"] else "❓"
+            source_icon = "📆" if ev.get("source") == "google_calendar" else ("✅" if ev.get("confirmed") else "❓")
             title = ev["title"]
             when = ev["datetime"]
-            location = ev["location"] or "—"
-            notes = ev["description"][:50] + "..." if ev["description"] and len(ev["description"]) > 50 else (ev["description"] or "—")
-            summary_lines.append(f"| {status} | {title} | {when} | {location} | {notes} |")
+            location = ev.get("location") or "—"
+            notes = ev.get("description", "") or ""
+            notes = notes[:50] + "..." if len(notes) > 50 else (notes or "—")
+            summary_lines.append(f"| {source_icon} | {title} | {when} | {location} | {notes} |")
+        
+        # Clean up sort keys before returning
+        for ev in event_list:
+            ev.pop("sort_dt", None)
         
         return ToolResult(
             success=True,

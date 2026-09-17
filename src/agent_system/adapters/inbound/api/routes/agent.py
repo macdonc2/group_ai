@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from agent_system.adapters.inbound.api.auth import decode_access_token
+from agent_system.adapters.outbound.llm.personas import is_valid_persona
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
     SessionDep,
@@ -186,6 +187,7 @@ async def chat_with_agent(
         fallback_model=settings.fallback_model,
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
+        persona=data.persona if is_valid_persona(data.persona) else None,
     )
     
     # Run the FSM workflow
@@ -252,6 +254,7 @@ async def chat_with_agent_stream(
     message: str = Query(..., description="User message"),
     conversation_id: str | None = Query(None, description="Conversation ID"),
     token: str | None = Query(None, description="Auth token for SSE (EventSource can't send headers)"),
+    persona: str | None = Query(None, description="Optional wrestler persona key"),
     session: SessionDep = None,
 ) -> StreamingResponse:
     """Stream agent responses with real-time FSM trace events.
@@ -343,6 +346,17 @@ async def chat_with_agent_stream(
                 conversation = Conversation.create(user_id=user.id)
                 await conv_repo.save(conversation)
                 
+                # Emit conversation_id immediately so the frontend can
+                # associate subsequent messages with this conversation even
+                # if the SSE stream drops before the final response event.
+                await event_queue.put(StreamEvent(
+                    event_type="conversation_created",
+                    node_name=None,
+                    message="Conversation created",
+                    data={"conversation_id": str(conversation.id)},
+                    timestamp=time.time(),
+                ))
+                
                 # Generate title for new conversation (using user's API key)
                 from agent_system.adapters.outbound.llm import generate_conversation_title
                 try:
@@ -392,6 +406,7 @@ async def chat_with_agent_stream(
                 temperature=settings.temperature,
                 max_tokens=settings.max_tokens,
                 event_callback=event_callback,
+                persona=persona if is_valid_persona(persona) else None,
             )
             
             # Run workflow

@@ -348,7 +348,6 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     
                     logger.info(f"Processing {len(unique_entities)} unique entities: {unique_entities}")
                     for entity_name in unique_entities[:8]:
-                        # Skip common words and phrases
                         if entity_name.lower() in ["birthday", "today", "tomorrow", "party", "the", "a", "an"]:
                             logger.debug(f"Skipping common word: {entity_name}")
                             continue
@@ -357,100 +356,117 @@ class CreatePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                         try:
                             found_info = False
                             
-                            # CRITICAL: Check knowledge graph FIRST - it has the most reliable info
-                            # KnowledgeNodes contain facts like "User has a dog named Zane"
-                            # This is more reliable than typed nodes which can be misclassified
-                            logger.info(f"Searching knowledge graph for '{entity_name}'...")
-                            recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
-                                ctx.state.user.id,
-                                entity_name,
-                                limit=5
+                            # ── 1) Direct PersonNode lookup (most authoritative) ──
+                            person = await ctx.deps.knowledge_graph_port.get_person(
+                                user_id=ctx.state.user.id,
+                                name=entity_name,
                             )
-                            if recall_result:
-                                # Extract text snippets - log what we're sending to LLM
-                                snippets = [r.get("content", "") for r in recall_result if r.get("content")]
-                                source_types = [r.get("source_type", "unknown") for r in recall_result]
-                                if snippets:
-                                    logger.info(f"Found {len(snippets)} mentions of '{entity_name}' (sources: {source_types})")
-                                    for i, snip in enumerate(snippets[:3]):
-                                        logger.info(f"  Snippet {i+1}: {snip[:100]}...")
-                                    
-                                    # Use LLM to detect entity type from snippets
-                                    from agent_system.adapters.outbound.llm.knowledge_extractor import detect_entity_type
-                                    
-                                    entity_type_result = await detect_entity_type(
-                                        entity_name=entity_name,
-                                        text_snippets=snippets,
-                                        api_key=ctx.deps.openai_api_key,
-                                    )
-                                    
-                                    if entity_type_result.entity_type == "pet":
-                                        species = entity_type_result.species or "pet"
-                                        info = f"'{entity_name}' is the user's {species}"
-                                        if entity_type_result.description:
-                                            info += f" ({entity_type_result.description})"
-                                        entity_info_parts.append(info)
-                                        logger.info(f"Entity type detected (KG): {entity_name} -> {species} (confidence: {entity_type_result.confidence})")
-                                        found_info = True
-                                    elif entity_type_result.entity_type == "person":
-                                        rel = entity_type_result.relationship or "known person"
-                                        info = f"'{entity_name}' is the user's {rel}"
-                                        if entity_type_result.description:
-                                            info += f" ({entity_type_result.description})"
-                                        entity_info_parts.append(info)
-                                        logger.info(f"Entity type detected (KG): {entity_name} -> {rel} (confidence: {entity_type_result.confidence})")
-                                        found_info = True
-                                    elif entity_type_result.entity_type == "location":
-                                        info = f"'{entity_name}' is a location/place"
-                                        if entity_type_result.description:
-                                            info += f" ({entity_type_result.description})"
-                                        entity_info_parts.append(info)
-                                        logger.info(f"Entity type detected (KG): {entity_name} -> location (confidence: {entity_type_result.confidence})")
-                                        found_info = True
-                                    else:
-                                        # Unknown type - just include raw snippets
-                                        snippet_summary = snippets[0][:150] if snippets else ""
-                                        if snippet_summary:
-                                            info = f"About '{entity_name}': {snippet_summary}"
-                                            entity_info_parts.append(info)
-                                            logger.info(f"Entity type unknown for '{entity_name}', using raw snippet")
-                                            found_info = True
-                            
-                            # Fallback: Check typed nodes only if knowledge graph didn't find anything
-                            if not found_info:
-                                logger.info(f"No knowledge graph info for '{entity_name}', checking typed nodes...")
-                                # Check if it's a pet
-                                pets = await ctx.deps.knowledge_graph_port.list_pets(ctx.state.user.id)
-                                for pet in (pets or []):
-                                    pet_name = pet.get("name", "").lower()
-                                    if entity_name.lower() in pet_name or pet_name in entity_name.lower():
-                                        species = pet.get("species", "pet")
-                                        breed = pet.get("breed", "")
-                                        info = f"'{entity_name}' is the user's {species}"
-                                        if breed:
-                                            info += f" ({breed})"
-                                        entity_info_parts.append(info)
-                                        logger.info(f"Entity lookup (PetNode): {entity_name} -> {species}")
-                                        found_info = True
-                                        break
+                            if person:
+                                rel = person.get("relationship_type", "known person")
+                                notes = person.get("context_notes", "")
+                                info = f"'{entity_name}' is the user's {rel}"
+                                if notes:
+                                    info += f". Context: {notes}"
                                 
-                                # Check if it's a person
-                                if not found_info:
-                                    people = await ctx.deps.knowledge_graph_port.list_known_people(ctx.state.user.id)
-                                    for person in (people or []):
-                                        person_name = person.get("name", "").lower()
-                                        if entity_name.lower() in person_name or person_name in entity_name.lower():
-                                            rel = person.get("relationship_type", "known person")
+                                # Supplement with conversation snippets
+                                recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                                    ctx.state.user.id, entity_name, limit=5,
+                                )
+                                user_snippets = [
+                                    r.get("content", "")[:250]
+                                    for r in (recall_result or [])
+                                    if r.get("role") == "user" and r.get("content")
+                                ]
+                                if user_snippets:
+                                    info += f". User has said: {' | '.join(user_snippets[:3])}"
+                                
+                                entity_info_parts.append(info)
+                                logger.info(f"PersonNode for '{entity_name}': rel={rel}, notes={notes[:120] if notes else 'none'}, snippets={len(user_snippets)}")
+                                found_info = True
+                            
+                            # ── 2) Direct PetNode lookup ──
+                            if not found_info:
+                                pet = await ctx.deps.knowledge_graph_port.get_pet(
+                                    user_id=ctx.state.user.id,
+                                    name=entity_name,
+                                )
+                                if pet:
+                                    species = pet.get("species", "pet")
+                                    breed = pet.get("breed", "")
+                                    personality = pet.get("personality", [])
+                                    info = f"'{entity_name}' is the user's {species}"
+                                    if breed:
+                                        info += f" ({breed})"
+                                    if personality:
+                                        info += f", personality: {', '.join(personality[:4])}"
+                                    
+                                    recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                                        ctx.state.user.id, entity_name, limit=3,
+                                    )
+                                    pet_snippets = [
+                                        r.get("content", "")[:200]
+                                        for r in (recall_result or [])
+                                        if r.get("role") == "user" and r.get("content")
+                                    ]
+                                    if pet_snippets:
+                                        info += f". User has said: {' | '.join(pet_snippets[:2])}"
+                                    
+                                    entity_info_parts.append(info)
+                                    logger.info(f"PetNode for '{entity_name}': {species}")
+                                    found_info = True
+                            
+                            # ── 3) Knowledge graph recall fallback ──
+                            if not found_info:
+                                logger.info(f"No structured node for '{entity_name}', falling back to recall_about_topic")
+                                recall_result = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                                    ctx.state.user.id, entity_name, limit=5,
+                                )
+                                if recall_result:
+                                    snippets = [r.get("content", "") for r in recall_result if r.get("content")]
+                                    if snippets:
+                                        from agent_system.adapters.outbound.llm.knowledge_extractor import detect_entity_type
+                                        
+                                        entity_type_result = await detect_entity_type(
+                                            entity_name=entity_name,
+                                            text_snippets=snippets,
+                                            api_key=ctx.deps.openai_api_key,
+                                        )
+                                        
+                                        detail_text = "; ".join(s[:200] for s in snippets[:3])
+                                        if entity_type_result.entity_type == "person":
+                                            rel = entity_type_result.relationship or "known person"
                                             info = f"'{entity_name}' is the user's {rel}"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            info += f". Known details: {detail_text}"
                                             entity_info_parts.append(info)
-                                            logger.info(f"Entity lookup (PersonNode): {entity_name} -> {rel}")
-                                            found_info = True
-                                            break
+                                        elif entity_type_result.entity_type == "pet":
+                                            species = entity_type_result.species or "pet"
+                                            info = f"'{entity_name}' is the user's {species}"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            info += f". Known details: {detail_text}"
+                                            entity_info_parts.append(info)
+                                        elif entity_type_result.entity_type == "location":
+                                            info = f"'{entity_name}' is a location/place"
+                                            if entity_type_result.description:
+                                                info += f" ({entity_type_result.description})"
+                                            entity_info_parts.append(info)
+                                        else:
+                                            snippet_summary = snippets[0][:150] if snippets else ""
+                                            if snippet_summary:
+                                                entity_info_parts.append(f"About '{entity_name}': {snippet_summary}")
+                                        
+                                        logger.info(f"Recall-based lookup for '{entity_name}': type={entity_type_result.entity_type}")
+                                        found_info = True
+                            
+                            if not found_info:
+                                logger.info(f"No information found for entity '{entity_name}'")
                         except Exception as entity_err:
                             logger.warning(f"Entity lookup failed for {entity_name}: {entity_err}")
                     
                     if entity_info_parts:
-                        entity_context = "\n\nIMPORTANT ENTITY CONTEXT (use this when planning):\n" + "\n".join(f"- {p}" for p in entity_info_parts)
+                        entity_context = "\n\nIMPORTANT ENTITY CONTEXT (use these specific details when planning — do NOT make up information about these people):\n" + "\n".join(f"- {p}" for p in entity_info_parts)
                         logger.info(f"Injecting entity context into planning: {entity_context}")
                 
                 # Verbose logging of ReAct planning
@@ -1328,6 +1344,79 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
         except Exception as e:
             logger.debug(f"Contextual suggestions failed (non-critical): {e}")
         
+        # =============================================================
+        # ENTITY KNOWLEDGE LOOKUP: Recall what we know about mentioned entities
+        # =============================================================
+        entity_knowledge: dict[str, str] = {}
+        try:
+            entities_to_lookup = ctx.state.entities[:5] if ctx.state.entities else []
+            logger.info(f"Entity knowledge lookup: entities={entities_to_lookup}, kg_port={ctx.deps.knowledge_graph_port is not None}")
+            
+            if entities_to_lookup and ctx.deps.knowledge_graph_port:
+                for entity_name in entities_to_lookup:
+                    parts: list[str] = []
+                    try:
+                        # 1) Direct PersonNode lookup (most reliable for people)
+                        person = await ctx.deps.knowledge_graph_port.get_person(
+                            user_id=ctx.state.user.id,
+                            name=entity_name,
+                        )
+                        if person:
+                            rel = person.get("relationship_type", "known person")
+                            notes = person.get("context_notes", "")
+                            parts.append(f"{entity_name} is the user's {rel}")
+                            if notes:
+                                parts.append(notes)
+                            logger.info(f"  PersonNode found for '{entity_name}': rel={rel}, notes={notes[:100] if notes else 'none'}")
+                        
+                        # 2) Direct PetNode lookup
+                        if not person:
+                            pet = await ctx.deps.knowledge_graph_port.get_pet(
+                                user_id=ctx.state.user.id,
+                                name=entity_name,
+                            )
+                            if pet:
+                                species = pet.get("species", "pet")
+                                breed = pet.get("breed", "")
+                                personality = pet.get("personality", [])
+                                parts.append(f"{entity_name} is the user's {species}")
+                                if breed:
+                                    parts.append(f"breed: {breed}")
+                                if personality:
+                                    parts.append(f"personality: {', '.join(personality[:3])}")
+                                logger.info(f"  PetNode found for '{entity_name}': {species}")
+                        
+                        # 3) Message history recall (catches details not in structured nodes)
+                        results = await ctx.deps.knowledge_graph_port.recall_about_topic(
+                            user_id=ctx.state.user.id,
+                            topic=entity_name,
+                            limit=8,
+                        )
+                        logger.info(f"  recall_about_topic('{entity_name}'): {len(results)} results")
+                        if results:
+                            user_msgs = [r for r in results if r.get("role") == "user" or r.get("source_type") == "knowledge"]
+                            other_msgs = [r for r in results if r not in user_msgs]
+                            ordered = user_msgs + other_msgs
+                            
+                            for r in ordered[:4]:
+                                content = r.get("content", "")
+                                source = r.get("source_type", "unknown")
+                                if content and content not in " | ".join(parts):
+                                    parts.append(content[:300])
+                                    logger.info(f"    [{source}] {content[:120]}...")
+                        
+                        if parts:
+                            entity_knowledge[entity_name] = " | ".join(parts)
+                    except Exception as ent_err:
+                        logger.warning(f"  Entity lookup failed for '{entity_name}': {ent_err}")
+                
+                if entity_knowledge:
+                    logger.info(f"Recalled knowledge for {len(entity_knowledge)} entities: {list(entity_knowledge.keys())}")
+                else:
+                    logger.info("No entity knowledge found in knowledge graph")
+        except Exception as e:
+            logger.error(f"Entity knowledge lookup failed: {e}", exc_info=True)
+        
         # ReAct mode: Synthesize step results into final response
         if ctx.state.react_mode and ctx.state.step_results:
             await ctx.deps.emit_event("react_synthesis_start", "GenerateResponse", "Synthesizing step results...")
@@ -1378,9 +1467,38 @@ Thought: {result['thought']}
 Observation: {result['observation']}
 """)
                 
+                # Build knowledge context for the synthesis prompt
+                knowledge_context_parts: list[str] = []
+                if entity_knowledge:
+                    knowledge_context_parts.append("[What You Already Know About Mentioned People/Entities]")
+                    knowledge_context_parts.append("(Use this to personalize your response -- reference specific details you know.)")
+                    for name, knowledge in entity_knowledge.items():
+                        knowledge_context_parts.append(f"- {name}: {knowledge}")
+                    knowledge_context_parts.append("")
+                
+                if contextual_suggestions:
+                    knowledge_context_parts.append("[Related People & Entities from Social Graph]")
+                    for sug in contextual_suggestions:
+                        name = sug.get("name", "")
+                        entity_type = sug.get("type", "")
+                        details = sug.get("details", "")
+                        if name:
+                            knowledge_context_parts.append(f"- {name} ({entity_type}): {details}")
+                    knowledge_context_parts.append("")
+                
+                if related_history:
+                    knowledge_context_parts.append("[Related Past Discussions]")
+                    for msg in related_history[:5]:
+                        role = "User" if msg.get("role") == "user" else "You (previously)"
+                        content = msg.get("content", "")[:200]
+                        knowledge_context_parts.append(f"- {role}: \"{content}...\"")
+                    knowledge_context_parts.append("")
+                
+                knowledge_block = "\n".join(knowledge_context_parts) if knowledge_context_parts else ""
+                
                 synthesis_prompt = f"""Original question: {ctx.state.user_input}
 
-Here are the reasoning steps that were executed:
+{knowledge_block}Here are the reasoning steps that were executed:
 
 {"".join(steps_formatted)}
 
@@ -1391,13 +1509,27 @@ CRITICAL: If the Observations contain STRUCTURED DATA like:
 - Tables → INCLUDE the complete table
 - Lists with URLs → INCLUDE all URLs exactly as provided
 
+PERSONALIZATION — THIS IS THE MOST IMPORTANT RULE:
+When the Observations or knowledge context contain SPECIFIC FACTS about people (e.g. their
+profession, role, relationship, what the user learned from them, context notes, quotes),
+you MUST weave those EXACT details into the response. Do NOT paraphrase them into vague
+generalities like "your mentorship" or "your rigor". Instead, reference the CONCRETE
+specifics: their job title, company, what they specifically taught, projects together, etc.
+
+ANTI-PATTERN: "Mark, your mentorship shaped how I approach problems."
+GOOD PATTERN: "Mark, working with you at [company] on [project] taught me [specific skill]."
+
+If the knowledge context says someone is a "geophysicist at XOM", SAY "geophysicist at XOM".
+If it says they taught the user about "computer vision and research", SAY that.
+Do NOT water down specific details into generic platitudes.
+
 For event/data responses:
 1. Brief intro (1-2 sentences)
 2. INCLUDE THE COMPLETE TOOL OUTPUT with all formatting and links
 3. Brief helpful closing
 
 For conversational responses:
-1. Flow naturally
+1. Flow naturally and use SPECIFIC details from the knowledge context — names, roles, companies, skills
 2. Be thorough and helpful
 3. Include practical guidance"""
 
@@ -1426,7 +1558,7 @@ For conversational responses:
                 if has_streaming_callback:
                     # Use streaming synthesis agent
                     from agent_system.adapters.outbound.llm import create_streaming_synthesis_agent
-                    streaming_agent = create_streaming_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                    streaming_agent = create_streaming_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                     
                     try:
                         async with streaming_agent.run_stream(synthesis_prompt) as stream:
@@ -1441,7 +1573,7 @@ For conversational responses:
                             logger.info(f"Streaming synthesis completed, length: {len(ctx.state.response)}")
                     except Exception as stream_err:
                         logger.warning(f"ReAct synthesis streaming failed, falling back: {stream_err}")
-                        agent = create_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                        agent = create_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                         result = await agent.run(synthesis_prompt)
                         ctx.state.response = result.output.synthesized_response
                         
@@ -1459,7 +1591,7 @@ For conversational responses:
                             ]
                 else:
                     # Non-streaming: use structured synthesis agent
-                    agent = create_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                    agent = create_synthesis_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                     result = await agent.run(synthesis_prompt)
                     ctx.state.response = result.output.synthesized_response
                     
@@ -1495,7 +1627,10 @@ For conversational responses:
         
         # BYPASS: Check if tool_result contains structured data that should be returned directly
         # This prevents LLMs from summarizing event listings, tables, etc.
-        if ctx.state.tool_result:
+        # EXCEPTION: search_internal_docs results must ALWAYS be synthesized by the LLM
+        # so the agent explains docs in context rather than dumping raw documentation.
+        is_docs_tool = ctx.state.tool_name == "search_internal_docs"
+        if ctx.state.tool_result and not is_docs_tool:
             tool_result = ctx.state.tool_result
             
             # Detect structured event listings
@@ -1588,15 +1723,44 @@ When asked about capabilities, describe them clearly and offer to demonstrate. F
                     prompt_parts.append(f"[Relevant User Context]\n{'; '.join(relevant_patterns)}\n")
         
         # Include semantically related past conversations (from embedding search)
+        # These are from OTHER conversations -- background knowledge, not the current thread.
         if related_history:
-            prompt_parts.append("[Related Past Discussions]")
-            prompt_parts.append("The user has discussed similar topics before:")
-            for msg in related_history[:10]:  # Top 10 most relevant for richer context
+            current_msgs = ctx.state.conversation.get_context_messages()
+            is_first_message = len(current_msgs) <= 1
+            
+            if is_first_message:
+                prompt_parts.append("[Background Knowledge from Past Conversations]")
+                prompt_parts.append("(These are from PREVIOUS conversations -- use as background context only. This is a NEW conversation.)")
+            else:
+                prompt_parts.append("[Related Past Discussions from Other Conversations]")
+                prompt_parts.append("(The user has discussed similar topics in earlier conversations:)")
+            
+            limit = 5 if is_first_message else 10
+            for msg in related_history[:limit]:
                 role = "User" if msg.get("role") == "user" else "You (previously)"
-                content = msg.get("content", "")[:300]  # Truncate long messages
+                content = msg.get("content", "")[:300]
                 score = msg.get("score", 0)
                 prompt_parts.append(f"  - {role}: \"{content}...\" (relevance: {score:.0%})")
-            prompt_parts.append("")  # Empty line separator
+            prompt_parts.append("")
+        
+        # Inject stored knowledge about entities the user mentioned
+        if entity_knowledge:
+            prompt_parts.append("[What You Already Know About Mentioned People/Entities]")
+            prompt_parts.append("(Use this to personalize your response -- show you remember them.)")
+            for name, knowledge in entity_knowledge.items():
+                prompt_parts.append(f"- {name}: {knowledge}")
+            prompt_parts.append("")
+        
+        # Inject contextual suggestions from the social graph
+        if contextual_suggestions:
+            prompt_parts.append("[Related People & Entities from Your Social Graph]")
+            for sug in contextual_suggestions:
+                name = sug.get("name", "")
+                entity_type = sug.get("type", "")
+                details = sug.get("details", "")
+                if name:
+                    prompt_parts.append(f"- {name} ({entity_type}): {details}")
+            prompt_parts.append("")
         
         # Present the full conversation history as a natural dialogue
         # Include tool usage so we can faithfully answer "what did you do?" questions
@@ -1779,7 +1943,7 @@ Respond as "You" continuing the conversation:""")
             if has_streaming_callback:
                 # Use streaming coordinator (plain text output) for real-time streaming
                 from agent_system.adapters.outbound.llm import create_streaming_coordinator_agent
-                streaming_agent = create_streaming_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                streaming_agent = create_streaming_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                 
                 try:
                     async with streaming_agent.run_stream(prompt) as stream:
@@ -1798,7 +1962,7 @@ Respond as "You" continuing the conversation:""")
                 except Exception as stream_err:
                     # Fallback to non-streaming structured agent if streaming fails
                     logger.warning(f"Streaming failed, falling back to non-streaming: {stream_err}")
-                    agent = create_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                    agent = create_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                     result = await agent.run(prompt)
                     ctx.state.response = result.output.response
                     
@@ -1816,7 +1980,7 @@ Respond as "You" continuing the conversation:""")
                         ]
             else:
                 # Non-group context: use structured coordinator for better responses with suggestions
-                agent = create_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key)
+                agent = create_coordinator_agent(ctx.deps.default_model, ctx.deps.openai_api_key, persona=ctx.deps.persona)
                 result = await agent.run(prompt)
                 ctx.state.response = result.output.response
                 

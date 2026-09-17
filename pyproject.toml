@@ -6,8 +6,8 @@ readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.10.0",
-    "pydantic-ai>=0.0.39",
-    "pydantic-graph>=0.0.39",
+    "pydantic-ai>=1.56.0,<2",
+    "pydantic-graph>=1.56.0,<2",
     "pydantic-settings>=2.7.0",
     "sqlalchemy[asyncio]>=2.0.36",
     "aiosqlite>=0.20.0",
@@ -27,6 +27,9 @@ dependencies = [
     "google-auth-oauthlib>=1.2.0",
     "google-auth-httplib2>=0.2.0",
     "dateparser>=1.2.0",
+    "matplotlib>=3.9",
+    "beautifulsoup4>=4.12",
+    "pymupdf>=1.24",
 ]
 
 [project.optional-dependencies]

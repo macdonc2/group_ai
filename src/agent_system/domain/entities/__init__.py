@@ -28,6 +28,16 @@ from agent_system.domain.entities.knowledge import (
     KnowledgeNode,
     KnowledgeNodeType,
 )
+from agent_system.domain.entities.research import (
+    DataTable,
+    Figure,
+    Finding,
+    LaneResult,
+    ResearchJob,
+    ResearchProgress,
+    ResearchStatus,
+    Source,
+)
 from agent_system.domain.entities.plan import Plan, StoredPlanStep
 from agent_system.domain.entities.social import (
     Contradiction,
@@ -72,6 +82,15 @@ __all__ = [
     "KnowledgeNode",
     "KnowledgeNodeType",
     "KnowledgeGraph",
+    # Deep Research
+    "ResearchJob",
+    "ResearchStatus",
+    "ResearchProgress",
+    "Source",
+    "Finding",
+    "DataTable",
+    "Figure",
+    "LaneResult",
     # Social Graph
     "Person",
     "Pet",

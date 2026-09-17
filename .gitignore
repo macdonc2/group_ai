@@ -103,3 +103,4 @@ assets/
 *.tmp
 *.temp
 .cache/
+research_dev.db

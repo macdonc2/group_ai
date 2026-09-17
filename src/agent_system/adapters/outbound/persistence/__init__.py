@@ -35,6 +35,14 @@ from agent_system.adapters.outbound.persistence.repositories import (
     SQLAlchemyPlanRepository,
     SQLAlchemyUserRepository,
 )
+from agent_system.adapters.outbound.persistence.research_models import (
+    ResearchAudioModel,
+    ResearchFigureModel,
+    ResearchJobModel,
+)
+from agent_system.adapters.outbound.persistence.research_repositories import (
+    SQLAlchemyResearchRepository,
+)
 
 __all__ = [
     # Database
@@ -51,6 +59,9 @@ __all__ = [
     "GroupConversationModel",
     "GroupMessageModel",
     "ExtractedEventModel",
+    "ResearchJobModel",
+    "ResearchFigureModel",
+    "ResearchAudioModel",
     # Mappers
     "UserMapper",
     "ConversationMapper",
@@ -69,4 +80,5 @@ __all__ = [
     "SQLAlchemyGroupRepository",
     "SQLAlchemyGroupConversationRepository",
     "SQLAlchemyExtractedEventRepository",
+    "SQLAlchemyResearchRepository",
 ]

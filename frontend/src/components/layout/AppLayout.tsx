@@ -1,9 +1,13 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { MessageSquare, Users, LogOut, Shield, Settings, Key, ChevronDown, Share2, KeyRound, Globe, Menu, X, UserCircle, Activity, Calendar } from 'lucide-react';
+import { MessageSquare, Users, LogOut, Shield, Settings, Key, ChevronDown, Share2, KeyRound, Globe, Menu, X, UserCircle, Activity, Calendar, FlaskConical } from 'lucide-react';
 import { ConversationList } from '../sidebar';
 import { ChatContainer } from '../chat';
 import { TracePanel } from '../trace';
+import { ResearchList, ResearchView } from '../research';
+import { useResearch } from '../../hooks/useResearch';
 import { ThemeToggle } from './ThemeToggle';
+import { WrestlerPicker } from './WrestlerPicker';
+import { applyWrestler, getWrestler } from '../../lib/wrestlers';
 import { GroupList, GroupChat, GroupMembers, CreateGroupModal } from '../groups';
 import { UserManagement, ChangePassword, ApiKeySettings, TimezoneSettings, CalendarSettings } from '../settings';
 import { KnowledgeGraph } from '../knowledge';
@@ -14,13 +18,23 @@ import { useGroupStore } from '../../stores/groupStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
 
-type ViewMode = 'chats' | 'groups';
+type ViewMode = 'chats' | 'groups' | 'research';
 
 export function AppLayout() {
   const { sendMessage, loadConversation, startNewConversation } = useChat();
+  const research = useResearch();
   const theme = useThemeStore((state) => state.theme);
+  const wrestlerChoice = useThemeStore((state) => state.wrestler);
+  const wrestler = getWrestler(wrestlerChoice);
   const { user, logout } = useAuthStore();
-  const [viewMode, setViewMode] = useState<ViewMode>('chats');
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try {
+      const saved = localStorage.getItem('view-mode');
+      return saved === 'groups' || saved === 'research' ? saved : 'chats';
+    } catch {
+      return 'chats';
+    }
+  });
   const [showCreateGroup, setShowCreateGroup] = useState(false);
   const [showUserManagement, setShowUserManagement] = useState(false);
   const [showChangePassword, setShowChangePassword] = useState(false);
@@ -69,6 +83,15 @@ export function AppLayout() {
   useEffect(() => {
     applyTheme(theme);
   }, [theme]);
+
+  useEffect(() => {
+    applyWrestler(wrestlerChoice);
+  }, [wrestlerChoice]);
+
+  // Remember the active tab so a reload lands where you were
+  useEffect(() => {
+    try { localStorage.setItem('view-mode', viewMode); } catch { /* storage unavailable */ }
+  }, [viewMode]);
   
   // Fetch groups when switching to groups view
   useEffect(() => {
@@ -161,8 +184,18 @@ export function AppLayout() {
     setShowMobileSidebar(false);
   };
 
+  const handleResearchSelect = (id: string) => {
+    research.open(id);
+    setShowMobileSidebar(false);
+  };
+
+  const handleResearchNew = () => {
+    research.startNew();
+    setShowMobileSidebar(false);
+  };
+
   return (
-    <div className="h-screen flex bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+    <div className={`h-screen flex bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 ${wrestler ? 'wt-app' : ''}`}>
       {/* Mobile sidebar overlay */}
       {showMobileSidebar && (
         <div 
@@ -173,7 +206,7 @@ export function AppLayout() {
       
       {/* Sidebar - hidden on mobile, shown as overlay when toggled */}
       <div className={`
-        fixed md:relative inset-y-0 left-0 z-50 
+        fixed md:relative inset-y-0 left-0 z-50 wt-sidebar
         w-72 border-r border-slate-200 dark:border-slate-700 
         bg-slate-50 dark:bg-slate-800/50 flex flex-col h-full
         transform transition-transform duration-200 ease-in-out
@@ -214,6 +247,17 @@ export function AppLayout() {
             <Users size={18} />
             Groups
           </button>
+          <button
+            onClick={() => setViewMode('research')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-medium transition-colors ${
+              viewMode === 'research'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border-b-2 border-transparent'
+            }`}
+          >
+            <FlaskConical size={18} />
+            Research
+          </button>
         </div>
         
         {/* Sidebar content */}
@@ -223,6 +267,12 @@ export function AppLayout() {
               onNewConversation={handleMobileNewConversation}
               onSelectConversation={handleMobileConversationSelect}
               hideWrapper
+            />
+          ) : viewMode === 'research' ? (
+            <ResearchList
+              onNew={handleResearchNew}
+              onSelect={handleResearchSelect}
+              onDelete={research.remove}
             />
           ) : (
             <GroupList
@@ -237,9 +287,9 @@ export function AppLayout() {
       </div>
       
       {/* Main content area */}
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 wt-main">
         {/* Header */}
-        <header className="h-14 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-2 sm:px-4 shrink-0">
+        <header className={`h-14 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between px-2 sm:px-4 shrink-0 ${wrestler ? 'wt-header' : ''}`}>
           <div className="flex items-center gap-2">
             {/* Mobile menu button */}
             <button
@@ -249,8 +299,11 @@ export function AppLayout() {
               <Menu size={20} />
             </button>
             <h1 className="font-semibold text-sm sm:text-base truncate">
-              {viewMode === 'chats' ? 'Agent Chat' : (selectedGroup?.name || 'Groups')}
+              {viewMode === 'chats' ? 'Agent Chat' : viewMode === 'research' ? 'Deep Research' : (selectedGroup?.name || 'Groups')}
             </h1>
+            {wrestler && (
+              <span className="hidden xl:inline text-xs wt-tagline truncate max-w-72">{wrestler.tagline}</span>
+            )}
           </div>
           <div className="flex items-center gap-1 sm:gap-4">
             {viewMode === 'groups' && selectedGroup && !selectedConversationId && (
@@ -381,6 +434,7 @@ export function AppLayout() {
               <Share2 size={18} />
             </button>
             
+            <WrestlerPicker />
             <ThemeToggle />
           </div>
         </header>
@@ -388,6 +442,12 @@ export function AppLayout() {
         {/* Main content */}
         {viewMode === 'chats' ? (
           <ChatContainer onSendMessage={sendMessage} />
+        ) : viewMode === 'research' ? (
+          <ResearchView
+            onStart={research.start}
+            onRerun={research.start}
+            onRefreshDetail={research.open}
+          />
         ) : selectedGroup && selectedConversationId ? (
           <div className="flex-1 flex overflow-hidden relative">
             <GroupChat

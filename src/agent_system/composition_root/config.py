@@ -43,13 +43,19 @@ class Settings(BaseSettings):
 
     # Agent Configuration
     default_model: str = Field(
-        default="openai:gpt-5.2-2025-12-11",
-        description="Default LLM model",
+        default="openai:gpt-6-astra",
+        description="Default LLM model (chat, research lanes, synthesis, writing)",
     )
     fallback_model: str = Field(
-        default="openai:gpt-5-mini-2025-08-07",
-        description="Fallback LLM model for intent/utility when primary fails",
+        default="openai:gpt-5.6-luna",
+        description="Cheap/fast model for intent, extraction, ranking and other structured steps",
     )
+
+    # Deep Research
+    tts_model: str = Field(default="gpt-4o-mini-tts", description="OpenAI text-to-speech model for report narration")
+    tts_voice: str = Field(default="marin", description="TTS voice")
+    semantic_scholar_api_key: str | None = Field(default=None, description="Optional: raises Semantic Scholar rate limits")
+    github_token: str | None = Field(default=None, description="Optional: raises GitHub search rate limits")
     max_tokens: int = Field(default=4096, description="Maximum tokens for LLM responses")
     temperature: float = Field(default=0.7, description="LLM temperature")
 

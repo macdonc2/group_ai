@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 
@@ -93,7 +93,7 @@ If the conversation is just casual chat with NO mention of activities or times, 
 """
 
 
-def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> OpenAIModel | str:
+def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> OpenAIResponsesModel | str:
     """Get a model instance for event extraction.
     
     Args:
@@ -101,7 +101,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
         api_key: Optional API key to use
         
     Returns:
-        OpenAIModel instance if api_key available, otherwise model string
+        OpenAIResponsesModel instance if api_key available, otherwise model string
     """
     if ":" in model_string:
         _, model_name = model_string.split(":", 1)
@@ -110,7 +110,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
     
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
     
     return model_string
 

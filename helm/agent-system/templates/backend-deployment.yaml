@@ -60,6 +60,12 @@ spec:
               value: {{ .Values.env.LLM_PROVIDER | quote }}
             - name: DEFAULT_MODEL
               value: {{ .Values.env.DEFAULT_MODEL | quote }}
+            - name: FALLBACK_MODEL
+              value: {{ .Values.env.FALLBACK_MODEL | quote }}
+            - name: TTS_MODEL
+              value: {{ .Values.env.TTS_MODEL | quote }}
+            - name: TTS_VOICE
+              value: {{ .Values.env.TTS_VOICE | quote }}
           
           envFrom:
             - secretRef:

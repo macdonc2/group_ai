@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 import dateparser
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 logger = logging.getLogger(__name__)
@@ -68,7 +68,7 @@ def _get_datetime_interpreter(api_key: str | None = None) -> Agent[None, Interpr
             pass
     
     if key:
-        model = OpenAIModel("gpt-5-mini", provider=OpenAIProvider(api_key=key))
+        model = OpenAIResponsesModel("gpt-5-mini", provider=OpenAIProvider(api_key=key))
     else:
         model = "openai:gpt-5-mini"
     

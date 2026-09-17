@@ -9,6 +9,8 @@ import type {
   ExtractedEvent,
   SocialSuggestion,
   GroupSummary,
+  ResearchListItem,
+  ResearchDetail,
 } from '../types';
 import { useAuthStore } from '../stores/authStore';
 
@@ -65,12 +67,13 @@ async function fetchApi<T>(
 
 export const api = {
   // Agent
-  chat: async (message: string, conversationId?: string): Promise<AgentResponse> => {
+  chat: async (message: string, conversationId?: string, persona?: string | null): Promise<AgentResponse> => {
     return fetchApi<AgentResponse>('/agent/chat', {
       method: 'POST',
       body: JSON.stringify({
         message,
         conversation_id: conversationId,
+        persona: persona && persona !== 'none' ? persona : undefined,
       }),
     });
   },
@@ -360,6 +363,45 @@ export const api = {
     is_primary: boolean;
   }>> => {
     return fetchApi('/calendar/calendars');
+  },
+
+  // Deep Research
+  createResearch: async (question: string, depth: 1 | 2 | 3 = 1, persona?: string | null): Promise<ResearchListItem> => {
+    return fetchApi<ResearchListItem>('/research', {
+      method: 'POST',
+      body: JSON.stringify({ question, depth, persona: persona && persona !== 'none' ? persona : undefined }),
+    });
+  },
+
+  listResearch: async (): Promise<ResearchListItem[]> => {
+    return fetchApi<ResearchListItem[]>('/research');
+  },
+
+  getResearch: async (id: string): Promise<ResearchDetail> => {
+    return fetchApi<ResearchDetail>(`/research/${id}`);
+  },
+
+  deleteResearch: async (id: string): Promise<void> => {
+    await fetchApi(`/research/${id}`, { method: 'DELETE' });
+  },
+
+  cancelResearch: async (id: string): Promise<ResearchListItem> => {
+    return fetchApi<ResearchListItem>(`/research/${id}/cancel`, { method: 'POST' });
+  },
+
+  narrateResearch: async (id: string): Promise<{ status: string; bytes: number; voice: string }> => {
+    return fetchApi(`/research/${id}/narrate`, { method: 'POST' });
+  },
+
+  /** <img>/<audio> can't send headers, so these carry the token as a query param. */
+  researchFigureUrl: (id: string, ordinal: number): string => {
+    const token = useAuthStore.getState().token ?? '';
+    return `${API_BASE}/research/${id}/figures/${ordinal}?token=${encodeURIComponent(token)}`;
+  },
+
+  researchAudioUrl: (id: string): string => {
+    const token = useAuthStore.getState().token ?? '';
+    return `${API_BASE}/research/${id}/audio?token=${encodeURIComponent(token)}`;
   },
 
   updateCalendarSettings: async (settings: {

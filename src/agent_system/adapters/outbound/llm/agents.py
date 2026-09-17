@@ -4,9 +4,10 @@ import os
 from functools import lru_cache
 
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
+from agent_system.adapters.outbound.llm.personas import persona_suffix
 from agent_system.adapters.outbound.llm.schemas import (
     IntentAnalysis,
     KnowledgeExtraction,
@@ -19,17 +20,22 @@ from agent_system.adapters.outbound.llm.schemas import (
 )
 
 
-def _get_model(model_string: str, api_key: str | None = None) -> OpenAIModel | str:
+def _get_model(model_string: str, api_key: str | None = None) -> OpenAIResponsesModel | str:
     """Get a model instance, using api_key if provided.
     
+    Uses the OpenAI Responses API: GPT-5.6/GPT-6 models reject function tools
+    (which every structured-output agent here relies on) over Chat Completions
+    unless reasoning is switched off.
+    
     Args:
-        model_string: Model string like "openai:gpt-5.2" or "gpt-5.2"
+        model_string: Model string like "openai:gpt-6-astra" or "gpt-6-astra"
         api_key: Optional API key to use (if not provided, uses env var)
         
     Returns:
-        OpenAIModel instance if api_key provided, otherwise model string
+        OpenAIResponsesModel instance if a key is available, otherwise the
+        "openai-responses:<name>" string for PydanticAI to resolve
     """
-    # Extract model name from "openai:gpt-5.2" format
+    # Extract model name from "openai:gpt-6-astra" format
     if ":" in model_string:
         _, model_name = model_string.split(":", 1)
     else:
@@ -37,10 +43,10 @@ def _get_model(model_string: str, api_key: str | None = None) -> OpenAIModel | s
     
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
     
     # Return string for PydanticAI to handle (will fail if no key)
-    return model_string
+    return f"openai-responses:{model_name}"
 
 
 # System prompts for each agent type
@@ -85,13 +91,16 @@ WHAT TO AVOID:
 - Excessive hedging
 
 TOOL OUTPUT FORMATTING:
-- When tool output contains MARKDOWN TABLES, you MUST include the table verbatim in your response
+- When tool output contains MARKDOWN TABLES from data tools (events, lists, etc.), you MUST include the table verbatim in your response
 - Do NOT paraphrase or describe table data in prose - show the actual table
 - You can add context BEFORE and AFTER the table, but always preserve the table itself
 - Example: If tool returns "| Event | Time |...", include that exact table in your response
 - Tables help users scan information quickly - don't convert them to paragraphs
-- When tool output contains INTERNAL DOCUMENTATION (how the app works), use it accurately to answer.
-  Synthesize the doc content into a clear, helpful explanation - don't just dump raw sections.
+- EXCEPTION - INTERNAL DOCUMENTATION (search_internal_docs tool): When the tool result is internal documentation,
+  DO NOT dump it raw. Instead, synthesize and explain the content in your own words as a clear, helpful answer.
+  Use the docs as source material but write a conversational response. If the docs contain tables, you may
+  include small illustrative tables but focus on explaining the concepts clearly. The user asked a question
+  about the app - answer it naturally, don't show them the raw reference docs.
 """
 
 INTENT_SYSTEM_PROMPT = """You analyze user messages to understand their intent and determine if a tool is needed.
@@ -101,7 +110,10 @@ When conversation history is provided, USE IT to understand the current message.
 - "Can you explain that simpler?" → "that" = your previous response. Intent: clarification. No tool needed.
 - "Tell me more about that" → "that" = topic from previous exchange. Intent: clarification. No tool needed.
 - "What about the other one?" → resolve from context. Intent depends on topic.
+- "But how does X work?" after already discussing X → clarification. No tool needed (the info is already in the conversation).
+- "Can you give me an example?" → clarification. No tool needed.
 - Do NOT suggest a tool for simple follow-ups/clarifications that just need you to rephrase or elaborate on what you already said.
+- IMPORTANT: If the assistant ALREADY answered a question about a topic (e.g., knowledge graph, events, groups) in the conversation history, and the user asks a follow-up like "but how does it get searched?" or "explain the search part", this is a CLARIFICATION - the answer is already in the conversation. Do NOT re-call the same tool. Set suggested_tool to null.
 
 ENTITY EXTRACTION (CRITICAL):
 Extract INDIVIDUAL named entities (people, pets, places, specific things).
@@ -472,7 +484,7 @@ Examples: "User has a friend named Zane who has a bird", "User prefers concise a
 """
 
 
-def create_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
+def create_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None, persona: str | None = None) -> Agent:
     """Create a coordinator agent with custom model.
     
     Args:
@@ -485,11 +497,11 @@ def create_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None 
     return Agent(
         _get_model(model, api_key),
         output_type=ResponseGeneration,
-        system_prompt=COORDINATOR_SYSTEM_PROMPT,
+        system_prompt=COORDINATOR_SYSTEM_PROMPT + persona_suffix(persona),
     )
 
 
-def create_streaming_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
+def create_streaming_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None = None, persona: str | None = None) -> Agent:
     """Create a coordinator agent optimized for streaming (plain text output).
     
     This version uses plain text output instead of structured ResponseGeneration,
@@ -506,7 +518,7 @@ def create_streaming_coordinator_agent(model: str = "openai:gpt-5.2", api_key: s
     return Agent(
         _get_model(model, api_key),
         output_type=str,  # Plain text for streaming support
-        system_prompt=COORDINATOR_SYSTEM_PROMPT,
+        system_prompt=COORDINATOR_SYSTEM_PROMPT + persona_suffix(persona),
     )
 
 
@@ -612,7 +624,7 @@ def create_step_execution_agent(model: str = "openai:gpt-5.2", api_key: str | No
     )
 
 
-def create_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
+def create_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None, persona: str | None = None) -> Agent:
     """Create an agent that synthesizes step results into a final response.
     
     Args:
@@ -625,11 +637,11 @@ def create_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = 
     return Agent(
         _get_model(model, api_key),
         output_type=StepSynthesis,
-        system_prompt=SYNTHESIS_SYSTEM_PROMPT,
+        system_prompt=SYNTHESIS_SYSTEM_PROMPT + persona_suffix(persona),
     )
 
 
-def create_streaming_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent:
+def create_streaming_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = None, persona: str | None = None) -> Agent:
     """Create a synthesis agent optimized for streaming (plain text output).
     
     Args:
@@ -642,7 +654,7 @@ def create_streaming_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str
     return Agent(
         _get_model(model, api_key),
         output_type=str,  # Plain text for streaming support
-        system_prompt=SYNTHESIS_SYSTEM_PROMPT,
+        system_prompt=SYNTHESIS_SYSTEM_PROMPT + persona_suffix(persona),
     )
 
 

@@ -230,6 +230,25 @@ Optional Neo4j integration for persistent memory and context:
 - **Rich relationship types** — RELATES_TO, INTERESTED_IN, DISCUSSED, LIKES, LOCATED_IN, etc.
 - **Interactive visualization** — force-directed graph in frontend with filtering
 
+### Wrestler Themes
+
+The header **Theme** picker dresses the whole app as Macho Man Randy Savage, Hulk Hogan, Bret "The Hitman" Hart or "Mean" Gene Okerlund: palette, headshot avatar, welcome copy, and the agent answers **in that wrestler's voice** (persona rules are appended to the response agents' system prompts; substance is unchanged). The choice is remembered per browser and sent as `persona` on chat requests. Headshots are CC-licensed crops from Wikimedia Commons (`frontend/public/themes/ATTRIBUTION.md`).
+
+### Deep Research
+
+The **Research** tab runs a durable, multi-lane research job from a plain question and produces an alphaXiv-style overview you can read or listen to.
+
+- **Three lanes in parallel.** *Academic* searches arXiv and Semantic Scholar; *Practical* searches the web and GitHub and reads the pages; *Empirical* mines both for reported numbers and extracts them into data tables with the quoted source span kept for provenance. A lane failing degrades the report instead of killing the run.
+- **Synthesis, figures, write-up.** The lanes are reconciled into one section plan, the best tables are charted server-side with matplotlib, and the overview is written in an explanatory academic register with numbered citations and inline figures.
+- **Narration.** After the report is saved, an OpenAI text-to-speech narration (default voice `marin`) is generated and a **Listen** button appears.
+- **Depth.** *Quick* is one pass per lane. *Standard* and *Deep* add one or two recursive rounds: each lane summarises what it has, names the gaps, plans gap-driven queries, searches again and extracts more findings; the round summaries feed the synthesis.
+- **Figures from the papers.** The most-cited arXiv sources are downloaded and their best figures (matched to the paper's own captions with PyMuPDF) are placed in the report with a link back to the paper, alongside charts drawn from extracted numbers.
+- **Durable jobs.** Each run is a `research_jobs` row executed by an in-process background task. Every progress event is persisted, so reloading or switching tabs re-attaches and replays. A backend restart marks in-flight runs `interrupted`; figures and audio live in Postgres.
+
+Endpoints: `POST /api/v1/research`, `GET /api/v1/research`, `GET /api/v1/research/{id}`, `GET /api/v1/research/{id}/stream` (SSE, `?token=`), `GET /api/v1/research/{id}/figures/{n}`, `GET /api/v1/research/{id}/audio`, `POST /api/v1/research/{id}/narrate`, `DELETE /api/v1/research/{id}`.
+
+Settings: `DEFAULT_MODEL` (lanes, synthesis, writing), `FALLBACK_MODEL` (query planning), `TTS_MODEL`, `TTS_VOICE`, and optional `SEMANTIC_SCHOLAR_API_KEY` / `GITHUB_TOKEN` for higher rate limits. All agents use the OpenAI Responses API, which the GPT-5.6 and GPT-6 models require for tool use.
+
 ## Memory & Context Architecture
 
 The Agent System uses a **multi-layer memory architecture** to maintain conversational context, learn user preferences, and enable intelligent recall across sessions. This section explains how PostgreSQL, Neo4j, and vector embeddings work together.

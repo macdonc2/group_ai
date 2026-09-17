@@ -42,6 +42,7 @@ export type TraceEventType =
   | 'tool_result' 
   | 'response_chunk'
   | 'response' 
+  | 'conversation_created'
   | 'error';
 
 export interface StreamEvent {
@@ -191,4 +192,84 @@ export interface GroupWSMessage {
   data: Record<string, unknown>;
   timestamp: string;
   sender_id: string | null;
+}
+
+
+// Deep Research Types
+
+export type LaneName = 'academic' | 'practical' | 'empirical';
+
+export type ResearchStatus =
+  | 'queued' | 'running' | 'synthesizing' | 'writing' | 'narrating'
+  | 'complete' | 'failed' | 'interrupted';
+
+export interface ResearchListItem {
+  id: string;
+  question: string;
+  title: string | null;
+  status: ResearchStatus;
+  phase: string;
+  created_at: string;
+  completed_at: string | null;
+  has_audio: boolean;
+  figures: number;
+  depth?: number;
+  error: string | null;
+}
+
+export interface ResearchSource {
+  id: string;
+  lane: LaneName;
+  title: string;
+  url: string | null;
+  authors: string[];
+  year: number | null;
+  venue: string | null;
+  ref: number | null;
+}
+
+export interface ResearchFigure {
+  ordinal: number;
+  caption: string;
+  source_ids: string[];
+  origin?: 'generated' | 'source';
+  source_url?: string | null;
+  source_title?: string | null;
+}
+
+export interface LaneProgress {
+  status: 'pending' | 'running' | 'complete' | 'error';
+  step: string;
+  round?: number;
+  queries: number;
+  sources: number;
+  findings: number;
+  tables: number;
+  error: string | null;
+}
+
+export interface ResearchProgress {
+  phase: string;
+  depth?: number;
+  lanes: Record<LaneName, LaneProgress>;
+  figures: number;
+  has_audio: boolean;
+}
+
+export interface ResearchDetail extends ResearchListItem {
+  tldr: string | null;
+  report_markdown: string | null;
+  progress: ResearchProgress;
+  model: string;
+  sources: ResearchSource[];
+  figure_list: ResearchFigure[];
+}
+
+/** A generic SSE event; research events use their own event_type vocabulary. */
+export interface ResearchStreamEvent {
+  event_type: string;
+  node_name: string | null;
+  message: string;
+  data: Record<string, unknown> | null;
+  timestamp: number;
 }

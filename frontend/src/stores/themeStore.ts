@@ -1,21 +1,32 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import { applyWrestler, type WrestlerChoice } from '../lib/wrestlers';
 
 type Theme = 'light' | 'dark' | 'system';
 
 interface ThemeState {
   theme: Theme;
+  wrestler: WrestlerChoice;
   setTheme: (theme: Theme) => void;
+  setWrestler: (wrestler: WrestlerChoice) => void;
 }
 
 export const useThemeStore = create<ThemeState>()(
   persist(
     (set) => ({
       theme: 'system',
+      wrestler: 'none',
       setTheme: (theme) => set({ theme }),
+      setWrestler: (wrestler) => {
+        applyWrestler(wrestler);
+        set({ wrestler });
+      },
     }),
     {
       name: 'theme-storage',
+      onRehydrateStorage: () => (state) => {
+        if (state) applyWrestler(state.wrestler ?? 'none');
+      },
     }
   )
 );

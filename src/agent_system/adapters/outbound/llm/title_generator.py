@@ -3,7 +3,7 @@
 import os
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIModel
+from pydantic_ai.models.openai import OpenAIResponsesModel
 from pydantic_ai.providers.openai import OpenAIProvider
 from typing import Annotated
 
@@ -35,7 +35,7 @@ Examples of good titles:
 """
 
 
-def _get_model_for_title(model_string: str, api_key: str | None = None) -> OpenAIModel | str:
+def _get_model_for_title(model_string: str, api_key: str | None = None) -> OpenAIResponsesModel | str:
     """Get a model instance for title generation."""
     if ":" in model_string:
         _, model_name = model_string.split(":", 1)
@@ -44,7 +44,7 @@ def _get_model_for_title(model_string: str, api_key: str | None = None) -> OpenA
     
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
     
     return model_string
 

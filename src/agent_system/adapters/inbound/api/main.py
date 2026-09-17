@@ -30,9 +30,16 @@ from agent_system.adapters.inbound.api.routes import (
     groups_router,
     knowledge_router,
     plans_router,
+    research_router,
     tools_router,
 )
 from agent_system.adapters.outbound.persistence import Database
+from agent_system.adapters.outbound.research.runner import (
+    ResearchRunner,
+    ResearchSettings,
+    mark_interrupted_on_startup,
+    set_runner,
+)
 from agent_system.composition_root.config import Settings, get_settings
 
 # Load environment variables from .env file
@@ -58,6 +65,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db = Database(settings.database_url, echo=settings.debug)
         await db.create_tables()
         set_database(db)
+
+        # Deep Research runs in-process; anything mid-flight at the last
+        # shutdown is gone, so say so on those rows and start a fresh runner.
+        await mark_interrupted_on_startup(db)
+        set_runner(ResearchRunner(db, ResearchSettings(
+            strong_model=settings.default_model,
+            fast_model=settings.fallback_model,
+            tts_model=settings.tts_model,
+            tts_voice=settings.tts_voice,
+            semantic_scholar_key=settings.semantic_scholar_api_key,
+            github_token=settings.github_token,
+        )))
         
         yield
         
@@ -89,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(groups_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(plans_router, prefix="/api/v1")
+    app.include_router(research_router, prefix="/api/v1")
     app.include_router(tools_router, prefix="/api/v1")
     
     @app.get("/health")

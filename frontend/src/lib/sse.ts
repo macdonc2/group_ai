@@ -10,11 +10,15 @@ export interface SSEOptions {
 export function createSSEConnection(
   message: string,
   conversationId: string | null,
-  options: SSEOptions
+  options: SSEOptions,
+  persona?: string | null
 ): { abort: () => void } {
   const params = new URLSearchParams({ message });
   if (conversationId) {
     params.append('conversation_id', conversationId);
+  }
+  if (persona && persona !== 'none') {
+    params.append('persona', persona);
   }
   
   // Add auth token - EventSource API cannot send custom headers
@@ -56,4 +60,56 @@ export function createSSEConnection(
       options.onComplete?.();
     },
   };
+}
+
+
+// ---------------------------------------------------------------------------
+// Generic SSE (used by Deep Research). The chat helper above is unchanged.
+// ---------------------------------------------------------------------------
+
+export interface GenericSSEOptions<E> {
+  onEvent: (event: E) => void;
+  onError?: (error: Error) => void;
+  onComplete?: () => void;
+  /** event_type values that end the stream. */
+  terminalEvents: string[];
+}
+
+export function createGenericSSE<E extends { event_type: string }>(
+  path: string,
+  params: Record<string, string>,
+  options: GenericSSEOptions<E>
+): { abort: () => void } {
+  const search = new URLSearchParams(params);
+  const token = useAuthStore.getState().token;
+  if (token) search.append('token', token);
+
+  const eventSource = new EventSource(`${path}?${search.toString()}`);
+  let closed = false;
+  const finish = () => {
+    if (closed) return;
+    closed = true;
+    eventSource.close();
+    options.onComplete?.();
+  };
+
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data) as E;
+      options.onEvent(data);
+      if (options.terminalEvents.includes(data.event_type)) finish();
+    } catch (error) {
+      console.error('Failed to parse SSE event:', error);
+    }
+  };
+
+  eventSource.onerror = () => {
+    if (closed) return;
+    closed = true;
+    eventSource.close();
+    options.onError?.(new Error('Connection lost'));
+    options.onComplete?.();
+  };
+
+  return { abort: finish };
 }

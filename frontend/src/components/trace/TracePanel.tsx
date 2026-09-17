@@ -44,7 +44,7 @@ export function TracePanel({ embedded = false }: TracePanelProps) {
   
   return (
     <div className={cn(
-      "bg-white dark:bg-slate-900 flex flex-col h-full",
+      "bg-white dark:bg-slate-900 flex flex-col h-full wt-trace",
       !embedded && "w-80 border-l border-slate-200 dark:border-slate-700"
     )}>
       {/* Header - hide in embedded mode (parent provides header) */}

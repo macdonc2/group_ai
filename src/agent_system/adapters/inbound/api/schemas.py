@@ -206,6 +206,7 @@ class AgentRequest(BaseModel):
 
     message: Annotated[str, Field(min_length=1, description="User message")]
     conversation_id: str | None = None
+    persona: str | None = Field(default=None, description="Optional wrestler persona key (macho_man, hulk_hogan, bret_hart, mean_gene)")
 
 
 class StreamEvent(BaseModel):
@@ -430,3 +431,57 @@ class GroupSummaryRead(BaseModel):
     social_suggestions: list[SocialSuggestionRead]
     active_member_ids: list[str]
     message_count_week: int
+
+
+# ============ Deep Research Schemas ============
+
+class ResearchCreate(BaseModel):
+    """Start a research run from a question or topic."""
+
+    question: Annotated[str, Field(min_length=8, max_length=2000)]
+    depth: Annotated[int, Field(ge=1, le=3, description="Research rounds per lane: 1 quick, 2 standard, 3 deep")] = 1
+    persona: str | None = Field(default=None, description="Optional wrestler persona key voicing the overview and narration")
+
+
+class SourceRead(BaseModel):
+    id: str
+    lane: str
+    title: str
+    url: str | None = None
+    authors: list[str] = []
+    year: int | None = None
+    venue: str | None = None
+    ref: int | None = None
+
+
+class FigureRead(BaseModel):
+    ordinal: int
+    caption: str
+    source_ids: list[str] = []
+    origin: str = "generated"
+    source_url: str | None = None
+    source_title: str | None = None
+
+
+class ResearchListItem(BaseModel):
+    id: str
+    question: str
+    title: str | None = None
+    status: str
+    phase: str
+    created_at: datetime
+    completed_at: datetime | None = None
+    has_audio: bool = False
+    figures: int = 0
+    depth: int = 1
+    persona: str | None = None
+    error: str | None = None
+
+
+class ResearchDetail(ResearchListItem):
+    tldr: str | None = None
+    report_markdown: str | None = None
+    progress: dict[str, Any] = {}
+    model: str = ""
+    sources: list[SourceRead] = []
+    figure_list: list[FigureRead] = []

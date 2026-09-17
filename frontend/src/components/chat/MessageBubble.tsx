@@ -1,6 +1,8 @@
 import { cn } from '../../lib/utils';
 import type { Message } from '../../types';
 import { User, Bot } from 'lucide-react';
+import { useThemeStore } from '../../stores/themeStore';
+import { getWrestler } from '../../lib/wrestlers';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -10,6 +12,7 @@ interface MessageBubbleProps {
 
 export function MessageBubble({ message }: MessageBubbleProps) {
   const isUser = message.role === 'user';
+  const wrestler = getWrestler(useThemeStore((s) => s.wrestler));
   
   return (
     <div
@@ -21,13 +24,17 @@ export function MessageBubble({ message }: MessageBubbleProps) {
       {/* Avatar - smaller on mobile */}
       <div
         className={cn(
-          'shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center',
+          'shrink-0 w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center overflow-hidden',
           isUser
-            ? 'bg-blue-600 text-white'
-            : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
+            ? 'bg-blue-600 text-white wt-accent-bg'
+            : wrestler ? 'wt-ring' : 'bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200'
         )}
       >
-        {isUser ? <User className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> : <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
+        {isUser
+          ? <User className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+          : wrestler
+            ? <img src={wrestler.icon} alt={wrestler.shortName} className="w-full h-full object-cover" />
+            : <Bot className="w-3.5 h-3.5 sm:w-4 sm:h-4" />}
       </div>
       
       {/* Message content */}
@@ -35,8 +42,8 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         className={cn(
           'flex-1 max-w-[85%] sm:max-w-[80%] rounded-lg px-3 sm:px-4 py-2',
           isUser
-            ? 'bg-blue-600 text-white ml-auto'
-            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100'
+            ? 'bg-blue-600 text-white ml-auto wt-bubble-user'
+            : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 wt-bubble-bot'
         )}
       >
         <div className="prose prose-sm dark:prose-invert max-w-none break-words">

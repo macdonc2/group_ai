@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* Tailwind v4 ignores the v3 `darkMode: 'class'` config; without this the
+   `dark:` variants follow the OS setting and the Light/Dark toggle only half
+   works (white text on a white page). Bind them to the .dark class we manage. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* Custom animations */
 @keyframes pulse-subtle {
   0%, 100% { opacity: 1; }
@@ -109,3 +114,137 @@ html, body {
   overflow-x: hidden;
   max-width: 100vw;
 }
+
+
+/* ---------------------------------------------------------------------------
+   Wrestler themes. `applyWrestler()` sets --wt-* on :root and data-wrestler;
+   every rule below is inert until a theme is chosen. The theme reaches the
+   whole page: backgrounds, sidebar, bubbles, trace, research cards, inputs,
+   headings, scrollbars and a faint headshot watermark.
+   --------------------------------------------------------------------------- */
+
+/* --- page ground ---------------------------------------------------------- */
+:root[data-wrestler] .wt-app {
+  background:
+    radial-gradient(1200px 600px at 100% 0%, color-mix(in srgb, var(--wt-accent2) 18%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 0% 100%, color-mix(in srgb, var(--wt-accent) 14%, transparent), transparent 60%),
+    repeating-linear-gradient(135deg, transparent 0 22px, color-mix(in srgb, var(--wt-glow) 5%, transparent) 22px 24px),
+    #fff;
+}
+:root[data-wrestler].dark .wt-app {
+  background:
+    radial-gradient(1200px 600px at 100% 0%, color-mix(in srgb, var(--wt-accent2) 22%, transparent), transparent 60%),
+    radial-gradient(900px 500px at 0% 100%, color-mix(in srgb, var(--wt-accent) 20%, transparent), transparent 60%),
+    repeating-linear-gradient(135deg, transparent 0 22px, color-mix(in srgb, var(--wt-glow) 4%, transparent) 22px 24px),
+    #0b0f1a;
+}
+/* faint headshot watermark, bottom-right of the main column */
+:root[data-wrestler] .wt-main { position: relative; }
+:root[data-wrestler] .wt-main::after {
+  content: "";
+  position: absolute; right: -40px; bottom: -40px; width: 360px; height: 360px;
+  background-image: var(--wt-icon); background-size: cover; background-position: center;
+  border-radius: 50%; opacity: 0.07; pointer-events: none; filter: grayscale(30%);
+  mask-image: radial-gradient(circle, #000 55%, transparent 72%);
+  -webkit-mask-image: radial-gradient(circle, #000 55%, transparent 72%);
+}
+:root[data-wrestler].dark .wt-main::after { opacity: 0.12; }
+
+/* --- headings + display font ---------------------------------------------- */
+:root[data-wrestler] .wt-display,
+:root[data-wrestler] .wt-header h1,
+:root[data-wrestler] article h1,
+:root[data-wrestler] article h2 {
+  font-family: var(--wt-font);
+  letter-spacing: 0.02em;
+}
+:root[data-wrestler] .wt-header h1 { font-size: 1.25rem; letter-spacing: 0.06em; text-transform: uppercase; }
+:root[data-wrestler] article h1 { font-size: 2rem; line-height: 1.15; }
+:root[data-wrestler] article h2 { border-bottom-color: color-mix(in srgb, var(--wt-accent) 45%, transparent); }
+
+/* --- header band ---------------------------------------------------------- */
+:root[data-wrestler] .wt-header {
+  background: linear-gradient(90deg, var(--wt-accent) 0%, var(--wt-accent2) 100%);
+  border-bottom: 3px solid var(--wt-glow);
+  color: #fff;
+  box-shadow: 0 4px 18px color-mix(in srgb, var(--wt-accent) 35%, transparent);
+}
+:root[data-wrestler] .wt-header h1 { color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,0.3); }
+:root[data-wrestler] .wt-header button { color: rgba(255,255,255,0.92); }
+:root[data-wrestler] .wt-header button:hover { background: rgba(255,255,255,0.14); }
+:root[data-wrestler] .wt-header .wt-tagline { color: var(--wt-glow); font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; font-size: 11px; }
+:root[data-wrestler] .wt-chip { background: rgba(0,0,0,0.22); color: #fff; }
+
+/* --- sidebar -------------------------------------------------------------- */
+:root[data-wrestler] .wt-sidebar {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wt-accent) 10%, #fff) 0%, color-mix(in srgb, var(--wt-accent2) 6%, #fff) 100%) !important;
+  border-right: 2px solid color-mix(in srgb, var(--wt-accent) 50%, transparent) !important;
+}
+:root[data-wrestler].dark .wt-sidebar {
+  background: linear-gradient(180deg, color-mix(in srgb, var(--wt-accent) 22%, #0f172a) 0%, color-mix(in srgb, var(--wt-accent2) 12%, #0f172a) 100%) !important;
+}
+:root[data-wrestler] .wt-sidebar h2 { font-family: var(--wt-font); letter-spacing: 0.04em; font-size: 15px; color: var(--wt-accent); white-space: nowrap; }
+:root[data-wrestler].dark .wt-sidebar h2 { color: var(--wt-glow); }
+
+/* --- accents shared by tabs, buttons, selected rows ------------------------ */
+:root[data-wrestler] .wt-ring { box-shadow: 0 0 0 2px var(--wt-glow), 0 0 0 4px var(--wt-accent); }
+:root[data-wrestler] .wt-glow-shadow { box-shadow: 0 0 0 3px var(--wt-glow), 0 0 0 6px var(--wt-accent), 0 10px 30px rgba(0,0,0,0.35); }
+:root[data-wrestler] .wt-accent-bg { background-color: var(--wt-accent) !important; }
+:root[data-wrestler] .wt-accent-bg:hover { filter: brightness(1.08); }
+:root[data-wrestler] .wt-accent-text { color: var(--wt-accent); }
+:root[data-wrestler].dark .wt-accent-text { color: var(--wt-glow); }
+:root[data-wrestler] .border-blue-600, :root[data-wrestler] .dark\:border-blue-400 { border-color: var(--wt-accent) !important; }
+:root[data-wrestler] .text-blue-600, :root[data-wrestler] .dark\:text-blue-400, :root[data-wrestler] .text-blue-500 { color: var(--wt-accent) !important; }
+:root[data-wrestler].dark .text-blue-600, :root[data-wrestler].dark .dark\:text-blue-400, :root[data-wrestler].dark .text-blue-500 { color: var(--wt-glow) !important; }
+:root[data-wrestler] .bg-blue-600 { background-color: var(--wt-accent) !important; }
+:root[data-wrestler] .border-blue-600 { border-color: var(--wt-accent) !important; }
+:root[data-wrestler] .hover\:bg-blue-700:hover { background-color: var(--wt-accent) !important; filter: brightness(1.1); }
+:root[data-wrestler] .bg-blue-500 { background-color: var(--wt-accent2) !important; }
+:root[data-wrestler] .bg-blue-50, :root[data-wrestler] .dark\:bg-blue-900\/30 { background-color: var(--wt-soft) !important; }
+:root[data-wrestler] .text-green-500 { color: var(--wt-accent2) !important; }
+:root[data-wrestler] .bg-green-500 { background-color: var(--wt-accent2) !important; }
+:root[data-wrestler] .bg-green-200, :root[data-wrestler] .dark\:bg-green-900 { background-color: color-mix(in srgb, var(--wt-accent2) 45%, transparent) !important; }
+:root[data-wrestler] a.underline { text-decoration-color: color-mix(in srgb, var(--wt-accent) 60%, transparent); }
+
+/* --- chat ----------------------------------------------------------------- */
+:root[data-wrestler] .wt-bubble-user {
+  background: linear-gradient(135deg, var(--wt-accent), var(--wt-accent2)) !important;
+  color: #fff !important;
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--wt-accent) 30%, transparent);
+}
+:root[data-wrestler] .wt-bubble-bot {
+  background: color-mix(in srgb, var(--wt-accent) 7%, #fff) !important;
+  border-left: 4px solid var(--wt-accent);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+:root[data-wrestler].dark .wt-bubble-bot {
+  background: color-mix(in srgb, var(--wt-accent) 18%, #0f172a) !important;
+  border-left-color: var(--wt-glow);
+}
+:root[data-wrestler] .wt-bubble-bot strong { color: var(--wt-accent); }
+:root[data-wrestler].dark .wt-bubble-bot strong { color: var(--wt-glow); }
+/* input well + suggestion strip */
+:root[data-wrestler] .bg-slate-100.dark\:bg-slate-800.rounded-lg.p-2 {
+  background: color-mix(in srgb, var(--wt-accent) 6%, #fff) !important;
+  border: 1px solid color-mix(in srgb, var(--wt-accent) 40%, transparent);
+}
+:root[data-wrestler].dark .bg-slate-100.dark\:bg-slate-800.rounded-lg.p-2 { background: color-mix(in srgb, var(--wt-accent) 14%, #0f172a) !important; }
+:root[data-wrestler] .wt-main textarea:focus-visible, :root[data-wrestler] .wt-main input:focus-visible { outline: 2px solid var(--wt-accent); outline-offset: 2px; }
+:root[data-wrestler] .bg-slate-50 { background-color: var(--wt-soft) !important; }
+:root[data-wrestler].dark .dark\:bg-slate-800\/50 { background-color: var(--wt-soft) !important; }
+
+/* --- workflow trace ------------------------------------------------------- */
+:root[data-wrestler] .wt-trace { border-left: 2px solid color-mix(in srgb, var(--wt-accent) 50%, transparent) !important; background: color-mix(in srgb, var(--wt-accent2) 4%, #fff) !important; }
+:root[data-wrestler].dark .wt-trace { background: color-mix(in srgb, var(--wt-accent2) 8%, #0f172a) !important; }
+:root[data-wrestler] .wt-trace h2 { font-family: var(--wt-font); letter-spacing: 0.04em; font-size: 15px; color: var(--wt-accent); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-wrestler].dark .wt-trace h2 { color: var(--wt-glow); }
+
+/* --- research ------------------------------------------------------------- */
+:root[data-wrestler] .wt-card { border-top: 4px solid var(--wt-accent) !important; box-shadow: 0 6px 24px color-mix(in srgb, var(--wt-accent) 12%, transparent); }
+:root[data-wrestler] .wt-main figure > div { border-color: color-mix(in srgb, var(--wt-accent) 50%, transparent) !important; }
+:root[data-wrestler] .wt-main .rounded-lg.border.bg-white { border-top: 3px solid var(--wt-accent2); }
+
+/* --- scrollbars ----------------------------------------------------------- */
+:root[data-wrestler] *::-webkit-scrollbar { width: 10px; height: 10px; }
+:root[data-wrestler] *::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--wt-accent) 55%, transparent); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
+:root[data-wrestler] *::-webkit-scrollbar-track { background: transparent; }

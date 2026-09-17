@@ -1,6 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import { cn } from '../../lib/utils';
+import { useThemeStore } from '../../stores/themeStore';
+import { getWrestler } from '../../lib/wrestlers';
 
 interface ChatInputProps {
   onSend: (message: string) => void;
@@ -11,6 +13,7 @@ interface ChatInputProps {
 export function ChatInput({ onSend, disabled, placeholder = 'Type a message...' }: ChatInputProps) {
   const [input, setInput] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wrestler = getWrestler(useThemeStore((s) => s.wrestler));
   
   // Auto-resize textarea
   useEffect(() => {
@@ -45,7 +48,7 @@ export function ChatInput({ onSend, disabled, placeholder = 'Type a message...' 
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={placeholder}
+            placeholder={wrestler ? wrestler.prompt : placeholder}
             disabled={disabled}
             rows={1}
             className={cn(
@@ -61,7 +64,7 @@ export function ChatInput({ onSend, disabled, placeholder = 'Type a message...' 
             disabled={disabled || !input.trim()}
             className={cn(
               'shrink-0 p-2.5 sm:p-2 rounded-md transition-colors touch-manipulation',
-              'bg-blue-600 text-white',
+              'bg-blue-600 text-white wt-accent-bg',
               'hover:bg-blue-700 active:bg-blue-800',
               'disabled:opacity-50 disabled:cursor-not-allowed'
             )}

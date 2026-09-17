@@ -33,6 +33,9 @@ class AgentDependencies:
     fallback_model: str = "openai:gpt-5-mini-2025-08-07"
     temperature: float = 0.7
     max_tokens: int = 4096
+
+    # Optional wrestler persona key (see llm/personas.py); changes voice only
+    persona: str | None = None
     
     # Event streaming callback (optional)
     event_callback: EventCallback | None = None

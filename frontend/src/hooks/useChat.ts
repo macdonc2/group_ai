@@ -2,6 +2,7 @@ import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
 import { createSSEConnection } from '../lib/sse';
 import { api } from '../lib/api';
+import { useThemeStore } from '../stores/themeStore';
 import type { Message, ConversationDetail } from '../types';
 
 export function useChat() {
@@ -81,15 +82,22 @@ export function useChat() {
     };
     addMessage(assistantMessage);
     
-    // Create SSE connection
+    // Create SSE connection (in the active wrestler's voice, if any)
+    const persona = useThemeStore.getState().wrestler;
     abortRef.current = createSSEConnection(content, currentConversationId, {
       onEvent: (event) => {
         handleStreamEvent(event);
         
-        // Update conversation ID from response (for new conversations)
-        if (event.event_type === 'response' && event.data?.conversation_id) {
+        // Update conversation ID as early as possible (conversation_created
+        // fires right after the backend creates the conversation, before the
+        // workflow runs; response fires at the end as a fallback).
+        if (
+          (event.event_type === 'conversation_created' || event.event_type === 'response')
+          && event.data?.conversation_id
+        ) {
           const newConvId = event.data.conversation_id as string;
-          if (newConvId !== currentConversationId) {
+          const currentId = useChatStore.getState().conversationId;
+          if (newConvId !== currentId) {
             setConversationId(newConvId);
           }
         }
@@ -106,7 +114,7 @@ export function useChat() {
         // Refresh conversations list
         api.listConversations().then(setConversations).catch(console.error);
       },
-    });
+    }, persona);
   }, [
     addMessage,
     clearTraceNodes,
