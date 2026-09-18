@@ -100,6 +100,56 @@ The left sidebar shows your conversation list. Each conversation gets an auto-ge
 
 Click the theme toggle (sun/moon icon) in the top bar to switch between light and dark mode.
 
+## Wrestler Themes
+
+The **Theme** picker in the header dresses the app as one of five wrestlers: "Macho Man"
+Randy Savage, Hulk Hogan, Bret "The Hitman" Hart, "Mean" Gene Okerlund or The Ultimate
+Warrior. It changes the colors, the headshot, the welcome copy, and the voice the agent
+answers in.
+
+Only the voice changes. Facts, numbers, tool results and instructions stay exactly the
+same whichever wrestler is on, and you can turn themes off entirely.
+
+The choice belongs to the conversation, not to you or your browser. Open an old
+conversation and the app switches back to the wrestler it was spoken in. Pick a
+different one partway through and it is saved to that conversation straight away.
+Themed conversations show the wrestler's headshot in the sidebar so you can tell them
+apart at a glance.
+
+---
+
+## Deep Research
+
+The **Research** tab takes a plain question and produces a written report you can read
+or listen to. It is built for questions worth waiting on rather than quick answers.
+
+Three lines of research run at once: academic papers, practical sources like the web and
+code repositories, and reported numbers pulled out into tables. Those are reconciled
+into one report with citations, charts drawn from the extracted numbers, and figures
+taken from the most-cited papers.
+
+- **Depth.** *Quick* does one pass. *Standard* and *Deep* go back for one or two more
+  rounds, working out what is missing and searching again.
+- **Listen.** Once the report is written, a narration is generated and a **Listen**
+  button appears.
+- **It keeps going.** A run survives reloading the page or switching tabs. Come back
+  later and it re-attaches and replays the progress.
+
+---
+
+## Install It on Your Phone
+
+The app installs to your home screen and opens without browser chrome.
+
+On iPhone, open the app in Safari, tap the **Share** button, and choose **Add to Home
+Screen**. On Android, open the browser menu and choose **Install app** or **Add to Home
+screen**.
+
+Launched from the home screen it runs standalone, in portrait, with its own icon. On a
+wide screen the reading columns grow with the window instead of staying narrow.
+
+---
+
 ---
 
 ## Getting Help

@@ -72,6 +72,14 @@ Each conversation gets an auto-generated title based on what you talked about (e
 
 Click any conversation in the sidebar to switch to it. Your message history is preserved.
 
+### The Wrestler a Conversation Was Spoken In
+
+If you are using a wrestler theme, the conversation remembers it. Reopening a
+conversation switches the app back to that wrestler, and choosing a different one
+partway through saves it to that conversation. Conversations with a theme show the
+wrestler's headshot in the sidebar. Clearing the theme sets the conversation back to
+the plain voice.
+
 ### Deleting Conversations
 
 Hover over a conversation in the sidebar and click the delete icon. This removes the conversation and its messages, but knowledge the agent learned from it stays in the knowledge graph.
