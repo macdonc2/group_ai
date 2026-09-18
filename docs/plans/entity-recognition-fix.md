@@ -1,5 +1,9 @@
 # Entity Recognition Fix Plan
 
+> **Status**: Implemented (2026). Kept as design history. Pets are distinguished from
+> people in the social graph, and `get_pet_info` / `list_pets` are live tools. The
+> problem statement below describes the original bug, not current behaviour.
+
 ## Problem Statement
 
 When asking "What should I do for Zane's birthday?", the system treats Zane as a human (suggesting pizza parties, video games, guest lists) instead of recognizing him as the user's dog.

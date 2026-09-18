@@ -164,6 +164,7 @@ Step 3/5: Work through the day-by-day process
 | `get_current_datetime` | "time", "date", "today" | Get current date/time (in user's timezone) |
 | `get_upcoming_events` | "plans", "schedule", "events" | View extracted events from group chats |
 | `random_fact` | "interesting", "fun fact" | Get a random fact |
+| `add_to_calendar` | "put it on my calendar", "add those as tentative" | Create one or many Google Calendar events, optionally tentative |
 
 #### Knowledge & Memory Tools
 
@@ -232,7 +233,7 @@ Optional Neo4j integration for persistent memory and context:
 
 ### Wrestler Themes
 
-The header **Theme** picker dresses the whole app as Macho Man Randy Savage, Hulk Hogan, Bret "The Hitman" Hart, "Mean" Gene Okerlund or The Ultimate Warrior: palette, headshot avatar, welcome copy, and the agent answers **in that wrestler's voice** (persona rules are appended to the response agents' system prompts; substance is unchanged). The choice is remembered per browser and sent as `persona` on chat requests. Headshots are CC-licensed crops from Wikimedia Commons (`frontend/public/themes/ATTRIBUTION.md`).
+The header **Theme** picker dresses the whole app as Macho Man Randy Savage, Hulk Hogan, Bret "The Hitman" Hart, "Mean" Gene Okerlund or The Ultimate Warrior: palette, headshot avatar, welcome copy, and the agent answers **in that wrestler's voice** (persona rules are appended to the response agents' system prompts; substance is unchanged). The choice belongs to the conversation: `Conversation.persona` lives in `metadata.custom_data`, opening a conversation switches the app back to the wrestler it was spoken in, picking one mid-conversation saves it immediately, and themed conversations show the headshot in the sidebar. `PATCH /conversations/{id}` accepts `persona` (`"none"` clears it, unknown keys 422), and list and detail responses expose it. Headshots are CC-licensed crops from Wikimedia Commons (`frontend/public/themes/ATTRIBUTION.md`).
 
 ### Deep Research
 
@@ -248,6 +249,19 @@ The **Research** tab runs a durable, multi-lane research job from a plain questi
 Endpoints: `POST /api/v1/research`, `GET /api/v1/research`, `GET /api/v1/research/{id}`, `GET /api/v1/research/{id}/stream` (SSE, `?token=`), `GET /api/v1/research/{id}/figures/{n}`, `GET /api/v1/research/{id}/audio`, `POST /api/v1/research/{id}/narrate`, `DELETE /api/v1/research/{id}`.
 
 Settings: `DEFAULT_MODEL` (lanes, synthesis, writing), `FALLBACK_MODEL` (query planning), `TTS_MODEL`, `TTS_VOICE`, and optional `SEMANTIC_SCHOLAR_API_KEY` / `GITHUB_TOKEN` for higher rate limits. All agents use the OpenAI Responses API, which the GPT-5.6 and GPT-6 models require for tool use.
+
+### Calendar
+
+Google Calendar is connected per user from the user menu, and drives two different paths.
+
+- **Sync.** Events the agent extracts from group chats are pushed to the user's calendar. Each member syncs independently, with a master toggle, a calendar selector, and a confirmed-only option. Events carry a sync status, and a failed one can be retried by hand.
+- **The `add_to_calendar` tool.** The agent creates events directly on request, one or many in a single message. `status="tentative"` creates them unconfirmed. A title matching the Houston events database picks up that event's real date, venue and link; otherwise `when` is parsed in the user's timezone. In a multi-event list an undated item becomes an all-day placeholder on the coming Saturday, while a single undated event gets a question instead of a guess.
+
+Endpoints: `GET /api/v1/calendar/status`, `POST /api/v1/calendar/connect`, `POST /api/v1/calendar/disconnect`, `PATCH /api/v1/calendar/settings`, `GET /api/v1/calendar/list`.
+
+### Installable App
+
+The frontend ships a web app manifest (`frontend/public/manifest.webmanifest`) with maskable icons, so it installs to a phone home screen and launches standalone in portrait, without browser chrome. On iOS that is Safari's **Share > Add to Home Screen**; the layout accounts for the standalone viewport and safe areas. On wide screens the reading columns scale with the viewport rather than staying fixed.
 
 ## Memory & Context Architecture
 
@@ -947,6 +961,15 @@ The system prioritizes:
 3. **Semantic search** (async/background when possible)
 
 For group messages, embedding storage runs in the background (fire-and-forget) to avoid blocking the real-time WebSocket connection.
+
+## Documentation
+
+Two sets of docs ship with this repository:
+
+- **This README** is the engineering account: architecture, the agent roster, the FSM, memory, API reference and setup.
+- **`src/agent_system/docs/`** is written for people using the app, and it is also loaded into the agent itself. `search_internal_docs` serves it, and the response agents route questions like "what tools do you have" or "how do I connect my calendar" to that tool, so the agent answers from these files. Anything shipped but missing there is a feature the agent will not know it has.
+
+---
 
 ## Quick Start
 

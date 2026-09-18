@@ -1,9 +1,11 @@
 # Knowledge Graph Enhancement Plan
 
-> **Status**: Planning  
-> **Priority**: Medium-High  
-> **Created**: January 2026  
-> **Last Updated**: January 2026
+> **Status**: Implemented (2026)  
+> **Created**: January 2026
+>
+> Kept as design history. The social-intelligence work described here shipped; see
+> **Enhanced Knowledge Graph: Social Intelligence & Reasoning** in the README for the
+> delivered behaviour.
 
 ## Overview
 

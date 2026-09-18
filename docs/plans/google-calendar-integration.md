@@ -1,8 +1,11 @@
 # Google Calendar Integration Plan
 
-**Status:** Planned  
+**Status:** Implemented (September 2026)  
 **Created:** 2026-01-29  
-**Priority:** Future Enhancement
+
+> Kept as design history. Calendar sync and the `add_to_calendar` tool both shipped;
+> see the **Calendar** section of the README and `src/agent_system/docs/events-and-calendar.md`
+> for how the delivered version actually behaves, which differs from this plan in places.
 
 ## Overview
 
