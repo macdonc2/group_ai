@@ -68,7 +68,7 @@ You can connect your Google Calendar so that events extracted from group chats a
 
 ### Setting Up Calendar Sync
 
-1. Open the **user menu** (your avatar, top right)
+1. Open the **user menu** (your email address in the top bar)
 2. Click **Google Calendar**
 3. Click **Connect Calendar**
 4. A popup opens asking you to sign in with your Google account

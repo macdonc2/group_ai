@@ -26,7 +26,7 @@ The very first person to use the app creates an admin account. You'll see a "Boo
 
 ### If You've Been Invited
 
-An admin has already created an account for you. Log in with the email and password they gave you. You can change your password in Settings afterward.
+An admin has already created an account for you. Log in with the email and password they gave you. You can change your password from the user menu afterward.
 
 ---
 
@@ -36,13 +36,13 @@ Once you're logged in, there are a few things to set up:
 
 ### 1. Set Your Timezone
 
-Go to **Settings** (gear icon) and pick your timezone. This affects how event times are displayed and how the agent understands time-related questions like "What do I have today?" The app can auto-detect your browser's timezone, or you can choose from the list.
+Open the **user menu** (your email address in the top bar), click **Timezone**, and pick yours. This affects how event times are displayed and how the agent understands time-related questions like "What do I have today?" The app can auto-detect your browser's timezone, or you can choose from the list.
 
 ### 2. Set Up Your API Key (Optional)
 
 The app uses OpenAI's language models. If the admin has configured a system-wide API key, you don't need to do anything -- it just works. If you want to use your own key:
 
-1. Go to **Settings > API Key**
+1. Open the user menu and click **API Key Settings**
 2. Paste your OpenAI API key (starts with `sk-`)
 3. Click Save
 
@@ -52,7 +52,7 @@ Your key is encrypted before being stored. If a system-wide key is available, it
 
 If you want events from your group chats to sync to your Google Calendar:
 
-1. Go to **Settings > Calendar**
+1. Open the user menu and click **Google Calendar**
 2. Click **Connect Calendar**
 3. Sign in with your Google account in the popup
 4. Allow the app access to your calendar

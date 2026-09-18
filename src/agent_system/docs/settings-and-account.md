@@ -6,7 +6,9 @@ How to manage your account, API keys, timezone, calendar, and other settings.
 
 ## Accessing Settings
 
-Click the **gear icon** in the top bar to open the Settings panel. From there you can access all configuration options.
+Click your **email address** in the top bar to open the user menu. Each setting opens
+from there as its own panel: Change Password, API Key Settings, Timezone and Google
+Calendar, plus Manage Users if you are an admin. There is no combined settings page.
 
 ---
 
@@ -23,7 +25,7 @@ If both exist, the system-wide key is used by default.
 
 ### Setting Your API Key
 
-1. Go to **Settings > API Key**
+1. Open the user menu and click **API Key Settings**
 2. Paste your OpenAI API key (it starts with `sk-`)
 3. Click **Save**
 
@@ -53,7 +55,7 @@ Your timezone affects:
 
 ### Setting Your Timezone
 
-1. Go to **Settings > Timezone**
+1. Open the user menu and click **Timezone**
 2. Choose from the list of common timezones (organized by region: US, Europe, Asia, Oceania)
 3. Or click **Auto-detect** to use your browser's timezone
 
@@ -69,7 +71,7 @@ If you haven't set a timezone, the app defaults to UTC.
 
 ### Connecting Your Calendar
 
-1. Go to **Settings > Calendar**
+1. Open the user menu and click **Google Calendar**
 2. Click **Connect Calendar**
 3. Sign in with your Google account in the popup window
 4. Grant the app permission to access your calendar
@@ -93,7 +95,7 @@ Click **Disconnect** to revoke the app's access to your Google account. Events a
 
 ### Changing Your Password
 
-1. Go to **Settings > Change Password**
+1. Open the user menu and click **Change Password**
 2. Enter your current password
 3. Enter your new password
 4. Confirm the new password
