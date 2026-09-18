@@ -81,7 +81,7 @@ Every conversation flows through a state machine for consistent, traceable proce
 - **AnalyzeIntent** → Extracts intent, entities, and tool needs
 - **UpdateKnowledge** → Records interaction in knowledge graph
 - **CheckPlan** → Routes to planning, tool execution, or response (enables ReAct mode for tasks)
-- **CreatePlan** → Creates reasoning steps (uses ReAct Planning Agent for task intents)
+- **CreatePlan** → Creates reasoning steps (uses ReAct Planning Agent when `requires_planning` is set or the intent is a task)
 - **ExecutePlan** → Iterates through steps with visible reasoning trace (ReAct mode)
 - **SelectTool / ExecuteTool** → Tool invocation and result capture
 - **GenerateResponse** → Final response synthesis (uses Synthesis Agent in ReAct mode)
@@ -95,7 +95,14 @@ For complex questions and tasks, the system uses **ReAct (Reasoning + Acting)** 
 
 **How It Works:**
 
-When you ask a task-type question (e.g., "How do I make sourdough starter?"), the system:
+**What triggers it:** `AnalyzeIntent` sets `requires_planning` for open-ended how-to,
+troubleshooting, design, and decision-making questions — anything whose answer has several
+phases that build on each other. `CheckPlan` then enters ReAct mode (task intents always do).
+Simple lookups, clarifications, and chit-chat skip it, and so does anything a tool can answer:
+reasoning mode bypasses the tool `AnalyzeIntent` picked, so the two are mutually exclusive.
+Run `uv run scripts/test_planning_trigger.py` to check the trigger after changing the prompt.
+
+When you ask a question that qualifies (e.g., "How do I make sourdough starter?"), the system:
 
 1. **Creates a Reasoning Plan** (3-6 steps)
    - Breaks down the question into logical reasoning phases
