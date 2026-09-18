@@ -318,8 +318,14 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 await ctx.deps.emit_event("node_complete", "CheckPlan", "Found active plan", {"plan_id": str(plan.id)})
                 return ExecutePlan()
 
+        # Respect the user's auto_plan preference: when off, never start ReAct mode
+        auto_plan = getattr(ctx.state.user.preferences, "auto_plan", True)
+
         # Determine if a new plan is needed based on intent analysis
-        if ctx.state.plan_needed or (ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK):
+        if auto_plan and (
+            ctx.state.plan_needed
+            or (ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK)
+        ):
             # Enable ReAct mode for task intents - will use step-by-step reasoning
             ctx.state.react_mode = True
             ctx.state.step_results = []
@@ -328,9 +334,10 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             return CreatePlan()
 
         # No plan needed, go directly to response
+        reason = "Auto-plan is off" if not auto_plan else "Not a task intent"
         await ctx.deps.emit_event("node_complete", "CheckPlan", "No plan needed")
         # Skip CreatePlan
-        await ctx.deps.emit_event("node_skipped", "CreatePlan", "Not a task intent")
+        await ctx.deps.emit_event("node_skipped", "CreatePlan", reason)
         return ExecutePlan()
 
 
