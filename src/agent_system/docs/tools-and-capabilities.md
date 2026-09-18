@@ -204,6 +204,20 @@ Searches the curated Houston area events database for concerts, cycling, sports,
 - "Cycling events near me"
 - "What events are in Montrose?"
 
+### Add to Calendar
+
+Puts one or more events straight onto your Google Calendar. This is different from
+sync, which pushes events the agent extracted from group chats -- here you are asking
+for something to be added directly.
+
+Requires Google Calendar to be connected (user menu > Google Calendar).
+
+**When it's used:**
+- "Put dinner at Underbelly on Friday at 7 on my calendar"
+- "Add the ones you suggested to my calendar as tentative"
+- "Add all of those to my calendar"
+- "Put the Saturday ride on my calendar"
+
 ---
 
 ## Profile and Settings Tools

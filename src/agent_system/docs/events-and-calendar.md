@@ -68,8 +68,8 @@ You can connect your Google Calendar so that events extracted from group chats a
 
 ### Setting Up Calendar Sync
 
-1. Go to **Settings** (gear icon)
-2. Click **Calendar**
+1. Open the **user menu** (your avatar, top right)
+2. Click **Google Calendar**
 3. Click **Connect Calendar**
 4. A popup opens asking you to sign in with your Google account
 5. Allow the app to access your calendar
@@ -109,10 +109,31 @@ You can also manually sync individual events by clicking the sync button next to
 
 To disconnect your calendar:
 
-1. Go to **Settings > Calendar**
+1. Open the **user menu** and click **Google Calendar**
 2. Click **Disconnect**
 
 This revokes the app's access to your Google Calendar. Events already synced remain on your calendar.
+
+## Adding Events Yourself
+
+Sync (above) handles events the agent pulled out of group chats. You can also just ask
+the agent to put something on your calendar.
+
+| What You Say | What Happens |
+|---|---|
+| "Put dinner at Underbelly Friday at 7 on my calendar" | Creates that one event, read in your timezone |
+| "Add the ones you suggested, as tentative" | Creates all of them, marked tentative |
+| "Add the Saturday ride to my calendar" | Matches the Houston event and uses its real date, venue and link |
+
+Things worth knowing:
+
+- **Several at once.** You can add a whole list from the agent's last suggestions in a single message.
+- **Tentative.** Ask for them as tentative and they are created unconfirmed, so they show that way in Google Calendar.
+- **Houston events.** When the title matches the Houston events database, the real date, venue and link come with it.
+- **Missing dates.** In a list, an event with no date becomes an all-day placeholder on the coming Saturday. Ask for a single event with no date and the agent asks you for one rather than guessing.
+- **Not connected yet.** If your Google Calendar isn't connected, the agent says so and points you at the user menu.
+
+---
 
 ---
 
