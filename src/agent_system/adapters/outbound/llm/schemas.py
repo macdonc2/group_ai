@@ -20,7 +20,17 @@ class IntentAnalysis(BaseModel):
         list[str], Field(default_factory=list, description="Extracted NAMED entities (people, pets, places, specific things) from the input. Extract individual names, not phrases. Example: 'What should I do for Zane's birthday?' -> entities: ['Zane'], not ['Zane's birthday']")
     ]
     requires_planning: Annotated[
-        bool, Field(description="Whether this intent requires creating a plan")
+        bool,
+        Field(
+            description=(
+                "True ONLY for open-ended how-to, process, troubleshooting, design, or "
+                "decision-making questions whose answer has several phases that build on "
+                "each other (e.g. 'How do I make sourdough starter?'). This enables ReAct "
+                "reasoning mode. False for simple facts, clarifications, follow-ups, "
+                "feedback, and chit-chat. MUST be False whenever suggested_tool is set - "
+                "reasoning mode bypasses the chosen tool."
+            )
+        ),
     ]
     is_about_assistant: Annotated[
         bool, Field(description="True if user is asking about the assistant itself - its capabilities, tools, features, or what it can do")

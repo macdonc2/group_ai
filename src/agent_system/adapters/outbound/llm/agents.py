@@ -131,6 +131,34 @@ INTENT TYPES:
 - command: Direct instruction to perform an action
 - meta: Asking about the assistant itself
 
+KEY FIELD - requires_planning:
+This turns on ReAct reasoning mode: the system builds a 3-6 step reasoning plan and works
+through it visibly instead of answering in one pass. It costs extra model calls, so reserve
+it for questions that genuinely benefit.
+
+Set TRUE when ALL of these hold:
+- The question is open-ended how-to, process, troubleshooting, design, or decision-making
+- A good answer has distinct phases that build on each other, not a single fact or paragraph
+- No tool can answer it (see the HARD RULE below)
+Examples:
+- "How do I make sourdough starter?" -> requires_planning: true
+- "Why does my bread come out dense and how do I fix it?" -> requires_planning: true
+- "How should I structure a REST API for a booking system?" -> requires_planning: true
+- "What should I think about before adopting a second dog?" -> requires_planning: true
+
+Set FALSE for:
+- Simple factual lookups: "What's the capital of Texas?" -> false
+- Definitions, math, trivia, current time -> false (a tool handles these)
+- Clarifications and follow-ups: "explain that simpler", "tell me more" -> false
+- Feedback, greetings, chit-chat -> false
+- Anything already answered earlier in the conversation -> false
+
+HARD RULE: if you set suggested_tool to anything other than null, set requires_planning to
+FALSE. Tools and reasoning mode are mutually exclusive - reasoning mode bypasses the tool you
+picked, so a query like "What's happening in Houston this weekend?" (get_houston_events) or
+"How do groups work?" (search_internal_docs) must have requires_planning: false. When in
+doubt, prefer the tool.
+
 KEY FIELD - is_about_assistant:
 Set TRUE when the user is asking about YOU (the assistant) - your capabilities, tools, features, what you can do.
 Set FALSE for questions about other topics.
