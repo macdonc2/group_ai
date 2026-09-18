@@ -207,7 +207,7 @@ Searches the curated Houston area events database for concerts, cycling, sports,
 ### Add to Calendar
 
 Puts one or more events straight onto your Google Calendar. This is different from
-sync, which pushes events the agent extracted from group chats -- here you are asking
+sync, which pushes events the agent extracted from group chats. Here you are asking
 for something to be added directly.
 
 Requires Google Calendar to be connected (user menu > Google Calendar).

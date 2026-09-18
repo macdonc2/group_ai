@@ -135,8 +135,6 @@ Things worth knowing:
 
 ---
 
----
-
 ## Event Extraction Details
 
 The agent uses AI to detect events in group messages. Here's what it looks for:
