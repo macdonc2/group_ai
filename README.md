@@ -36,7 +36,9 @@ src/agent_system/
 │       ├── llm/               # PydanticAI agents + tools
 │       ├── graph/             # Neo4j knowledge graph adapter
 │       ├── embedding/         # OpenAI embeddings adapter
+│       ├── telemetry/         # Per-turn traces: spans, predicates, retrievals, LLM usage/cost
 │       └── fsm/               # pydantic-graph workflow engine
+├── evals/                     # Eval harness: datasets, seeding, scorers, rubric judges, CLI
 └── composition_root/          # Dependency injection, config
 
 frontend/
@@ -46,6 +48,7 @@ frontend/
 │   │   ├── chat/              # Chat interface
 │   │   ├── groups/            # Group collaboration
 │   │   ├── knowledge/         # Knowledge graph visualization
+│   │   ├── evals/             # Evals tab: runs, scorecards, predicate-tree viewer
 │   │   ├── settings/          # User settings, API keys
 │   │   └── trace/             # FSM workflow trace
 │   ├── stores/                # Zustand state management
@@ -265,6 +268,38 @@ Google Calendar is connected per user from the user menu, and drives two differe
 - **The `add_to_calendar` tool.** The agent creates events directly on request, one or many in a single message. `status="tentative"` creates them unconfirmed. A title matching the Houston events database picks up that event's real date, venue and link; otherwise `when` is parsed in the user's timezone. In a multi-event list an undated item becomes an all-day placeholder on the coming Saturday, while a single undated event gets a question instead of a guess.
 
 Endpoints: `GET /api/v1/calendar/status`, `POST /api/v1/calendar/connect`, `POST /api/v1/calendar/disconnect`, `PATCH /api/v1/calendar/settings`, `GET /api/v1/calendar/list`.
+
+### Evals & Tracing
+
+Every agent turn is traced, and an eval harness measures the agent's behaviour against known answers. Results live in the **Evals** tab, which is shown to superusers only. The full reference is [docs/evals.md](docs/evals.md).
+
+- **Turn tracing.** Each turn records:
+  - every FSM node visit, with its latency;
+  - the named predicate behind each branch, with its inputs (e.g. `auto_plan ∧ (requires_planning ∨ intent = task)`);
+  - memory retrieval hits with scores, and whether they reached the prompt;
+  - tool inputs and outputs;
+  - tokens and cost per LLM call, attributed to the node that made it.
+
+  LLM usage is captured through pydantic-ai's OpenTelemetry instrumentation, so no call site changes. Chat turns are stored in `turn_traces`, and Deep Research jobs carry a per-stage usage rollup.
+- **Seeded evals.** Six suites with 76 cases in total: routing, tool selection, memory retrieval, entity resolution, end-to-end tasks, and Deep Research. Each case:
+  - seeds a throwaway user with known people, pets, places, preferences and backdated messages;
+  - plays its turns through the real FSM;
+  - removes the user afterwards.
+- **Scoring.**
+  - Deterministic checks: intent, route, tool and arguments, recall@k and MRR of facts that must be recalled, entity resolution (missing, duplicate or spurious), required and forbidden phrases, latency.
+  - Plus 1–5 **rubric judges**: `memory_retrieval`, `agent_flow`, `task_completion`, `research_sources` and `synthesis_groundedness`.
+  - The judge can be OpenAI, **Jev** (any OpenAI-compatible endpoint), or both, in which case the run reports inter-judge agreement and weighted κ.
+  - Each run ends with a written failure analysis grouped by failure type.
+- **Real conversations.** Tick any of your conversations and press **Evaluate** to judge them on flow, task completion and grounded memory use. Conversations from before tracing are judged on their transcript.
+- **Predicate tree.** Each turn is drawn over the FSM:
+  - node visits in order, with timings and tokens;
+  - edges labelled with the predicate that fired;
+  - untaken branches as grey leaves, and nodes the case expected but never reached in red.
+
+  Click a node to see its prompts, retrievals and tool I/O.
+- **Latency and cost.** p50/p95 per node and per turn. Costs come from `genai-prices` or `MODEL_PRICING_JSON`; calls to unpriced models are flagged and totals labelled lower bounds.
+
+Run with `make eval`, `make eval-suite SUITE=memory_retrieval JUDGE=both`, `python -m agent_system.evals run …`, or from the tab. Endpoints are under `/api/v1/evals`.
 
 ### Installable App
 
@@ -974,6 +1009,7 @@ For group messages, embedding storage runs in the background (fire-and-forget) t
 Two sets of docs ship with this repository:
 
 - **This README** is the engineering account: architecture, the agent roster, the FSM, memory, API reference and setup.
+- **[docs/evals.md](docs/evals.md)** is the reference for the eval harness and turn tracing: suites, scorers, rubrics, judges, the Evals tab and the predicate tree, configuration and API.
 - **`src/agent_system/docs/`** is written for people using the app, and it is also loaded into the agent itself. `search_internal_docs` serves it, and the response agents route questions like "what tools do you have" or "how do I connect my calendar" to that tool, so the agent answers from these files. Anything shipped but missing there is a feature the agent will not know it has.
 
 ---
@@ -1034,6 +1070,18 @@ NEO4J_PASSWORD=password
 
 # Optional: Encryption key for user API keys
 ENCRYPTION_KEY=your-fernet-key
+
+# Optional: Evals (see docs/evals.md)
+EVAL_OPENAI_API_KEY=sk-...            # defaults to OPENAI_API_KEY
+EVAL_JUDGE_MODEL=openai:gpt-6-astra
+JEV_BASE_URL=https://jev.example/v1   # OpenAI-compatible Jev judge; unset = disabled
+JEV_MODEL=jev
+MODEL_PRICING_JSON={"gpt-6-astra": {"input": 0, "output": 0}}   # USD per 1M tokens
+
+# Optional: LLM request limits
+LLM_REQUEST_TIMEOUT_S=120
+RESEARCH_REQUEST_TIMEOUT_S=600
+LLM_MAX_RETRIES=1
 ```
 
 ### Running the Application
@@ -1223,6 +1271,25 @@ curl http://localhost:8000/api/v1/tools/define/serendipity \
   -H "Authorization: Bearer <token>"
 ```
 
+### Evals (superuser)
+
+```bash
+# Start a suite run
+curl -X POST http://localhost:8000/api/v1/evals/runs \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"suite": "memory_retrieval", "judge": "both", "repeats": 1}'
+
+# Judge some of your real conversations
+curl -X POST http://localhost:8000/api/v1/evals/runs \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"conversation_ids": ["<id>", "<id>"], "judge": "openai"}'
+
+# Run summary, case results, and the full trace of one case
+curl http://localhost:8000/api/v1/evals/runs/<run_id> -H "Authorization: Bearer <token>"
+curl http://localhost:8000/api/v1/evals/runs/<run_id>/cases -H "Authorization: Bearer <token>"
+curl http://localhost:8000/api/v1/evals/cases/<case_result_id> -H "Authorization: Bearer <token>"
+```
+
 ## Neo4j Setup (Optional)
 
 For knowledge graph features, run Neo4j:
@@ -1267,10 +1334,13 @@ pytest --cov=agent_system --cov-report=term-missing
 
 ### Evals
 
-Behavioural evals run seeded synthetic users through the real FSM and score routing, tool selection, memory retrieval, entity resolution, task completion and Deep Research quality with deterministic checks plus 1–5 rubric judges (OpenAI, the OpenAI-compatible Jev endpoint, or both with agreement stats), including latency and cost. Results, failure analyses and a predicate-tree view of each turn live in the superuser **Evals** tab. See [docs/evals.md](docs/evals.md).
+Unit tests check code; evals check the agent's behaviour against real models. See [Evals & Tracing](#evals--tracing) and [docs/evals.md](docs/evals.md).
 
 ```bash
-make eval-suite SUITE=memory_retrieval JUDGE=both
+make eval-suite SUITE=memory_retrieval JUDGE=both            # live models, seeded users
+python -m agent_system.evals run --suite routing --fail-under 0.8   # CI-style gate
+pytest tests/unit/evals                                       # scorers, rubrics, judges, trace math
+pytest tests/integration/test_eval_harness.py                 # whole harness on Neo4j + TestModel (Docker)
 ```
 
 ## Development
@@ -1286,6 +1356,9 @@ make test       # Run tests
 make lint       # Run linters
 make clean      # Clean build artifacts
 make neo4j      # Start Neo4j container
+make eval-list  # List eval suites and rubrics
+make eval       # Run all agent eval suites (JUDGE=openai|jev|both|none, REPEATS=n)
+make eval-suite SUITE=routing   # One suite, with the failure analysis printed
 ```
 
 ### Code Style
@@ -1314,6 +1387,12 @@ make neo4j      # Start Neo4j container
 - Interactive force-directed visualization
 - Node filtering by type
 - Relationship exploration
+
+### Evals (superusers)
+- Start suite runs and see run history, scorecards, judge scores, node latency, cost and failure analyses
+- Compare a run against an earlier one to see regressions and fixes
+- Open any case or real conversation as a predicate tree over the FSM
+- Tick real conversations and judge them in one run
 
 ### Settings
 - API key management (per-user)

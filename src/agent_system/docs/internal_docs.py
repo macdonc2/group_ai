@@ -14,6 +14,7 @@ DOC_FILES = [
     "tools-and-capabilities.md",
     "settings-and-account.md",
     "knowledge-graph-reference.md",
+    "evals-and-tracing.md",
 ]
 
 
