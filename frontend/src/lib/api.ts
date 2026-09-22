@@ -428,7 +428,7 @@ export const api = {
     run: (id: string) => fetchApi<EvalRunDetail>(`/evals/runs/${id}`),
     cases: (runId: string) => fetchApi<EvalCaseRow[]>(`/evals/runs/${runId}/cases`),
     caseResult: (id: string) => fetchApi<EvalCaseDetail>(`/evals/cases/${id}`),
-    start: (body: { suite: string; judge: string; repeats?: number; concurrency?: number; case_ids?: string[] }) =>
+    start: (body: { suite?: string; conversation_ids?: string[]; rubrics?: string[]; judge: string; repeats?: number; concurrency?: number; case_ids?: string[] }) =>
       fetchApi<{ id: string; status: string }>('/evals/runs', { method: 'POST', body: JSON.stringify(body) }),
     compare: (a: string, b: string) => fetchApi<RunComparison>(`/evals/compare?a=${a}&b=${b}`),
     graph: () => fetchApi<FsmTopology>('/evals/graph'),

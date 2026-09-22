@@ -311,28 +311,44 @@ def set_current_node(node: str | None) -> contextvars.Token:
 # ---------------------------------------------------------------------------
 
 
-class _TraceSpanProcessor:
+from opentelemetry.sdk.trace import SpanProcessor  # noqa: E402
+
+
+class _TraceSpanProcessor(SpanProcessor):
     """Turns pydantic-ai `chat <model>` spans into LLMCall records on the bound TurnTrace.
 
-    on_end runs synchronously in the context that closed the span, so the
-    contextvars bound by the FSM runner (trace, node, role) are visible.
+    Subclasses the SDK base so hooks added in newer SDKs (e.g. `_on_ending`)
+    exist. on_end runs synchronously in the context that closed the span, so
+    the contextvars bound by the FSM runner (trace, node, role) are visible.
     """
 
     def __init__(self) -> None:
         self._agent_names: dict[int, str] = {}
 
     def on_start(self, span: Any, parent_context: Any = None) -> None:
+        try:
+            self._on_start(span)
+        except Exception as exc:  # noqa: BLE001 - telemetry must never break a turn
+            logger.debug("span start capture failed: %s", exc)
+
+    def _on_start(self, span: Any) -> None:
         attrs = span.attributes or {}
         name = attrs.get("gen_ai.agent.name") or attrs.get("agent_name")
-        if name:
+        if name and attrs.get("gen_ai.operation.name") != "chat":
             self._agent_names[span.context.span_id] = str(name)
 
     def on_end(self, span: Any) -> None:
+        try:
+            self._on_end(span)
+        except Exception as exc:  # noqa: BLE001 - telemetry must never break a turn
+            logger.debug("span end capture failed: %s", exc)
+
+    def _on_end(self, span: Any) -> None:
         attrs = span.attributes or {}
-        if attrs.get("gen_ai.agent.name") or attrs.get("agent_name"):
-            self._agent_names.pop(span.context.span_id, None)
-            return
+        # Model-request spans are operation "chat"; newer pydantic-ai also stamps the
+        # agent name on them, so the operation (not the name) tells them apart.
         if attrs.get("gen_ai.operation.name") != "chat":
+            self._agent_names.pop(span.context.span_id, None)
             return
         trace = _current_trace.get()
         if trace is None:
@@ -349,7 +365,7 @@ class _TraceSpanProcessor:
             parent = span.parent.span_id if span.parent else None
             trace.add_llm_call(LLMCall(
                 node=_current_node.get(),
-                agent=self._agent_names.get(parent, "agent") if parent else "agent",
+                agent=str(attrs.get("gen_ai.agent.name") or self._agent_names.get(parent, "agent")),
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
@@ -415,6 +431,6 @@ def install_llm_capture() -> None:
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
     provider = TracerProvider()
-    provider.add_span_processor(_TraceSpanProcessor())  # type: ignore[arg-type]
+    provider.add_span_processor(_TraceSpanProcessor())
     Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_binary_content=False, version=2))
     _installed = True

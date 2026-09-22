@@ -16,6 +16,7 @@ import subprocess
 import time
 import uuid
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -432,45 +433,31 @@ def summarize(suite: Suite, results: list[dict[str, Any]], judge_names: list[str
     }
 
 
-async def run_suite(
-    suite_name: str,
-    judge: str = "openai",
-    repeats: int = 1,
-    concurrency: int = 2,
-    case_ids: list[str] | None = None,
-    run_id: str | None = None,
-    progress: ProgressCb | None = None,
-    analyze_failures: bool = True,
-    origin: str = "cli",
+@dataclass
+class WorkItem:
+    case_id: str
+    repeat: int
+    case: dict[str, Any]  # stored on the result for display
+    run: Callable[[], Awaitable[dict[str, Any]]]
+
+
+async def _execute(
+    env: EvalEnv, suite: Suite, judge: str, judges: list[Any], run_id: str, work: list[WorkItem],
+    config: dict[str, Any], concurrency: int, progress: ProgressCb | None, analyze_failures: bool,
 ) -> str:
+    """Shared run loop: upsert the run row, run items with bounded concurrency, persist
+    each result as it lands, then summarise and write the failure analysis."""
     from agent_system.adapters.outbound.persistence import EvalCaseResultModel, EvalRunModel
     from agent_system.evals.failure_analysis import write_failure_analysis
 
-    install_llm_capture()
-    suite = load_suite(suite_name)
-    env = await EvalEnv.create()
-    judges = judges_mod.build_judges(judge, env.api_key) if judge != "none" else []
-    judge_names = [j.name for j in judges]
-    run_id = run_id or str(uuid.uuid4())
-
-    cases: list[Any] = suite.research_cases if suite.kind == "research" else suite.cases
-    if case_ids:
-        cases = [c for c in cases if c.id in case_ids]
-    work = [(c, rep) for c in cases for rep in range(repeats)]
-
+    config = {**config, "total": len(work),
+              "judge_models": {j.name: getattr(j, "model_name", None) for j in judges}}
     async with env.database.session() as session:
-        existing = await session.get(EvalRunModel, run_id)
-        if existing is None:
-            session.add(EvalRunModel(
-                id=run_id, suite=suite.name, judge=judge, git_sha=git_sha(), status="running",
-                config={"repeats": repeats, "concurrency": concurrency, "case_ids": case_ids,
-                        "model": env.settings.default_model, "fallback_model": env.settings.fallback_model,
-                        "judge_models": {j.name: getattr(j, "model_name", None) for j in judges},
-                        "origin": origin,
-                        "total": len(work)},
-            ))
-        else:
-            existing.status = "running"
+        run = await session.get(EvalRunModel, run_id)
+        if run is None:  # CLI; the API creates the row up front so the tab can open it immediately
+            run = EvalRunModel(id=run_id)
+            session.add(run)
+        run.suite, run.judge, run.git_sha, run.status, run.config = suite.name, judge, git_sha(), "running", config
         await session.commit()
 
     if env.settings.database_url.startswith("sqlite") and concurrency > 1:
@@ -480,25 +467,22 @@ async def run_suite(
     results: list[dict[str, Any]] = []
     done = 0
 
-    async def one(case: Any, rep: int) -> None:
+    async def one(item: WorkItem) -> None:
         nonlocal done
         async with sem:
             try:
-                if suite.kind == "research":
-                    res = await run_research_case(case, suite, env, judges, run_id)
-                else:
-                    res = await run_agent_case(case, suite, env, judges, run_id)
+                res = await item.run()
             except Exception as exc:  # noqa: BLE001
-                logger.exception("eval case %s crashed", case.id)
+                logger.exception("eval case %s crashed", item.case_id)
                 res = {"passed": False, "failure_tags": ["harness_error"], "scores": {}, "judgements": {},
                        "turns": [], "total_ms": None, "cost_usd": None, "judge_cost_usd": None,
                        "error": f"{type(exc).__name__}: {exc}"}
-            res["case_id"], res["repeat"] = case.id, rep
+            res["case_id"], res["repeat"] = item.case_id, item.repeat
             results.append(res)
             async with env.database.session() as session:
                 session.add(EvalCaseResultModel(
-                    id=str(uuid.uuid4()), run_id=run_id, case_id=case.id, repeat=rep, passed=res["passed"],
-                    failure_tags=res["failure_tags"], case=case.model_dump(), scores=res["scores"],
+                    id=str(uuid.uuid4()), run_id=run_id, case_id=item.case_id[:128], repeat=item.repeat,
+                    passed=res["passed"], failure_tags=res["failure_tags"], case=item.case, scores=res["scores"],
                     judgements={**res["judgements"], **({"_snapshot": res["snapshot"]} if res.get("snapshot") else {})},
                     turns=res["turns"], total_ms=res.get("total_ms"), cost_usd=res.get("cost_usd"),
                     judge_cost_usd=res.get("judge_cost_usd"), error=res.get("error"),
@@ -506,16 +490,17 @@ async def run_suite(
                 await session.commit()
             done += 1
             if progress:
-                await progress({"type": "case_done", "case_id": case.id, "repeat": rep, "passed": res["passed"],
-                                "done": done, "total": len(work), "failure_tags": res["failure_tags"]})
+                await progress({"type": "case_done", "case_id": item.case_id, "repeat": item.repeat,
+                                "passed": res["passed"], "done": done, "total": len(work),
+                                "failure_tags": res["failure_tags"]})
 
     status, error = "complete", None
     try:
-        await asyncio.gather(*(one(c, r) for c, r in work))
+        await asyncio.gather(*(one(w) for w in work))
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", f"{type(exc).__name__}: {exc}"
 
-    summary = summarize(suite, results, judge_names)
+    summary = summarize(suite, results, [j.name for j in judges])
     analysis = None
     if analyze_failures and any(not r["passed"] for r in results):
         try:
@@ -532,3 +517,136 @@ async def run_suite(
     if progress:
         await progress({"type": "run_done", "status": status, "summary": summary})
     return run_id
+
+
+async def run_suite(
+    suite_name: str,
+    judge: str = "openai",
+    repeats: int = 1,
+    concurrency: int = 2,
+    case_ids: list[str] | None = None,
+    run_id: str | None = None,
+    progress: ProgressCb | None = None,
+    analyze_failures: bool = True,
+    origin: str = "cli",
+) -> str:
+    install_llm_capture()
+    suite = load_suite(suite_name)
+    env = await EvalEnv.create()
+    judges = judges_mod.build_judges(judge, env.api_key) if judge != "none" else []
+    run_id = run_id or str(uuid.uuid4())
+
+    cases: list[Any] = suite.research_cases if suite.kind == "research" else suite.cases
+    if case_ids:
+        cases = [c for c in cases if c.id in case_ids]
+    runner = run_research_case if suite.kind == "research" else run_agent_case
+    work = [
+        WorkItem(c.id, rep, c.model_dump(), lambda c=c: runner(c, suite, env, judges, run_id))
+        for c in cases for rep in range(repeats)
+    ]
+    config = {"repeats": repeats, "concurrency": concurrency, "case_ids": case_ids, "origin": origin,
+              "model": env.settings.default_model, "fallback_model": env.settings.fallback_model}
+    return await _execute(env, suite, judge, judges, run_id, work, config, concurrency, progress, analyze_failures)
+
+
+# ---------------------------------------------------------------------------
+# Real conversations (rubric-only, no ground truth)
+# ---------------------------------------------------------------------------
+
+CONVERSATION_RUBRICS = ["agent_flow", "task_completion", "memory_retrieval"]
+NO_GROUND_TRUTH = (
+    "Unknown: this is a real conversation, so there is no ground-truth memory list. Judge memory use only "
+    "against the RETRIEVED CONTEXT and earlier turns; a remembered detail supported by neither is a "
+    "possible fabrication."
+)
+
+
+async def run_conversation_case(title: str, turns: list[dict[str, Any]], suite: Suite, judges: list[Any]) -> dict[str, Any]:
+    traced = [t for t in turns if t.get("trace")]
+    retrieved = "\n\n".join(f"(turn {i + 1})\n{fmt_retrieved(t['trace'])}" for i, t in enumerate(turns) if t.get("trace"))
+    if traced:
+        flow = "\n\n".join(f"(turn {i + 1}: {t['user'][:120]!r})\n{fmt_flow(t['trace'])}"
+                            for i, t in enumerate(turns) if t.get("trace"))
+    else:
+        flow = ("(No execution trace was recorded for this conversation; it predates tracing. "
+                "Judge routing and tool use from the transcript and the tools named below.)")
+    tool_lines = []
+    for i, t in enumerate(turns):
+        calls = (t.get("trace") or {}).get("tool_calls") or t.get("tool_calls") or []
+        for c in calls:
+            name = c.get("tool") or c.get("tool_name")
+            tool_lines.append(f"turn {i + 1} · {name}({c.get('arguments')}): {str(c.get('result'))[:800]}")
+    if not traced and tool_lines:
+        flow += "\nTools recorded on the assistant's messages:\n" + "\n".join(tool_lines)
+    context = {
+        "seed": NO_GROUND_TRUTH,
+        "transcript": fmt_transcript(turns)[:30000],
+        "retrieved": retrieved[:12000] or "(no retrieval recorded)",
+        "criteria": ("Judge the assistant across the whole conversation, weighting the later turns. "
+                     "Did it understand each request, use the right tools and memory, and actually help?"),
+        "flow": flow[:12000],
+        "tools": _tool_names(),
+        "tool_outputs": "\n".join(tool_lines)[:8000] or "(no tools ran)",
+    }
+    judge_trace = TurnTrace()
+    judgements: dict[str, Any] = {}
+    with bind_trace(judge_trace):
+        jobs = [(j.name, r, j.score(judges_mod.load_rubric(r), context)) for j in judges for r in suite.rubrics]
+        outs = await asyncio.gather(*(x[2] for x in jobs), return_exceptions=True)
+    for (jname, rname, _), res in zip(jobs, outs, strict=True):
+        judgements.setdefault(jname, {})[rname] = (
+            {"error": f"{type(res).__name__}: {res}"} if isinstance(res, Exception) else res
+        )
+    ok, tags = judge_verdict(judgements, suite.pass_threshold)
+    usages = [t["trace"]["usage"] for t in traced]
+    costs = [u["cost_usd"] for u in usages if u.get("cost_usd") is not None]
+    return {
+        "passed": ok,
+        "failure_tags": tags,
+        "scores": {},
+        "judgements": judgements,
+        "turns": [{"user": t["user"], "response": t["response"], "trace": t.get("trace")} for t in turns],
+        "total_ms": round(sum(t["trace"].get("total_ms") or 0 for t in traced), 1) if traced else None,
+        "cost_usd": round(sum(costs), 6) if costs else None,
+        "unpriced_calls": sum(u.get("unpriced_calls", 0) for u in usages),
+        "judge_cost_usd": judge_trace.usage("judge")["cost_usd"],
+        "judge_usage": judge_trace.usage("judge"),
+        "error": None,
+    }
+
+
+async def run_conversations(
+    conversation_ids: list[str],
+    user_id: str,
+    judge: str = "openai",
+    rubrics: list[str] | None = None,
+    run_id: str | None = None,
+    concurrency: int = 3,
+    progress: ProgressCb | None = None,
+    analyze_failures: bool = True,
+    origin: str = "api",
+) -> str:
+    """Judge the user's own real conversations with the rubrics (no seeding, no ground truth)."""
+    from agent_system.evals.conversations import load_conversation
+
+    install_llm_capture()
+    env = await EvalEnv.create()
+    judges = judges_mod.build_judges(judge, env.api_key) if judge != "none" else []
+    suite = Suite(name="conversations", description="Real conversations, rubric-judged",
+                  rubrics=rubrics or CONVERSATION_RUBRICS)
+    run_id = run_id or str(uuid.uuid4())
+
+    work: list[WorkItem] = []
+    async with env.database.session() as session:
+        for cid in conversation_ids:
+            loaded = await load_conversation(session, cid, user_id)
+            if loaded is None or not loaded[1]:
+                continue
+            title, turns = loaded
+            case = {"id": title, "description": f"Conversation {cid} · {len(turns)} turns",
+                    "conversation_id": cid, "source": "conversation", "turns": [t["user"] for t in turns]}
+            work.append(WorkItem(title, 0, case, lambda title=title, turns=turns:
+                                 run_conversation_case(title, turns, suite, judges)))
+    config = {"conversation_ids": conversation_ids, "rubrics": suite.rubrics, "origin": origin,
+              "concurrency": concurrency, "model": env.settings.default_model}
+    return await _execute(env, suite, judge, judges, run_id, work, config, concurrency, progress, analyze_failures)

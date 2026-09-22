@@ -234,20 +234,17 @@ export interface EvalCaseDetail {
 export interface TracedConversation {
   conversation_id: string;
   title: string | null;
-  turns: number;
+  messages: number;
+  traced_turns: number;
   last_at: string;
-  first_input: string;
-  cost_usd: number;
-  source: string;
 }
 
+/** One turn of a real conversation; `trace` is null for turns from before tracing. */
 export interface ConversationTrace {
-  id: string;
-  created_at: string;
   user: string;
   response: string | null;
-  trace: TurnTrace;
-  source: string;
+  trace: TurnTrace | null;
+  created_at: string | null;
 }
 
 export interface RunComparison {

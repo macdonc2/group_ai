@@ -53,7 +53,7 @@ function NewRunForm() {
 }
 
 export function EvalSidebar({ onSelect }: { onSelect?: () => void }) {
-  const { mode, setMode, runs, selectedRunId, selectRun, refreshRuns, conversations, selectedConversationId, selectConversation, error } = useEvalStore();
+  const { mode, setMode, runs, selectedRunId, selectRun, refreshRuns, error } = useEvalStore();
   return (
     <div className="flex flex-col h-full">
       <div className="flex border-b border-slate-200 dark:border-slate-700 text-xs">
@@ -101,27 +101,76 @@ export function EvalSidebar({ onSelect }: { onSelect?: () => void }) {
           </div>
         </>
       ) : (
-        <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {conversations.length === 0 && (
-            <p className="text-center text-xs text-slate-500 py-6 px-3">No traced conversations yet — traces are recorded for every chat turn from now on.</p>
-          )}
-          {conversations.map((c) => {
-            const active = c.conversation_id === selectedConversationId;
-            return (
-              <button
-                key={c.conversation_id}
-                onClick={() => { selectConversation(c.conversation_id); onSelect?.(); }}
-                className={cn('w-full text-left p-2.5 rounded-lg', active ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}
-              >
-                <div className="text-sm font-medium truncate">{c.title || truncate(c.first_input, 50)}</div>
-                <div className={cn('text-[11px] mt-0.5', active ? 'opacity-85' : 'text-slate-500')}>
-                  {c.turns} turn{c.turns === 1 ? '' : 's'} · {c.source} · {formatTimestamp(new Date(c.last_at + 'Z'))}
-                </div>
-              </button>
-            );
-          })}
-        </div>
+        <ConversationPicker onSelect={onSelect} />
       )}
     </div>
+  );
+}
+
+function ConversationPicker({ onSelect }: { onSelect?: () => void }) {
+  const { conversations, selectedConversationId, selectConversation, evalSelection, toggleEvalSelection, setEvalSelection, evaluateSelected } = useEvalStore();
+  const [judge, setJudge] = useState('openai');
+  const [busy, setBusy] = useState(false);
+  const allOn = conversations.length > 0 && evalSelection.length === conversations.length;
+  return (
+    <>
+      <div className="flex items-center justify-between px-3 pt-2 text-xs text-slate-500">
+        <label className="inline-flex items-center gap-1.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allOn}
+            onChange={() => setEvalSelection(allOn ? [] : conversations.slice(0, 50).map((c) => c.conversation_id))}
+          />
+          Select for eval
+        </label>
+        <span>{conversations.length} conversations</span>
+      </div>
+      <div className="flex-1 overflow-y-auto p-2 space-y-1">
+        {conversations.length === 0 && <p className="text-center text-xs text-slate-500 py-6 px-3">No conversations yet.</p>}
+        {conversations.map((c) => {
+          const active = c.conversation_id === selectedConversationId;
+          const ticked = evalSelection.includes(c.conversation_id);
+          return (
+            <div
+              key={c.conversation_id}
+              className={cn('flex items-start gap-2 p-2.5 rounded-lg', active ? 'bg-blue-600 text-white' : 'hover:bg-slate-100 dark:hover:bg-slate-800')}
+            >
+              <input
+                type="checkbox"
+                className="mt-1 shrink-0"
+                checked={ticked}
+                onChange={() => toggleEvalSelection(c.conversation_id)}
+                aria-label={`Select ${c.title ?? 'conversation'} for evaluation`}
+              />
+              <button className="flex-1 min-w-0 text-left" onClick={() => { selectConversation(c.conversation_id); onSelect?.(); }}>
+                <div className="text-sm font-medium truncate">{c.title || 'Untitled conversation'}</div>
+                <div className={cn('text-[11px] mt-0.5', active ? 'opacity-85' : 'text-slate-500')}>
+                  {Math.ceil(c.messages / 2)} turns · {c.traced_turns ? `${c.traced_turns} traced` : 'transcript only'} · {formatTimestamp(new Date(c.last_at + 'Z'))}
+                </div>
+              </button>
+            </div>
+          );
+        })}
+      </div>
+      <div className="border-t border-slate-200 dark:border-slate-700 p-3 space-y-2 text-xs">
+        <div className="flex items-center gap-2">
+          <select value={judge} onChange={(e) => setJudge(e.target.value)} className="flex-1 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-1">
+            <option value="openai">OpenAI judge</option>
+            <option value="jev">Jev judge</option>
+            <option value="both">Both (agreement)</option>
+          </select>
+          <button
+            disabled={!evalSelection.length || busy}
+            onClick={async () => { setBusy(true); await evaluateSelected(judge); setBusy(false); }}
+            className="inline-flex items-center gap-1.5 rounded bg-blue-600 text-white px-3 py-1.5 hover:bg-blue-700 disabled:opacity-50"
+          >
+            <Play size={13} /> {busy ? 'Starting…' : `Evaluate ${evalSelection.length || ''}`.trim()}
+          </button>
+        </div>
+        <p className="text-[10px] text-slate-400 leading-snug">
+          Judges flow, task completion and memory use. Turns from before tracing are judged on the transcript alone.
+        </p>
+      </div>
+    </>
   );
 }

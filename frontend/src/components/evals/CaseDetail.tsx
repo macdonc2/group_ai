@@ -13,6 +13,7 @@ export function CaseDetail({ onBack }: { onBack: () => void }) {
   if (!detail) return <div className="flex-1 flex items-center justify-center"><Loader2 className="animate-spin text-slate-400" /></div>;
   const expect = detail.case.expect ?? null;
   const isResearch = !!detail.turns[0]?.research;
+  const isConversation = (detail.case as { source?: string }).source === 'conversation';
 
   return (
     <div className="flex-1 flex flex-col min-h-0">
@@ -33,7 +34,7 @@ export function CaseDetail({ onBack }: { onBack: () => void }) {
       </div>
       {detail.case.description && <p className="px-4 pt-2 text-xs text-slate-500">{detail.case.description}</p>}
       <div className="flex gap-1 px-4 pt-2 shrink-0">
-        {(['tree', 'scores', 'memory'] as Tab[]).filter((t) => !(isResearch && t === 'memory')).map((t) => (
+        {(['tree', 'scores', 'memory'] as Tab[]).filter((t) => !((isResearch || isConversation) && t === 'memory')).map((t) => (
           <button
             key={t}
             onClick={() => setTab(t)}

@@ -214,7 +214,7 @@ export function AppLayout() {
       {/* Sidebar - hidden on mobile, shown as overlay when toggled */}
       <div className={`
         fixed md:relative inset-y-0 left-0 z-50 wt-sidebar
-        w-72 border-r border-slate-200 dark:border-slate-700 
+        ${user?.is_superuser ? 'w-80' : 'w-72'} border-r border-slate-200 dark:border-slate-700 
         bg-slate-50 dark:bg-slate-800/50 flex flex-col h-full
         transform transition-transform duration-200 ease-in-out
         ${showMobileSidebar ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}

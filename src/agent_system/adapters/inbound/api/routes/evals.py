@@ -15,12 +15,10 @@ from sqlalchemy import desc, func, select
 from agent_system.adapters.inbound.api.auth import RequireSuperuser
 from agent_system.adapters.inbound.api.dependencies import SessionDep
 from agent_system.adapters.outbound.persistence import (
-    ConversationModel,
     EvalCaseResultModel,
     EvalRunModel,
     TurnTraceModel,
 )
-from agent_system.adapters.outbound.persistence.trace_repository import TurnTraceRepository
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/evals", tags=["evals"])
@@ -30,7 +28,11 @@ _tasks: dict[str, asyncio.Task] = {}
 
 
 class RunCreate(BaseModel):
-    suite: str
+    """Either a dataset `suite`, or `conversation_ids` (the caller's own real conversations)."""
+
+    suite: str | None = None
+    conversation_ids: list[str] | None = Field(default=None, max_length=50)
+    rubrics: list[str] | None = None
     judge: str = Field(default="openai", pattern="^(openai|jev|both|none)$")
     repeats: int = Field(default=1, ge=1, le=5)
     concurrency: int = Field(default=2, ge=1, le=8)
@@ -100,31 +102,45 @@ async def list_runs(_: RequireSuperuser, session: SessionDep, suite: str | None 
 
 
 @router.post("/runs", status_code=status.HTTP_202_ACCEPTED)
-async def start_run(payload: RunCreate, _: RequireSuperuser) -> dict[str, Any]:
-    from agent_system.evals.runner import run_suite
+async def start_run(payload: RunCreate, token: RequireSuperuser) -> dict[str, Any]:
+    from agent_system.adapters.inbound.api.dependencies import get_database
+    from agent_system.evals.judges import list_rubrics
+    from agent_system.evals.runner import run_conversations, run_suite
     from agent_system.evals.schema import list_suites as names
 
-    if payload.suite not in names():
+    if payload.conversation_ids:
+        bad = [r for r in payload.rubrics or [] if r not in list_rubrics()]
+        if bad:
+            raise HTTPException(status_code=400, detail=f"Unknown rubrics: {bad}")
+        suite_name, total = "conversations", len(payload.conversation_ids)
+    elif payload.suite in names():
+        suite_name, total = payload.suite, None
+    else:
         raise HTTPException(status_code=404, detail=f"Unknown suite '{payload.suite}'")
     run_id = str(uuid.uuid4())
 
+    # Create the row now so the tab can open the run the moment this returns.
+    async with get_database().session() as s:
+        s.add(EvalRunModel(id=run_id, suite=suite_name, judge=payload.judge, status="running",
+                           config={"origin": "api", "total": total}))
+        await s.commit()
+
     async def _go() -> None:
         try:
-            await run_suite(payload.suite, judge=payload.judge, repeats=payload.repeats,
-                            concurrency=payload.concurrency, case_ids=payload.case_ids, run_id=run_id,
-                            origin="api")
-        except Exception:  # noqa: BLE001 - surfaced on the run row
-            logger.exception("eval run %s failed to start", run_id)
-            from agent_system.adapters.inbound.api.dependencies import get_database
-
+            if payload.conversation_ids:
+                await run_conversations(payload.conversation_ids, token.user_id, judge=payload.judge,
+                                        rubrics=payload.rubrics, run_id=run_id, origin="api")
+            else:
+                await run_suite(payload.suite, judge=payload.judge, repeats=payload.repeats,
+                                concurrency=payload.concurrency, case_ids=payload.case_ids, run_id=run_id,
+                                origin="api")
+        except Exception as exc:  # noqa: BLE001 - surfaced on the run row
+            logger.exception("eval run %s failed", run_id)
             async with get_database().session() as s:
                 run = await s.get(EvalRunModel, run_id)
-                if run is None:
-                    s.add(EvalRunModel(id=run_id, suite=payload.suite, judge=payload.judge, status="failed",
-                                       error="Run could not start; see server logs (missing EVAL_OPENAI_API_KEY or JEV_BASE_URL?)"))
-                else:
-                    run.status = "failed"
-                await s.commit()
+                if run is not None and run.status == "running":
+                    run.status, run.error = "failed", f"{type(exc).__name__}: {exc}"[:2000]
+                    await s.commit()
         finally:
             _tasks.pop(run_id, None)
 
@@ -221,31 +237,23 @@ async def fsm_graph(_: RequireSuperuser) -> dict[str, Any]:
 
 
 @router.get("/conversations")
-async def traced_conversations(token: RequireSuperuser, session: SessionDep, days: int = Query(30, le=365)) -> list[dict[str, Any]]:
-    """The caller's own recent conversations that have turn traces."""
-    traces = await TurnTraceRepository(session).recent(since_days=days, limit=500, user_id=token.user_id)
-    by_conv: dict[str, dict[str, Any]] = {}
-    for t in traces:
-        c = by_conv.setdefault(t.conversation_id, {"conversation_id": t.conversation_id, "turns": 0,
-                                                   "last_at": t.created_at.isoformat(), "first_input": t.user_input,
-                                                   "cost_usd": 0.0, "source": t.source})
-        c["turns"] += 1
-        c["first_input"] = t.user_input  # traces are newest-first, so this ends on the oldest
-        c["cost_usd"] = round(c["cost_usd"] + (t.cost_usd or 0.0), 6)
-    if by_conv:
-        titles = dict((await session.execute(
-            select(ConversationModel.id, ConversationModel.title).where(ConversationModel.id.in_(list(by_conv)))
-        )).all())
-        for cid, c in by_conv.items():
-            c["title"] = titles.get(cid)
-    return list(by_conv.values())
+async def traced_conversations(token: RequireSuperuser, session: SessionDep, limit: int = Query(100, le=300)) -> list[dict[str, Any]]:
+    """The caller's own recent conversations, with how many turns carry a trace."""
+    from agent_system.evals.conversations import list_user_conversations
+
+    return await list_user_conversations(session, token.user_id, limit=limit)
 
 
 @router.get("/traces/conversation/{conversation_id}")
 async def conversation_traces(conversation_id: str, token: RequireSuperuser, session: SessionDep) -> list[dict[str, Any]]:
-    rows = await TurnTraceRepository(session).list_for_conversation(conversation_id, user_id=token.user_id)
-    return [{"id": t.id, "created_at": t.created_at.isoformat(), "user": t.user_input,
-             "response": (t.trace or {}).get("response"), "trace": t.trace, "source": t.source} for t in rows]
+    """Turns of one of the caller's conversations; `trace` is null for turns from before tracing."""
+    from agent_system.evals.conversations import load_conversation
+
+    loaded = await load_conversation(session, conversation_id, token.user_id)
+    if loaded is None:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return [{"user": t["user"], "response": t["response"], "trace": t["trace"], "created_at": t["at"]}
+            for t in loaded[1]]
 
 
 @router.get("/traces/{trace_id}")

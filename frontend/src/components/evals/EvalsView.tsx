@@ -23,7 +23,7 @@ export function EvalsView() {
       <div className="flex-1 min-h-0 flex flex-col">
         <TraceViewer
           key={`${selectedConversationId}:${conversationTraces.length}`}
-          turns={conversationTraces.map((t) => ({ user: t.user, response: t.response, trace: t.trace }))}
+          turns={conversationTraces.map((t) => ({ user: t.user, response: t.response, trace: t.trace ?? undefined }))}
         />
       </div>
     );

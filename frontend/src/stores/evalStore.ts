@@ -27,6 +27,7 @@ interface EvalState {
   selectedConversationId: string | null;
   conversationTraces: ConversationTrace[];
   compareWith: string | null;
+  evalSelection: string[]; // conversation ids ticked for a conversation eval
   loading: boolean;
   error: string | null;
 
@@ -36,8 +37,11 @@ interface EvalState {
   selectRun: (id: string | null) => Promise<void>;
   selectCase: (id: string | null) => Promise<void>;
   selectConversation: (id: string | null) => Promise<void>;
-  startRun: (body: { suite: string; judge: string; repeats?: number; case_ids?: string[] }) => Promise<string | null>;
+  startRun: (body: { suite?: string; conversation_ids?: string[]; judge: string; repeats?: number; case_ids?: string[] }) => Promise<string | null>;
   setCompareWith: (id: string | null) => void;
+  toggleEvalSelection: (id: string) => void;
+  setEvalSelection: (ids: string[]) => void;
+  evaluateSelected: (judge: string) => Promise<void>;
 }
 
 const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
@@ -56,6 +60,7 @@ export const useEvalStore = create<EvalState>()((set, get) => ({
   selectedConversationId: null,
   conversationTraces: [],
   compareWith: null,
+  evalSelection: [],
   loading: false,
   error: null,
 
@@ -138,4 +143,18 @@ export const useEvalStore = create<EvalState>()((set, get) => ({
   },
 
   setCompareWith: (id) => set({ compareWith: id }),
+
+  toggleEvalSelection: (id) => {
+    const cur = get().evalSelection;
+    set({ evalSelection: cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id] });
+  },
+
+  setEvalSelection: (ids) => set({ evalSelection: ids }),
+
+  evaluateSelected: async (judge) => {
+    const ids = get().evalSelection;
+    if (!ids.length) return;
+    const runId = await get().startRun({ conversation_ids: ids, judge });
+    if (runId) set({ mode: 'runs', evalSelection: [] });
+  },
 }));
