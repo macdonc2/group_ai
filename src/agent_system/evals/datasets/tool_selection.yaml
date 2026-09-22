@@ -1,0 +1,82 @@
+name: tool_selection
+description: The intent agent picks the right tool and SelectTool builds usable, context-resolved arguments.
+rubrics: [agent_flow]
+pass_threshold: 3.5
+
+cases:
+  - id: word_problem_math
+    turns: ["If I have 12 eggs, use 5 for breakfast and buy another dozen, how many do I have?"]
+    expect: {tool: calculate, tool_args: {expression: "12"}, must_mention: ["19"]}
+
+  - id: percentage_math
+    turns: ["What's a 20% tip on a $64 bill?"]
+    expect: {tool: calculate, must_mention: ["12.8"]}
+
+  - id: exponent_math
+    turns: ["what is 2^10?"]
+    expect: {tool: calculate, tool_args: {expression: "2**10"}, must_mention: ["1024"]}
+
+  - id: define
+    turns: ["define 'petrichor'"]
+    expect: {tool: define_word, tool_args: {word: petrichor}}
+
+  - id: fun_fact
+    turns: ["tell me a random fun fact"]
+    expect: {tool: random_fact}
+
+  - id: docs_calendar_setup
+    turns: ["How do I connect my Google Calendar?"]
+    expect: {tool: search_internal_docs, tool_args: {query: calendar}}
+
+  - id: docs_groups
+    turns: ["How do group chats work in this app?"]
+    expect: {tool: search_internal_docs, tool_args: {query: group}}
+
+  - id: web_search_with_location
+    turns: ["best tacos near Montrose?"]
+    expect: {tool: web_search, tool_args: {query: montrose}}
+
+  - id: web_search_resolves_reference
+    description: '"they" must be resolved to the place from the previous turn.'
+    turns: ["I keep hearing about Under the Radar Brewery.", "Do they have trivia nights?"]
+    expect: {tool: web_search, tool_args: {query: under the radar}}
+
+  - id: recall_person
+    seed:
+      people: [{name: Zane, relationship_type: friend, context_notes: "Lives in Montrose, into cycling"}]
+    turns: ["What do you know about Zane?"]
+    expect: {tool: recall_about_topic, tool_args: {topic: zane}, must_mention: [cycling]}
+
+  - id: recall_pronoun_resolution
+    description: '"his" must be resolved to Zane before calling recall.'
+    seed:
+      people: [{name: Zane, relationship_type: friend, context_notes: "Plays bass in a jazz trio"}]
+    turns: ["Zane is coming over Friday.", "remind me what his hobbies are?"]
+    expect: {tool: recall_about_topic, tool_args: {topic: zane}, must_mention: [bass]}
+
+  - id: recall_by_relationship
+    seed:
+      people: [{name: Rachel, relationship_type: spouse, aliases: [Rach]}]
+    turns: ["What's my wife's name?"]
+    expect: {tool: recall_about_topic, must_mention: [Rachel]}
+
+  - id: recall_from_period
+    seed:
+      messages:
+        - {content: "I started learning to throw pottery at the community studio", days_ago: 3}
+    turns: ["What did we talk about earlier this week?"]
+    expect: {tool: [recall_from_period, get_conversation_history, summarize_user_knowledge, recall_about_topic], must_mention: [pottery]}
+
+  - id: list_pets
+    seed:
+      pets: [{name: George, species: cat}, {name: Bo, species: cat}, {name: Roxanne, species: dog}]
+    turns: ["list all my pets"]
+    expect: {tool: [list_pets, recall_about_topic], must_mention: [George, Bo, Roxanne]}
+
+  - id: no_tool_for_opinion
+    turns: ["Do you think tabs or spaces are better?"]
+    expect: {tool: none}
+
+  - id: datetime_only
+    turns: ["what time is it right now?"]
+    expect: {tool: get_current_datetime}

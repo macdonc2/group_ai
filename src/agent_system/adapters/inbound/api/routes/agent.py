@@ -28,6 +28,7 @@ from agent_system.adapters.outbound.persistence import (
 )
 from agent_system.domain.entities import Conversation, User
 from agent_system.domain.value_objects import ConversationId, Message, UserId
+from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace, trace_token_count
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 logger = logging.getLogger(__name__)
@@ -202,8 +203,9 @@ async def chat_with_agent(
             for tool in result.tools_used
         ]
         assistant_message = Message.assistant(result.response, tool_calls=tool_calls)
-        conversation = conversation.add_message(assistant_message)
+        conversation = conversation.add_message(assistant_message, token_count=trace_token_count(deps.trace))
         await conv_repo.update(conversation)
+        await save_turn_trace(deps.trace, user_id=str(user.id), conversation_id=str(conversation.id), session=session)
         
         # Convert suggestions
         suggestions = [
@@ -421,8 +423,9 @@ async def chat_with_agent_stream(
                 for tool in result.tools_used
             ]
             assistant_message = Message.assistant(result.response, tool_calls=tool_calls)
-            conversation = conversation.add_message(assistant_message)
+            conversation = conversation.add_message(assistant_message, token_count=trace_token_count(deps.trace))
             await conv_repo.update(conversation)
+            await save_turn_trace(deps.trace, user_id=str(user.id), conversation_id=str(conversation.id), session=session)
             
             # Send final response event with full response and suggestions
             await event_queue.put(StreamEvent(

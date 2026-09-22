@@ -7,7 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from agent_system.adapters.outbound.llm.provider import openai_provider
 
 from agent_system.domain.value_objects import UserId
 
@@ -62,7 +62,7 @@ def _get_model(api_key: str | None = None) -> OpenAIResponsesModel | str:
     """Get model for contradiction assessment."""
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIResponsesModel("gpt-5-mini", provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel("gpt-5-mini", provider=openai_provider(key))
     return "openai:gpt-5-mini"
 
 

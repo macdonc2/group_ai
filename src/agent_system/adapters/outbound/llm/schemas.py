@@ -152,6 +152,17 @@ class StepExecution(BaseModel):
         str | None,
         Field(default=None, description="If needs_tool is True, which tool: 'web_search', 'calculate', 'get_upcoming_events', etc.")
     ]
+    tool_input: Annotated[
+        str | None,
+        Field(
+            default=None,
+            description=(
+                "If needs_tool is True, the exact input for that tool, NOT the step description: "
+                "a short search query (under 12 words) naming the concrete places, people, dates and topics "
+                "from the original question, a bare math expression, or a keyword for a lookup."
+            ),
+        ),
+    ]
 
 
 class ReActPlanSchema(BaseModel):

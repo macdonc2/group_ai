@@ -1,0 +1,19 @@
+name: research
+description: Deep Research source quality and synthesis groundedness (depth 1, narration off).
+kind: research
+rubrics: [research_sources, synthesis_groundedness]
+pass_threshold: 3.5
+
+cases:
+  - id: rag_eval_methods
+    question: "What are the current best practices for evaluating retrieval-augmented generation systems?"
+    min_sources: 8
+  - id: sodium_ion_batteries
+    question: "How close are sodium-ion batteries to replacing lithium-ion for grid storage?"
+    min_sources: 8
+  - id: remote_work_productivity
+    question: "What does the evidence say about remote work and individual productivity?"
+    min_sources: 8
+  - id: small_llm_distillation
+    question: "How effective is knowledge distillation for making small language models competitive with larger ones?"
+    min_sources: 8

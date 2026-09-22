@@ -39,7 +39,10 @@ class AgentDependencies:
     
     # Event streaming callback (optional)
     event_callback: EventCallback | None = None
-    
+
+    # Turn trace (spans, decisions, retrievals, usage); None disables recording
+    trace: Any = None  # TurnTrace
+
     async def emit_event(
         self,
         event_type: str,
@@ -48,8 +51,27 @@ class AgentDependencies:
         data: dict | None = None,
     ) -> None:
         """Emit an event to the callback if configured."""
+        if self.trace is not None:
+            self.trace.add_event(event_type, node_name, message, data)
         if self.event_callback:
             await self.event_callback(event_type, node_name, message, data)
+
+    def decide(
+        self,
+        node: str,
+        predicate: str,
+        result: bool,
+        next_node: str,
+        **inputs: Any,
+    ) -> bool:
+        """Record a branch decision (the edge label in the predicate tree) and return `result`."""
+        if self.trace is not None:
+            self.trace.add_decision(node, predicate, result, next_node, inputs)
+        return result
+
+    def record_retrieval(self, source: str, query: str, hits: list[dict], **params: Any) -> None:
+        if self.trace is not None:
+            self.trace.add_retrieval(source, query, hits, **params)
 
 
 @dataclass

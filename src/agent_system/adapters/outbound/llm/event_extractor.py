@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from agent_system.adapters.outbound.llm.provider import openai_provider
 
 
 class ExtractedEventSchema(BaseModel):
@@ -110,7 +110,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
     
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=openai_provider(key))
     
     return model_string
 

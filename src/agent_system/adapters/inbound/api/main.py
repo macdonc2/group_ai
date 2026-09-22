@@ -27,6 +27,7 @@ from agent_system.adapters.inbound.api.routes import (
     auth_router,
     calendar_router,
     conversations_router,
+    evals_router,
     groups_router,
     knowledge_router,
     plans_router,
@@ -69,6 +70,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # Deep Research runs in-process; anything mid-flight at the last
         # shutdown is gone, so say so on those rows and start a fresh runner.
         await mark_interrupted_on_startup(db)
+        from agent_system.adapters.outbound.persistence.trace_repository import mark_orphaned_eval_runs
+        await mark_orphaned_eval_runs(db)
         set_runner(ResearchRunner(db, ResearchSettings(
             strong_model=settings.default_model,
             fast_model=settings.fallback_model,
@@ -105,6 +108,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent_router, prefix="/api/v1")
     app.include_router(calendar_router, prefix="/api/v1")
     app.include_router(conversations_router, prefix="/api/v1")
+    app.include_router(evals_router, prefix="/api/v1")
     app.include_router(groups_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(plans_router, prefix="/api/v1")

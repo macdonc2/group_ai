@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from agent_system.adapters.outbound.llm.provider import openai_provider
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,7 @@ def _get_model_for_extraction(model_string: str, api_key: str | None = None) -> 
 
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=openai_provider(key))
 
     return model_string
 
@@ -506,7 +506,7 @@ def create_entity_type_detector_agent(
 
     if key and ":" in model:
         _, model_name = model.split(":", 1)
-        model_instance = OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
+        model_instance = OpenAIResponsesModel(model_name, provider=openai_provider(key))
     else:
         model_instance = model  # type: ignore
 

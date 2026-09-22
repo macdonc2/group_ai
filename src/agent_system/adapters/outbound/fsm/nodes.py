@@ -1,6 +1,7 @@
 """FSM workflow nodes using pydantic-graph."""
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import Annotated
 
@@ -13,6 +14,42 @@ from agent_system.adapters.outbound.fsm.state import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def react_tool_input(tool: str | None, proposed: str | None, user_input: str, step_description: str) -> str:
+    """Input for a tool a ReAct step asked for.
+
+    The step agent's own `tool_input` wins. Without one, a search falls back to
+    the user's question (which carries the real entities), never the step's
+    instruction prose, which made web_search return unrelated pages.
+    """
+    proposed = (proposed or "").strip()
+    if proposed:
+        return proposed
+    if tool == "web_search":
+        return user_input.strip()[:200]
+    return step_description
+
+
+def _retrieval_hits_from_tool(data) -> list[dict]:
+    """Flatten a recall tool's ToolResult.data into ranked retrieval hits for the trace."""
+    if isinstance(data, list):
+        return [{"type": "message", "role": m.get("role"), "content": m.get("content"),
+                 "created_at": str(m.get("created_at"))} for m in data if isinstance(m, dict)]
+    if not isinstance(data, dict):
+        return []
+    hits: list[dict] = []
+    for fact in data.get("structured_profile") or []:
+        hits.append({"type": "profile", "content": fact})
+    for key in ("people", "pets"):
+        for fact in data.get(key) or []:
+            hits.append({"type": key[:-1] if key == "pets" else "person", "content": fact if isinstance(fact, str) else str(fact)})
+    for m in data.get("semantic_matches") or []:
+        hits.append({"type": "semantic", "id": m.get("id"), "score": m.get("score"), "role": m.get("role"),
+                     "content": m.get("content")})
+    for k in data.get("from_knowledge_graph") or []:
+        hits.append({"type": f"kg:{k.get('type')}", "content": k.get("label")})
+    return hits
 
 
 _TENTATIVE_HINTS = ("not as accepted", "not accepted", "tentative", "unaccepted", "as maybe", "as optional", "pencil")
@@ -125,6 +162,7 @@ Analyze the intent of the current message IN CONTEXT of the conversation above. 
 
         result = None
         last_error: Exception | None = None
+        answered_by = "heuristics"
 
         for model, label in [
             (ctx.deps.default_model, "primary"),
@@ -133,6 +171,7 @@ Analyze the intent of the current message IN CONTEXT of the conversation above. 
             try:
                 agent = create_intent_agent(model, ctx.deps.openai_api_key)
                 result = await agent.run(prompt)
+                answered_by = label
                 break
             except Exception as e:
                 last_error = e
@@ -260,7 +299,14 @@ Analyze the intent of the current message IN CONTEXT of the conversation above. 
                     "suggested_tool": suggested_tool,
                 },
             )
-        
+
+        ctx.deps.decide(
+            "AnalyzeIntent", f"intent from {answered_by} model" if answered_by != "heuristics" else "intent from keyword heuristics",
+            answered_by != "heuristics", "UpdateKnowledge",
+            intent=ctx.state.intent.intent_type.value if ctx.state.intent else None,
+            suggested_tool=ctx.state.tool_name, requires_planning=ctx.state.plan_needed,
+            entities=ctx.state.entities, error=type(last_error).__name__ if result is None and last_error else None,
+        )
         return UpdateKnowledge()
 
 
@@ -313,18 +359,24 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         # Check for active plan
         if ctx.state.conversation.active_plan_id:
             plan = await ctx.deps.plan_repository.get(ctx.state.conversation.active_plan_id)
-            if plan and plan.is_active:
+            if ctx.deps.decide(
+                "CheckPlan", "active_plan ∧ plan.is_active", bool(plan and plan.is_active), "ExecutePlan",
+                active_plan_id=str(ctx.state.conversation.active_plan_id),
+            ):
                 ctx.state.current_plan = plan
                 await ctx.deps.emit_event("node_complete", "CheckPlan", "Found active plan", {"plan_id": str(plan.id)})
                 return ExecutePlan()
 
         # Respect the user's auto_plan preference: when off, never start ReAct mode
         auto_plan = getattr(ctx.state.user.preferences, "auto_plan", True)
+        is_task = bool(ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK)
+        needs_plan = bool(auto_plan and (ctx.state.plan_needed or is_task))
 
         # Determine if a new plan is needed based on intent analysis
-        if auto_plan and (
-            ctx.state.plan_needed
-            or (ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK)
+        if ctx.deps.decide(
+            "CheckPlan", "auto_plan ∧ (requires_planning ∨ intent = task)", needs_plan,
+            "CreatePlan" if needs_plan else "ExecutePlan",
+            auto_plan=auto_plan, requires_planning=ctx.state.plan_needed, intent_is_task=is_task,
         ):
             # Enable ReAct mode for task intents - will use step-by-step reasoning
             ctx.state.react_mode = True
@@ -643,7 +695,12 @@ class ExecutePlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         await ctx.deps.emit_event("node_start", "ExecutePlan", "Executing plan steps...")
         
         # ReAct mode: Execute each plan step with visible reasoning
-        if ctx.state.react_mode and ctx.state.current_plan:
+        react = bool(ctx.state.react_mode and ctx.state.current_plan)
+        if ctx.deps.decide(
+            "ExecutePlan", "react_mode ∧ plan", react, "ReAct steps" if react else "standard routing",
+            react_mode=ctx.state.react_mode, has_plan=ctx.state.current_plan is not None,
+            steps_done=ctx.state.current_step_index,
+        ):
             from agent_system.adapters.outbound.llm import create_step_execution_agent
             
             steps = ctx.state.current_plan.steps
@@ -719,10 +776,19 @@ Focus ONLY on this specific step - not the entire question."""
                     )
                     
                     # If step needs a tool, pause and use it
-                    if result.output.needs_tool and result.output.tool_suggestion:
+                    step_tool = bool(result.output.needs_tool and result.output.tool_suggestion)
+                    if ctx.deps.decide(
+                        "ExecutePlan", f"step {step_num}: needs_tool ∧ tool_suggestion", step_tool,
+                        "SelectTool" if step_tool else "ExecutePlan",
+                        step=step.step.description, tool_suggestion=result.output.tool_suggestion,
+                        needs_tool=result.output.needs_tool,
+                    ):
                         ctx.state.requires_tool = True
                         ctx.state.tool_name = result.output.tool_suggestion
-                        ctx.state.tool_input = step.step.description
+                        ctx.state.tool_input = react_tool_input(
+                            result.output.tool_suggestion, result.output.tool_input,
+                            ctx.state.user_input, step.step.description,
+                        )
                         ctx.state.current_step_index += 1  # Move to next step after tool
                         await ctx.deps.emit_event("node_complete", "ExecutePlan", f"Step {step_num} needs tool: {result.output.tool_suggestion}")
                         return SelectTool()
@@ -750,14 +816,22 @@ Focus ONLY on this specific step - not the entire question."""
             return GenerateResponse()
         
         # Standard mode: Check if tool is needed (determined by LLM in AnalyzeIntent)
-        if ctx.state.requires_tool and ctx.state.tool_name:
+        tool_needed = bool(ctx.state.requires_tool and ctx.state.tool_name)
+        if ctx.deps.decide(
+            "ExecutePlan", "requires_tool ∧ tool_name", tool_needed, "SelectTool" if tool_needed else "GenerateResponse",
+            requires_tool=ctx.state.requires_tool, tool_name=ctx.state.tool_name,
+        ):
             await ctx.deps.emit_event("node_complete", "ExecutePlan", f"Tool needed: {ctx.state.tool_name}")
             return SelectTool()
-        
+
         # Check if there's a plan with a current step that needs a tool
         if ctx.state.current_plan and ctx.state.current_plan.current_step:
             current_step = ctx.state.current_plan.current_step
-            if current_step.step.tool_required:
+            if ctx.deps.decide(
+                "ExecutePlan", "plan.current_step.tool_required", bool(current_step.step.tool_required),
+                "SelectTool" if current_step.step.tool_required else "GenerateResponse",
+                tool_required=current_step.step.tool_required,
+            ):
                 ctx.state.requires_tool = True
                 ctx.state.tool_name = current_step.step.tool_required
                 await ctx.deps.emit_event("node_complete", "ExecutePlan", f"Tool from plan: {ctx.state.tool_name}")
@@ -1176,9 +1250,14 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         
         tool_name = ctx.state.tool_name
         tool_args = ctx.state.tool_arguments
+        public_args = {k: v for k, v in tool_args.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
+        tool_ok = False
+        t_start = time.perf_counter()
         
         if tool_name not in AVAILABLE_TOOLS:
             ctx.state.tool_result = f"Unknown tool: {tool_name}"
+            if ctx.deps.trace is not None:
+                ctx.deps.trace.add_tool_call(str(tool_name), public_args, ctx.state.tool_result, False, 0.0)
             return EvaluateResult()
         
         tool_info = AVAILABLE_TOOLS[tool_name]
@@ -1223,6 +1302,9 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             else:
                 result = await tool_func(**tool_args)
             
+            tool_ok = bool(result.success)
+            if ctx.deps.trace is not None and tool_name in ("recall_about_topic", "recall_from_period"):
+                ctx.deps.record_retrieval(f"tool:{tool_name}", str(public_args.get("topic") or public_args), _retrieval_hits_from_tool(result.data))
             if result.success:
                 ctx.state.tool_result = result.message
                 if result.data:
@@ -1274,6 +1356,11 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 
         except Exception as e:
             ctx.state.tool_result = f"Error executing {tool_name}: {str(e)}"
+
+        if ctx.deps.trace is not None:
+            ctx.deps.trace.add_tool_call(
+                tool_name, public_args, ctx.state.tool_result, tool_ok, (time.perf_counter() - t_start) * 1000,
+            )
         
         await ctx.deps.emit_event("tool_result", "ExecuteTool", f"Tool completed: {tool_name}", {
             "tool_name": tool_name,
@@ -1311,7 +1398,11 @@ class EvaluateResult(BaseNode[WorkflowState, AgentDependencies, WorkflowResult])
             await ctx.deps.plan_repository.update(ctx.state.current_plan)
             
             # Check if more steps remain
-            if not ctx.state.current_plan.is_complete:
+            if ctx.deps.decide(
+                "EvaluateResult", "¬plan.is_complete", not ctx.state.current_plan.is_complete,
+                "ExecutePlan" if not ctx.state.current_plan.is_complete else "GenerateResponse",
+                progress=ctx.state.current_plan.progress,
+            ):
                 ctx.state.requires_tool = False
                 ctx.state.tool_name = None
                 ctx.state.tool_arguments = {}
@@ -1359,6 +1450,13 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                     msg for msg in related_history 
                     if msg.get("conversation_id") != current_conv_id
                 ]
+                ctx.deps.record_retrieval(
+                    "semantic_search", ctx.state.user_input,
+                    [{"id": m.get("id"), "score": m.get("score"), "role": m.get("role"),
+                      "content": m.get("content"), "used_in_prompt": i < 5}
+                     for i, m in enumerate(related_history)],
+                    limit=25, min_score=0.7,
+                )
                 
                 if related_history:
                     logger.info(f"Found {len(related_history)} semantically related past messages")
@@ -1387,6 +1485,11 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                         mentioned_entities=potential_entities[:5],  # Limit to 5 entities
                         limit=5,
                     )
+                    ctx.deps.record_retrieval(
+                        "graph_suggestions", ", ".join(potential_entities[:5]),
+                        [{"name": c.get("name"), "type": c.get("type"), "score": c.get("relevance"),
+                          "content": c.get("details"), "used_in_prompt": True} for c in contextual_suggestions],
+                    )
                     
                     if contextual_suggestions:
                         logger.info(f"Found {len(contextual_suggestions)} contextual suggestions from social graph")
@@ -1406,6 +1509,7 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
             if entities_to_lookup and ctx.deps.knowledge_graph_port:
                 for entity_name in entities_to_lookup:
                     parts: list[str] = []
+                    person = pet = results = None
                     try:
                         # 1) Direct PersonNode lookup (most reliable for people)
                         person = await ctx.deps.knowledge_graph_port.get_person(
@@ -1458,6 +1562,15 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                         
                         if parts:
                             entity_knowledge[entity_name] = " | ".join(parts)
+                        ctx.deps.record_retrieval(
+                            "entity_lookup", entity_name,
+                            ([{"type": "person", "name": person.get("name"), "content": person.get("relationship_type"),
+                               "used_in_prompt": True}] if person else [])
+                            + ([{"type": "pet", "name": pet.get("name"), "content": pet.get("species"),
+                                 "used_in_prompt": True}] if not person and pet else [])
+                            + [{"type": r.get("source_type"), "role": r.get("role"), "content": r.get("content"),
+                                "used_in_prompt": i < 4} for i, r in enumerate(results or [])],
+                        )
                     except Exception as ent_err:
                         logger.warning(f"  Entity lookup failed for '{entity_name}': {ent_err}")
                 
@@ -1469,7 +1582,12 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
             logger.error(f"Entity knowledge lookup failed: {e}", exc_info=True)
         
         # ReAct mode: Synthesize step results into final response
-        if ctx.state.react_mode and ctx.state.step_results:
+        react_synth = bool(ctx.state.react_mode and ctx.state.step_results)
+        if ctx.deps.decide(
+            "GenerateResponse", "react_mode ∧ step_results", react_synth,
+            "synthesis agent" if react_synth else "coordinator agent",
+            steps=len(ctx.state.step_results),
+        ):
             await ctx.deps.emit_event("react_synthesis_start", "GenerateResponse", "Synthesizing step results...")
             
             try:
@@ -1491,11 +1609,8 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                         await ctx.deps.emit_event("node_complete", "GenerateResponse", "Response generated (structured data bypass)", {
                             "response_length": len(ctx.state.response),
                         })
-                        return End(WorkflowResult(
-                            response=ctx.state.response,
-                            suggestions=[],
-                            knowledge_updates=[],
-                        ))
+                        ctx.deps.decide("GenerateResponse", "structured data in step observation → bypass synthesis", True, "FinalizeKnowledge")
+                        return FinalizeKnowledge()
                     
                     # Detect markdown tables
                     if '|' in observation and '---' in observation and observation.count('|') > 10:
@@ -1505,11 +1620,8 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                         await ctx.deps.emit_event("node_complete", "GenerateResponse", "Response generated (table bypass)", {
                             "response_length": len(ctx.state.response),
                         })
-                        return End(WorkflowResult(
-                            response=ctx.state.response,
-                            suggestions=[],
-                            knowledge_updates=[],
-                        ))
+                        ctx.deps.decide("GenerateResponse", "structured data in step observation → bypass synthesis", True, "FinalizeKnowledge")
+                        return FinalizeKnowledge()
                 
                 # Format step results for synthesis (for non-structured responses)
                 steps_formatted = []
@@ -1688,6 +1800,7 @@ For conversational responses:
             # Detect structured event listings
             if '## Houston Events' in tool_result or ('### 1. [' in tool_result and 'https://' in tool_result):
                 logger.info(f"Detected structured event data in tool_result - bypassing LLM synthesis ({len(tool_result)} chars)")
+                ctx.deps.decide("GenerateResponse", "event listing in tool_result → bypass LLM", True, "FinalizeKnowledge", tool=ctx.state.tool_name)
                 lead = await _persona_lead_in(ctx, tool_result)
                 ctx.state.response = f"{lead}\n\n{tool_result}"
                 
@@ -1700,6 +1813,7 @@ For conversational responses:
             # Detect markdown tables with significant data
             if '|' in tool_result and '---' in tool_result and tool_result.count('|') > 15:
                 logger.info(f"Detected markdown table in tool_result - bypassing LLM synthesis ({len(tool_result)} chars)")
+                ctx.deps.decide("GenerateResponse", "markdown table in tool_result → bypass LLM", True, "FinalizeKnowledge", tool=ctx.state.tool_name)
                 ctx.state.response = f"Here's what I found:\n\n{tool_result}"
                 
                 await ctx.deps.emit_event("node_complete", "GenerateResponse", "Table data returned directly", {
@@ -2342,32 +2456,53 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
                         )
                         logger.debug(f"Stored location: {location.name}")
                 
-                # Store extracted preferences
+                # Store extracted preferences (sentiment label -> score, same mapping as group chat)
                 for pref in entity_result.preferences:
-                    await ctx.deps.knowledge_graph_port.store_preference(
-                        user_id=ctx.state.user.id,
-                        category=pref.category,
-                        value=pref.value,
-                        sentiment=pref.sentiment,
-                        confidence=pref.confidence,
-                        source_conversation=str(ctx.state.conversation.id),
-                    )
-                    logger.debug(f"Stored preference: {pref.category}/{pref.value}")
+                    if pref.confidence < 0.7:
+                        continue
+                    try:
+                        sentiment = 0.8 if pref.sentiment == "likes" else (-0.8 if pref.sentiment == "dislikes" else 0.5)
+                        await ctx.deps.knowledge_graph_port.store_preference(
+                            user_id=ctx.state.user.id,
+                            category=pref.category,
+                            value=pref.value,
+                            sentiment=sentiment,
+                            subcategory=pref.subcategory,
+                            conversation_id=str(ctx.state.conversation.id),
+                        )
+                        logger.debug(f"Stored preference: {pref.category}/{pref.value}")
+                    except Exception as pref_err:
+                        logger.warning(f"Failed to store preference {pref.category}/{pref.value}: {pref_err}")
                 
                 # Create relationships between entities
                 for rel in entity_result.relationships:
+                    if rel.confidence < 0.7:
+                        continue
                     try:
                         await ctx.deps.knowledge_graph_port.link_entities(
                             user_id=ctx.state.user.id,
-                            from_entity=rel.from_entity,
-                            from_type=rel.from_type,
-                            to_entity=rel.to_entity,
-                            to_type=rel.to_type,
+                            source_type=rel.source_type,
+                            source_name=rel.source_name,
+                            target_type=rel.target_type,
+                            target_name=rel.target_name,
                             relationship=rel.relationship,
                         )
-                        logger.debug(f"Linked: {rel.from_entity} -{rel.relationship}-> {rel.to_entity}")
+                        logger.debug(f"Linked: {rel.source_name} -{rel.relationship}-> {rel.target_name}")
                     except Exception as rel_err:
-                        logger.debug(f"Failed to link entities: {rel_err}")
+                        logger.warning(f"Failed to link entities: {rel_err}")
+
+                await ctx.deps.emit_event("knowledge_extracted", "FinalizeKnowledge", "Entities extracted", {
+                    "persons": [{"name": x.name, "aliases": x.aliases, "relationship": x.relationship_type,
+                                 "confidence": x.confidence} for x in entity_result.persons],
+                    "pets": [{"name": x.name, "aliases": x.aliases, "species": x.species,
+                              "confidence": x.confidence} for x in entity_result.pets],
+                    "locations": [{"name": x.name, "type": x.location_type, "confidence": x.confidence}
+                                  for x in entity_result.locations],
+                    "relationships": [{"source": r.source_name, "rel": r.relationship, "target": r.target_name,
+                                       "confidence": r.confidence} for r in entity_result.relationships],
+                    "preferences": [{"category": x.category, "value": x.value, "sentiment": x.sentiment,
+                                     "confidence": x.confidence} for x in entity_result.preferences],
+                })
                 
                 if entity_result.persons or entity_result.pets or entity_result.locations:
                     logger.info(

@@ -1,0 +1,86 @@
+name: e2e_tasks
+description: Multi-turn and planning (ReAct) tasks judged end to end, with flow quality alongside.
+rubrics: [task_completion, agent_flow]
+pass_threshold: 3.5
+
+x-household: &household
+  people:
+    - {name: Rachel, relationship_type: spouse, context_notes: "Vegetarian; loves Thai food; birthday is in March"}
+    - {name: Zane, relationship_type: friend, context_notes: "Road cyclist; allergic to shellfish"}
+  pets:
+    - {name: Roxanne, species: dog, breed: boxer, personality: [high-energy]}
+  locations:
+    - {name: Buffalo Bayou Park, location_type: park, city: Houston}
+
+cases:
+  - id: plan_birthday_dinner
+    seed: *household
+    turns: ["Plan a birthday dinner at home for Rachel — menu and a rough timeline."]
+    expect:
+      intent: task
+      route: [CreatePlan, ExecutePlan, GenerateResponse]
+      must_mention: [vegetarian]
+      answer_criteria: "A vegetarian (ideally Thai-leaning) menu with a timeline; no meat or fish dishes."
+
+  - id: weekend_with_dog
+    seed: *household
+    turns: ["Put together a Saturday plan that gets Roxanne properly worn out."]
+    expect:
+      intent: task
+      answer_criteria: "A concrete Saturday schedule with high-energy dog activities; Buffalo Bayou Park is a plus."
+
+  - id: group_ride_logistics
+    seed: *household
+    turns: ["Zane and I want to do a 40-mile ride and then grab lunch. Help me plan it."]
+    expect:
+      answer_criteria: "Plans a ride and a lunch stop that avoids shellfish for Zane."
+      must_mention: [shellfish]
+
+  - id: multi_turn_refinement
+    turns:
+      - "I want to start running. Can you make me a beginner plan?"
+      - "Make it 3 days a week, and I can only run in the mornings."
+    expect:
+      answer_criteria: "A beginner running plan restructured to 3 morning sessions per week."
+      must_mention: ["3"]
+
+  - id: math_then_use_result
+    turns:
+      - "I earn $5,200 a month. What's 30% of that?"
+      - "Ok, and if I put that amount toward rent, how much is left of my income?"
+    expect:
+      must_mention: ["3,640"]
+      answer_criteria: "Computes 30% = $1,560 and leftover $3,640."
+
+  - id: remember_then_use
+    turns:
+      - "Just so you know, I'm training for the Houston Marathon in January."
+      - "Suggest a long run for this weekend."
+    expect:
+      answer_criteria: "Suggests a long run framed around marathon training."
+      must_mention: [marathon]
+
+  - id: research_style_question
+    turns: ["Compare induction and gas stoves for a small apartment kitchen and give me a recommendation."]
+    expect:
+      answer_criteria: "Balanced comparison (cost, safety, ventilation, performance) ending in a clear recommendation."
+
+  - id: honest_limits_calendar
+    turns: ["Book me a table at a restaurant for Friday at 7."]
+    expect:
+      must_not_mention: ["I've booked", "I have booked", "reservation is confirmed"]
+      answer_criteria: "Does not claim to have made a reservation it cannot make; offers what it can do instead."
+
+  - id: explain_then_followup
+    turns:
+      - "How do groups work in this app?"
+      - "Can the assistant see messages from before I joined?"
+    expect:
+      answer_criteria: "Answers the follow-up from the app's documentation without inventing behaviour."
+
+  - id: gift_ideas_personalised
+    seed: *household
+    turns: ["Gift ideas for Zane under $100?"]
+    expect:
+      answer_criteria: "Gift ideas tailored to a road cyclist, all plausibly under $100."
+      must_mention: [cycl]

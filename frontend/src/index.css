@@ -262,3 +262,10 @@ html, body {
 :root[data-wrestler] *::-webkit-scrollbar { width: 10px; height: 10px; }
 :root[data-wrestler] *::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--wt-accent) 55%, transparent); border-radius: 8px; border: 2px solid transparent; background-clip: padding-box; }
 :root[data-wrestler] *::-webkit-scrollbar-track { background: transparent; }
+
+/* Predicate tree (Evals tab) */
+.predicate-tree .react-flow__edge.pt-edge-taken .react-flow__edge-path { stroke: #3b82f6; stroke-width: 1.75; }
+.predicate-tree .react-flow__edge.pt-edge-ghost .react-flow__edge-path { stroke: #94a3b8; stroke-dasharray: 4 4; opacity: 0.7; }
+.predicate-tree .react-flow__edge.pt-edge-missed .react-flow__edge-path { stroke: #ef4444; stroke-dasharray: 4 4; }
+.predicate-tree .react-flow__edge-text { font-size: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.predicate-tree .react-flow__edge.pt-edge-ghost .react-flow__edge-text { fill: #94a3b8; }

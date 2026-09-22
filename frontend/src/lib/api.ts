@@ -11,6 +11,15 @@ import type {
   GroupSummary,
   ResearchListItem,
   ResearchDetail,
+  EvalSuite,
+  EvalRunItem,
+  EvalRunDetail,
+  EvalCaseRow,
+  EvalCaseDetail,
+  FsmTopology,
+  TracedConversation,
+  ConversationTrace,
+  RunComparison,
 } from '../types';
 import { useAuthStore } from '../stores/authStore';
 
@@ -410,6 +419,21 @@ export const api = {
   researchAudioUrl: (id: string): string => {
     const token = useAuthStore.getState().token ?? '';
     return `${API_BASE}/research/${id}/audio?token=${encodeURIComponent(token)}`;
+  },
+
+  // Evals (superuser)
+  evals: {
+    suites: () => fetchApi<EvalSuite[]>('/evals/suites'),
+    runs: (suite?: string) => fetchApi<EvalRunItem[]>(`/evals/runs${suite ? `?suite=${encodeURIComponent(suite)}` : ''}`),
+    run: (id: string) => fetchApi<EvalRunDetail>(`/evals/runs/${id}`),
+    cases: (runId: string) => fetchApi<EvalCaseRow[]>(`/evals/runs/${runId}/cases`),
+    caseResult: (id: string) => fetchApi<EvalCaseDetail>(`/evals/cases/${id}`),
+    start: (body: { suite: string; judge: string; repeats?: number; concurrency?: number; case_ids?: string[] }) =>
+      fetchApi<{ id: string; status: string }>('/evals/runs', { method: 'POST', body: JSON.stringify(body) }),
+    compare: (a: string, b: string) => fetchApi<RunComparison>(`/evals/compare?a=${a}&b=${b}`),
+    graph: () => fetchApi<FsmTopology>('/evals/graph'),
+    conversations: () => fetchApi<TracedConversation[]>('/evals/conversations'),
+    conversationTraces: (id: string) => fetchApi<ConversationTrace[]>(`/evals/traces/conversation/${id}`),
   },
 
   updateCalendarSettings: async (settings: {

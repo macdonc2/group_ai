@@ -18,6 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN pip install --no-cache-dir uv
 
 # Copy dependency files and README (required by pyproject.toml)
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
+
 COPY pyproject.toml README.md ./
 
 # Copy source code (needed for package install)

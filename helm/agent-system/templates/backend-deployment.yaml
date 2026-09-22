@@ -66,6 +66,14 @@ spec:
               value: {{ .Values.env.TTS_MODEL | quote }}
             - name: TTS_VOICE
               value: {{ .Values.env.TTS_VOICE | quote }}
+            - name: EVAL_JUDGE_MODEL
+              value: {{ .Values.env.EVAL_JUDGE_MODEL | default "gpt-6-astra" | quote }}
+            {{- if .Values.env.JEV_BASE_URL }}
+            - name: JEV_BASE_URL
+              value: {{ .Values.env.JEV_BASE_URL | quote }}
+            {{- end }}
+            - name: JEV_MODEL
+              value: {{ .Values.env.JEV_MODEL | default "jev" | quote }}
           
           envFrom:
             - secretRef:

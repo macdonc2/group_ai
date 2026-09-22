@@ -5,7 +5,7 @@ from functools import lru_cache
 
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from pydantic_ai.providers.openai import OpenAIProvider
+from agent_system.adapters.outbound.llm.provider import openai_provider
 
 from agent_system.adapters.outbound.llm.personas import persona_suffix
 from agent_system.adapters.outbound.llm.schemas import (
@@ -43,7 +43,7 @@ def _get_model(model_string: str, api_key: str | None = None) -> OpenAIResponses
     
     key = api_key or os.environ.get("OPENAI_API_KEY")
     if key:
-        return OpenAIResponsesModel(model_name, provider=OpenAIProvider(api_key=key))
+        return OpenAIResponsesModel(model_name, provider=openai_provider(key))
     
     # Return string for PydanticAI to handle (will fail if no key)
     return f"openai-responses:{model_name}"
@@ -466,6 +466,10 @@ IMPORTANT:
 - Be thorough in your reasoning - show your thinking
 - If this step genuinely needs current/real-time info, mark needs_tool=True
 - Most knowledge questions can be answered from training data (needs_tool=False)
+- When needs_tool=True, set tool_input to what the tool should receive: for web_search a short,
+  specific query built from the ORIGINAL question's concrete terms (e.g. "Big Bend National Park
+  lodging Terlingua", not "Check current park access, seasonal heat, ..."); for calculate the bare
+  expression; for lookups a single keyword.
 """
 
 SYNTHESIS_SYSTEM_PROMPT = """You are synthesizing reasoning steps into a helpful response.
@@ -542,6 +546,7 @@ def create_coordinator_agent(model: str = "openai:gpt-5.2", api_key: str | None 
     """
     return Agent(
         _get_model(model, api_key),
+        name="coordinator",
         output_type=ResponseGeneration,
         system_prompt=COORDINATOR_SYSTEM_PROMPT + persona_suffix(persona),
     )
@@ -563,6 +568,7 @@ def create_streaming_coordinator_agent(model: str = "openai:gpt-5.2", api_key: s
     """
     return Agent(
         _get_model(model, api_key),
+        name="coordinator_stream",
         output_type=str,  # Plain text for streaming support
         system_prompt=COORDINATOR_SYSTEM_PROMPT + persona_suffix(persona),
     )
@@ -580,6 +586,7 @@ def create_intent_agent(model: str = "openai:gpt-5.2", api_key: str | None = Non
     """
     return Agent(
         _get_model(model, api_key),
+        name="intent",
         output_type=IntentAnalysis,
         system_prompt=INTENT_SYSTEM_PROMPT,
     )
@@ -597,6 +604,7 @@ def create_planning_agent(model: str = "openai:gpt-5.2", api_key: str | None = N
     """
     return Agent(
         _get_model(model, api_key),
+        name="planner",
         output_type=PlanSchema,
         system_prompt=PLANNING_SYSTEM_PROMPT,
     )
@@ -614,6 +622,7 @@ def create_tool_agent(model: str = "openai:gpt-5.2", api_key: str | None = None)
     """
     return Agent(
         _get_model(model, api_key),
+        name="tool_selector",
         output_type=ToolSelection,
         system_prompt=TOOL_SYSTEM_PROMPT,
     )
@@ -631,6 +640,7 @@ def create_knowledge_agent(model: str = "openai:gpt-5.2", api_key: str | None = 
     """
     return Agent(
         _get_model(model, api_key),
+        name="knowledge",
         output_type=KnowledgeExtraction,
         system_prompt=KNOWLEDGE_SYSTEM_PROMPT,
     )
@@ -648,6 +658,7 @@ def create_react_planning_agent(model: str = "openai:gpt-5.2", api_key: str | No
     """
     return Agent(
         _get_model(model, api_key),
+        name="react_planner",
         output_type=ReActPlanSchema,
         system_prompt=REACT_PLANNING_SYSTEM_PROMPT,
     )
@@ -665,6 +676,7 @@ def create_step_execution_agent(model: str = "openai:gpt-5.2", api_key: str | No
     """
     return Agent(
         _get_model(model, api_key),
+        name="react_step",
         output_type=StepExecution,
         system_prompt=STEP_EXECUTION_SYSTEM_PROMPT,
     )
@@ -682,6 +694,7 @@ def create_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str | None = 
     """
     return Agent(
         _get_model(model, api_key),
+        name="synthesis",
         output_type=StepSynthesis,
         system_prompt=SYNTHESIS_SYSTEM_PROMPT + persona_suffix(persona),
     )
@@ -699,6 +712,7 @@ def create_streaming_synthesis_agent(model: str = "openai:gpt-5.2", api_key: str
     """
     return Agent(
         _get_model(model, api_key),
+        name="synthesis_stream",
         output_type=str,  # Plain text for streaming support
         system_prompt=SYNTHESIS_SYSTEM_PROMPT + persona_suffix(persona),
     )

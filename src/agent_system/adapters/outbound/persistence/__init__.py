@@ -1,6 +1,11 @@
 """Persistence adapter - SQLAlchemy implementations."""
 
 from agent_system.adapters.outbound.persistence.database import Base, Database
+from agent_system.adapters.outbound.persistence.eval_models import (
+    EvalCaseResultModel,
+    EvalRunModel,
+    TurnTraceModel,
+)
 from agent_system.adapters.outbound.persistence.group_repositories import (
     SQLAlchemyExtractedEventRepository,
     SQLAlchemyGroupConversationRepository,
@@ -62,6 +67,9 @@ __all__ = [
     "ResearchJobModel",
     "ResearchFigureModel",
     "ResearchAudioModel",
+    "TurnTraceModel",
+    "EvalRunModel",
+    "EvalCaseResultModel",
     # Mappers
     "UserMapper",
     "ConversationMapper",

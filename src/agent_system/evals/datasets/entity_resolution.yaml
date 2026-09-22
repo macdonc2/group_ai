@@ -1,0 +1,99 @@
+name: entity_resolution
+description: FinalizeKnowledge extraction and linking — new vs. existing entities, aliases, relationships, no duplicates.
+rubrics: []
+pass_threshold: 3.5
+
+cases:
+  - id: new_person_created
+    turns: ["My sister Priya just moved to Austin for a job at Dell."]
+    expect:
+      entities: [{type: person, name: Priya, relationship_type: sibling}]
+
+  - id: new_pet_created
+    turns: ["We adopted a beagle puppy named Waffles this weekend!"]
+    expect:
+      entities: [{type: pet, name: Waffles, species: dog}]
+
+  - id: existing_person_not_duplicated
+    seed:
+      people: [{name: Dominique, relationship_type: friend, aliases: [Dom]}]
+    turns: ["Had lunch with Dom today, she's thinking of switching careers."]
+    expect:
+      entities: [{type: person, name: Dominique, aliases: [Dom]}]
+
+  - id: alias_learned
+    seed:
+      people: [{name: Rachel, relationship_type: spouse}]
+    turns: ["Rachel — I call her Rach — just got promoted to charge nurse!"]
+    expect:
+      entities: [{type: person, name: Rachel, aliases: [Rach], relationship_type: spouse}]
+
+  - id: pet_nickname_not_new_pet
+    seed:
+      pets: [{name: Bo, species: cat}]
+    turns: ["Bo Boy knocked a glass off the counter again lol"]
+    expect:
+      entities: [{type: pet, name: Bo, aliases: [Bo Boy], species: cat}]
+
+  - id: pronoun_does_not_create_entity
+    seed:
+      people: [{name: Zane, relationship_type: friend}]
+    turns: ["Zane got a new bike. He says it's carbon."]
+    expect:
+      entities: [{type: person, name: Zane}]
+
+  - id: location_created
+    turns: ["My favorite coffee spot is Blacksmith on Westheimer in Montrose."]
+    expect:
+      entities: [{type: location, name: Blacksmith}]
+
+  - id: multiple_entities_one_message
+    turns: ["My coworker Luis and his wife Ana invited me to their place in the Heights; they have a husky named Juno."]
+    expect:
+      entities:
+        - {type: person, name: Luis, relationship_type: colleague}
+        - {type: person, name: Ana}
+        - {type: pet, name: Juno, species: dog}
+
+  - id: relationship_change_updates
+    seed:
+      people: [{name: Taylor, relationship_type: friend}]
+    turns: ["Taylor and I started dating last month!"]
+    expect:
+      entities: [{type: person, name: Taylor, relationship_type: partner}]
+
+  - id: case_insensitive_merge
+    seed:
+      people: [{name: Mark, relationship_type: colleague}]
+    turns: ["MARK from work is leaving for a startup."]
+    expect:
+      entities: [{type: person, name: Mark}]
+
+  - id: preference_stored
+    turns: ["I really can't stand cilantro, it tastes like soap to me."]
+    expect:
+      answer_criteria: "Acknowledges the preference."
+      must_not_mention: ["[workflow error"]
+
+  - id: relationship_link_stored
+    turns: ["My friend Omar works at NASA's Johnson Space Center."]
+    expect:
+      entities: [{type: person, name: Omar, relationship_type: friend}]
+
+  - id: no_entity_from_hypothetical
+    turns: ["If I had a cat I'd name it Pixel."]
+    expect:
+      forbid_entities: [Pixel]
+
+  - id: second_mention_same_entity
+    turns: ["My neighbor Gail has the best tomatoes.", "Gail gave me a whole bag of them today!"]
+    expect:
+      entities: [{type: person, name: Gail}]
+
+  - id: pronoun_no_spurious_person
+    seed:
+      people: [{name: Zane, relationship_type: friend}]
+    turns: ["Zane said he'd bring his famous brisket."]
+    expect:
+      entities: [{type: person, name: Zane}]
+      forbid_entities: [He, His]

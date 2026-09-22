@@ -392,7 +392,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
         # Create and connect intent nodes (use MERGE to connect across conversations)
         for intent in intents:
             intent_query = """
-            MERGE (i:KnowledgeNode {node_type: 'topic', label: $label})
+            MERGE (i:KnowledgeNode {node_type: 'topic', label: $label, user_id: $user_id})
             ON CREATE SET i.id = $id, i.created_at = $now, i.updated_at = $now,
                           i.properties_json = $props
             ON MATCH SET i.updated_at = $now
@@ -404,6 +404,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
                     intent_query,
                     id=intent_id,
                     label=intent,
+                    user_id=str(user_id),
                     now=now,
                     props=json.dumps({"description": f"Intent: {intent}"}),
                 )
@@ -419,7 +420,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
         entity_ids = []
         for entity in entities:
             entity_query = """
-            MERGE (e:KnowledgeNode {node_type: 'topic', label: $label})
+            MERGE (e:KnowledgeNode {node_type: 'topic', label: $label, user_id: $user_id})
             ON CREATE SET e.id = $id, e.created_at = $now, e.updated_at = $now,
                           e.properties_json = $props
             ON MATCH SET e.updated_at = $now
@@ -431,6 +432,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
                     entity_query,
                     id=entity_id,
                     label=entity,
+                    user_id=str(user_id),
                     now=now,
                     props=json.dumps({}),
                 )

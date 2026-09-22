@@ -1401,6 +1401,10 @@ async def websocket_chat(
                                     state=state,
                                     deps=deps,
                                 )
+                                from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
+                                await save_turn_trace(
+                                    deps.trace, user_id=str(user.id), conversation_id=conversation_id, source="group",
+                                )
                             
                             agent_response = result.response
                             agent_msg_id = pending_agent_msg_id  # Use the same ID used for streaming

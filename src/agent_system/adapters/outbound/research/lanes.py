@@ -174,6 +174,9 @@ async def _enrich_with_pages(sources: list[Source], limit: int) -> list[Source]:
 
 
 async def run_lane(lane: Lane, question: str, deps: LaneDeps, emit: Emit) -> LaneResult:
+    from agent_system.adapters.outbound.telemetry import set_current_node
+
+    set_current_node(f"lane:{lane}")  # gather() gives each lane its own context
     result = LaneResult(lane=lane)
     try:
         await emit("lane_start", lane, f"{lane.title()} lane starting", None)

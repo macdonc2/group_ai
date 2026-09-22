@@ -45,6 +45,7 @@ class ResearchSettings:
     tts_voice: str
     semantic_scholar_key: str | None = None
     github_token: str | None = None
+    narrate: bool = True  # evals turn TTS off
 
 
 @dataclass
@@ -124,6 +125,16 @@ class ResearchRunner:
     # ---- the pipeline -----------------------------------------------------
 
     async def _run(self, job_id: str, api_key: str, live: _LiveJob) -> None:
+        from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture
+
+        install_llm_capture()
+        trace = TurnTrace()
+        with bind_trace(trace):
+            await self._run_pipeline(job_id, api_key, live, trace)
+
+    async def _run_pipeline(self, job_id: str, api_key: str, live: _LiveJob, trace: Any) -> None:
+        from agent_system.adapters.outbound.telemetry import set_current_node
+
         s = self._settings
         progress = ResearchProgress(phase="running")
 
@@ -191,6 +202,8 @@ class ResearchRunner:
                 raise RuntimeError("All three lanes came back empty; nothing to synthesise.")
 
             # 2. synthesis
+            set_current_node("synthesis")
+            progress.usage = research_usage(trace)
             progress.phase = "synthesizing"
             await self._update(job_id, status=ResearchStatus.SYNTHESIZING, progress=progress)
             await self._emit(job_id, live, "synthesis_start", "synthesis", "Integrating the three lanes", None)
@@ -206,6 +219,7 @@ class ResearchRunner:
 
             # 3a. figures lifted straight from the most-cited papers (link in caption)
             figures: list[Figure] = []
+            set_current_node("figures")
             await self._emit(job_id, live, "figures_start", "figures", "Looking for figures in the cited papers", None)
             try:
                 all_findings = [f for r in results.values() for f in r.findings]
@@ -255,6 +269,7 @@ class ResearchRunner:
                                  {"ordinal": fig.ordinal, "caption": fig.caption})
 
             # 4. write
+            set_current_node("writer")
             progress.phase = "writing"
             await self._update(job_id, status=ResearchStatus.WRITING, progress=progress)
             await self._emit(job_id, live, "writing_start", "writer", "Writing the overview", None)
@@ -269,26 +284,29 @@ class ResearchRunner:
                              {"markdown": markdown, "figures": [f.model_dump() for f in figures]})
 
             # 5. narrate
-            progress.phase = "narrating"
-            await self._update(job_id, status=ResearchStatus.NARRATING, progress=progress)
-            await self._emit(job_id, live, "narration_start", "narration", f"Generating narration ({s.tts_voice})", None)
-            try:
-                script = writer.narration_script(markdown, figures)
-                mp3 = await narration.synthesize_speech(script, api_key, s.tts_model, s.tts_voice, persona=persona)
-                async with self._db.session() as session:
-                    await SQLAlchemyResearchRepository(session).set_audio(
-                        job_id, mp3, s.tts_voice, s.tts_model, narration.estimate_duration_s(script)
-                    )
-                    await session.commit()
-                progress.has_audio = True
-                await self._emit(job_id, live, "narration_complete", "narration", "Narration ready",
-                                 {"voice": s.tts_voice, "bytes": len(mp3)})
-            except Exception as exc:  # noqa: BLE001
-                logger.exception("narration failed")
-                await self._emit(job_id, live, "narration_failed", "narration",
-                                 f"Narration failed: {str(exc)[:200]}", None)
+            if s.narrate:
+                set_current_node("narration")
+                progress.phase = "narrating"
+                await self._update(job_id, status=ResearchStatus.NARRATING, progress=progress)
+                await self._emit(job_id, live, "narration_start", "narration", f"Generating narration ({s.tts_voice})", None)
+                try:
+                    script = writer.narration_script(markdown, figures)
+                    mp3 = await narration.synthesize_speech(script, api_key, s.tts_model, s.tts_voice, persona=persona)
+                    async with self._db.session() as session:
+                        await SQLAlchemyResearchRepository(session).set_audio(
+                            job_id, mp3, s.tts_voice, s.tts_model, narration.estimate_duration_s(script)
+                        )
+                        await session.commit()
+                    progress.has_audio = True
+                    await self._emit(job_id, live, "narration_complete", "narration", "Narration ready",
+                                     {"voice": s.tts_voice, "bytes": len(mp3)})
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("narration failed")
+                    await self._emit(job_id, live, "narration_failed", "narration",
+                                     f"Narration failed: {str(exc)[:200]}", None)
 
             # done
+            progress.usage = research_usage(trace)
             progress.phase = "complete"
             from datetime import datetime
 
@@ -297,12 +315,14 @@ class ResearchRunner:
             await self._emit(job_id, live, "job_complete", None, "Done", {"has_audio": progress.has_audio})
 
         except asyncio.CancelledError:
+            progress.usage = research_usage(trace)
             progress.phase = "failed"
             await self._update(job_id, status=ResearchStatus.FAILED, progress=progress, error="Cancelled")
             await self._emit(job_id, live, "job_failed", None, "Cancelled", None)
             raise
         except Exception as exc:  # noqa: BLE001
             logger.exception("research job %s failed", job_id)
+            progress.usage = research_usage(trace)
             progress.phase = "failed"
             await self._update(job_id, status=ResearchStatus.FAILED, progress=progress, error=str(exc)[:500])
             await self._emit(job_id, live, "job_failed", None, str(exc)[:300], None)
@@ -315,6 +335,20 @@ class ResearchRunner:
 # ---- module singleton ------------------------------------------------------
 
 _runner: ResearchRunner | None = None
+
+
+def research_usage(trace: Any) -> dict[str, Any]:
+    """Token/cost rollup for a research job, overall and per stage (lane:*, synthesis, writer...)."""
+    data = trace.to_dict()
+    by_stage: dict[str, dict[str, Any]] = {}
+    for c in data["llm_calls"]:
+        st = by_stage.setdefault(c["node"] or "other", {"calls": 0, "input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0, "llm_ms": 0.0})
+        st["calls"] += 1
+        st["input_tokens"] += c["input_tokens"]
+        st["output_tokens"] += c["output_tokens"]
+        st["cost_usd"] = round(st["cost_usd"] + (c["cost_usd"] or 0.0), 6)
+        st["llm_ms"] = round(st["llm_ms"] + c["duration_ms"], 1)
+    return {**data["usage"], "elapsed_ms": trace.now_ms(), "by_stage": by_stage}
 
 
 def set_runner(runner: ResearchRunner) -> None:

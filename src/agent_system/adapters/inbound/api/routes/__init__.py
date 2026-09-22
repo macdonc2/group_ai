@@ -4,6 +4,7 @@ from agent_system.adapters.inbound.api.routes.agent import router as agent_route
 from agent_system.adapters.inbound.api.routes.auth import router as auth_router
 from agent_system.adapters.inbound.api.routes.calendar import router as calendar_router
 from agent_system.adapters.inbound.api.routes.conversations import router as conversations_router
+from agent_system.adapters.inbound.api.routes.evals import router as evals_router
 from agent_system.adapters.inbound.api.routes.groups import router as groups_router
 from agent_system.adapters.inbound.api.routes.knowledge import router as knowledge_router
 from agent_system.adapters.inbound.api.routes.plans import router as plans_router
@@ -15,6 +16,7 @@ __all__ = [
     "auth_router",
     "calendar_router",
     "conversations_router",
+    "evals_router",
     "groups_router",
     "knowledge_router",
     "plans_router",

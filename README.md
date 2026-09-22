@@ -1265,6 +1265,14 @@ pytest -m e2e           # End-to-end tests
 pytest --cov=agent_system --cov-report=term-missing
 ```
 
+### Evals
+
+Behavioural evals run seeded synthetic users through the real FSM and score routing, tool selection, memory retrieval, entity resolution, task completion and Deep Research quality with deterministic checks plus 1–5 rubric judges (OpenAI, the OpenAI-compatible Jev endpoint, or both with agreement stats), including latency and cost. Results, failure analyses and a predicate-tree view of each turn live in the superuser **Evals** tab. See [docs/evals.md](docs/evals.md).
+
+```bash
+make eval-suite SUITE=memory_retrieval JUDGE=both
+```
+
 ## Development
 
 ### Makefile Commands

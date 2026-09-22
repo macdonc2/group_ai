@@ -79,6 +79,12 @@ env:
   TTS_MODEL: "gpt-4o-mini-tts"
   TTS_VOICE: "marin"
 
+  # Evals (Evals tab / `python -m agent_system.evals`). Secrets EVAL_OPENAI_API_KEY,
+  # JEV_API_KEY and MODEL_PRICING_JSON come from agent-system-secrets via envFrom.
+  EVAL_JUDGE_MODEL: "gpt-6-astra"
+  JEV_BASE_URL: ""   # OpenAI-compatible endpoint serving the Jev judge; empty = Jev disabled
+  JEV_MODEL: "jev"
+
 # PostgreSQL subchart configuration (DISABLED - using custom deployment)
 postgresql:
   enabled: false

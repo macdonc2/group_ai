@@ -121,6 +121,9 @@ class ResearchProgress(BaseModel):
     )
     figures: int = 0
     has_audio: bool = False
+    # LLM/embedding usage rollup {input_tokens, output_tokens, cost_usd, by_stage, ...};
+    # lives in the progress JSON so no schema change is needed.
+    usage: dict[str, Any] | None = None
 
 
 class ResearchJob(BaseModel):

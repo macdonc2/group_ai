@@ -1,8 +1,17 @@
 """OpenAI embedding adapter implementing the EmbeddingPort."""
 
+import time
+
 from openai import AsyncOpenAI
 
+from agent_system.adapters.outbound.telemetry import current_trace
 from agent_system.domain.ports.embedding import EmbeddingPort, EmbeddingResult
+
+
+def _record(model: str, tokens: int, t0: float) -> None:
+    trace = current_trace()
+    if trace is not None:
+        trace.add_embedding_call(model, tokens, (time.perf_counter() - t0) * 1000)
 
 
 class OpenAIEmbeddingAdapter(EmbeddingPort):
@@ -42,11 +51,13 @@ class OpenAIEmbeddingAdapter(EmbeddingPort):
         # text-embedding-3-small max is 8191 tokens
         truncated_text = text[:30000]  # Rough char limit
         
+        t0 = time.perf_counter()
         response = await self._client.embeddings.create(
             model=self._model,
             input=truncated_text,
             dimensions=self._dimensions,
         )
+        _record(self._model, response.usage.total_tokens, t0)
         
         embedding_data = response.data[0]
         
@@ -73,11 +84,13 @@ class OpenAIEmbeddingAdapter(EmbeddingPort):
         # Truncate texts
         truncated_texts = [t[:30000] for t in texts]
         
+        t0 = time.perf_counter()
         response = await self._client.embeddings.create(
             model=self._model,
             input=truncated_texts,
             dimensions=self._dimensions,
         )
+        _record(self._model, response.usage.total_tokens, t0)
         
         results = []
         tokens_per_text = response.usage.total_tokens // len(texts)

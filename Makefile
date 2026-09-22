@@ -1,4 +1,4 @@
-.PHONY: setup install dev backend frontend test lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall build-backend push-backend rollout-backend deploy-backend build-frontend push-frontend rollout-frontend deploy-frontend
+.PHONY: setup install dev backend frontend test eval eval-suite eval-list lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall build-backend push-backend rollout-backend deploy-backend build-frontend push-frontend rollout-frontend deploy-frontend
 
 # ============================================================================
 # Development
@@ -35,6 +35,22 @@ dev:
 # Run tests
 test:
 	@source .venv/bin/activate && pytest -m unit -q
+
+# Evals: seeded synthetic users through the real FSM, scored + LLM-judged.
+# Needs EVAL_OPENAI_API_KEY (or OPENAI_API_KEY), Neo4j and the database from .env.
+#   make eval                                  all agent suites, OpenAI judge
+#   make eval-suite SUITE=memory_retrieval JUDGE=both REPEATS=3
+EVAL_SUITES ?= routing tool_selection memory_retrieval entity_resolution e2e_tasks
+JUDGE ?= openai
+REPEATS ?= 1
+eval:
+	@source .venv/bin/activate && python -m agent_system.evals run $(foreach s,$(EVAL_SUITES),--suite $(s)) --judge $(JUDGE) --repeats $(REPEATS)
+
+eval-suite:
+	@source .venv/bin/activate && python -m agent_system.evals run --suite $(SUITE) --judge $(JUDGE) --repeats $(REPEATS) --show-analysis
+
+eval-list:
+	@source .venv/bin/activate && python -m agent_system.evals list
 
 # Run linters
 lint:
@@ -74,7 +90,7 @@ acr-login:
 # Build Docker images for linux/amd64 (required for AKS)
 docker-build:
 	@echo "Building backend image for linux/amd64..."
-	docker build --platform linux/amd64 -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 --build-arg GIT_SHA=$$(git rev-parse HEAD) -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
 	@echo "Building frontend image for linux/amd64..."
 	docker build --platform linux/amd64 -f infra/docker/Dockerfile.frontend -t $(ACR_REGISTRY)/agent-system-frontend:$(IMAGE_TAG) .
 
@@ -144,7 +160,7 @@ deploy: docker-release helm-deploy helm-status
 # Build backend only
 build-backend:
 	@echo "Building backend image for linux/amd64..."
-	docker build --platform linux/amd64 -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
+	docker build --platform linux/amd64 --build-arg GIT_SHA=$$(git rev-parse HEAD) -f infra/docker/Dockerfile.backend -t $(ACR_REGISTRY)/agent-system-backend:$(IMAGE_TAG) .
 
 # Push backend only
 push-backend: acr-login

@@ -1,0 +1,83 @@
+name: routing
+description: Intent classification and the FSM path it drives (plan vs. tool vs. direct answer).
+rubrics: [agent_flow]
+pass_threshold: 3.5
+
+# Reusable path expectations
+x-direct: &direct
+  route: [AnalyzeIntent, CheckPlan, ExecutePlan, GenerateResponse, FinalizeKnowledge]
+  forbid_nodes: [CreatePlan, SelectTool]
+x-tool: &tool_route
+  route: [AnalyzeIntent, CheckPlan, ExecutePlan, SelectTool, ExecuteTool, EvaluateResult, GenerateResponse]
+  forbid_nodes: [CreatePlan]
+x-plan: &plan_route
+  route: [AnalyzeIntent, CheckPlan, CreatePlan, ExecutePlan, GenerateResponse]
+
+cases:
+  - id: greeting
+    turns: ["hey there, how's it going?"]
+    expect: {<<: *direct, intent: [exploration, feedback, meta, question], tool: none}
+
+  - id: thanks_feedback
+    turns: ["What's 15% of 80?", "perfect, thanks!"]
+    expect: {<<: *direct, intent: feedback, tool: none}
+
+  - id: simple_math
+    turns: ["what's 17 * 23?"]
+    expect: {<<: *tool_route, intent: [question, command, task], tool: calculate, tool_args: {expression: "17"}}
+
+  - id: definition
+    turns: ["What does 'sonder' mean?"]
+    expect: {<<: *tool_route, tool: define_word, tool_args: {word: sonder}}
+
+  - id: current_time
+    turns: ["what day of the week is it today?"]
+    expect: {<<: *tool_route, tool: get_current_datetime}
+
+  - id: app_how_it_works
+    turns: ["How does your memory actually work?"]
+    expect: {<<: *tool_route, tool: search_internal_docs}
+
+  - id: capability_question
+    turns: ["what kinds of things can you do for me?"]
+    expect: {intent: [meta, question], forbid_nodes: [CreatePlan], answer_criteria: "Describes real capabilities (memory, calendar, events, research, groups) without inventing features."}
+
+  - id: plan_trip_task
+    turns: ["Help me plan a 3-day road trip from Houston to Big Bend, with where to stop each night."]
+    expect: {<<: *plan_route, intent: task}
+
+  - id: plan_task_auto_plan_off
+    description: auto_plan=false must never enter ReAct planning, even for a task.
+    seed: {auto_plan: false}
+    turns: ["Help me plan a 3-day road trip from Houston to Big Bend, with where to stop each night."]
+    expect: {forbid_nodes: [CreatePlan]}
+
+  - id: howto_reasoning
+    turns: ["How should I go about training for my first half marathon in 12 weeks?"]
+    expect: {intent: [task, question], route: [CheckPlan, CreatePlan, ExecutePlan, GenerateResponse]}
+
+  - id: clarification_no_retool
+    description: A follow-up on an answer already given should not re-run the tool.
+    turns: ["How does the knowledge graph work?", "can you explain that more simply?"]
+    expect: {<<: *direct, intent: clarification, tool: none}
+
+  - id: web_current_events
+    turns: ["What's the latest news about the Houston Astros?"]
+    expect: {<<: *tool_route, tool: web_search, tool_args: {query: astros}}
+
+  - id: memory_question_routes_to_recall
+    seed:
+      pets: [{name: Roxanne, species: dog, breed: boxer}]
+    turns: ["what do you know about Roxanne?"]
+    expect: {<<: *tool_route, tool: recall_about_topic, tool_args: {topic: roxanne}}
+
+  - id: about_me_summary
+    seed:
+      people: [{name: Rachel, relationship_type: spouse}]
+      preferences: [{category: food, value: tacos}]
+    turns: ["What do you know about me?"]
+    expect: {<<: *tool_route, tool: [summarize_user_knowledge, recall_about_topic]}
+
+  - id: personal_schedule
+    turns: ["What do I have planned this week?"]
+    expect: {<<: *tool_route, tool: get_upcoming_events}

@@ -59,6 +59,23 @@ class Settings(BaseSettings):
     max_tokens: int = Field(default=4096, description="Maximum tokens for LLM responses")
     temperature: float = Field(default=0.7, description="LLM temperature")
 
+    # LLM request limits (the SDK default is 600 s x 3 attempts)
+    llm_request_timeout_s: float = Field(default=120, description="Per-request timeout for chat-path LLM calls")
+    research_request_timeout_s: float = Field(default=600, description="Per-request timeout for Deep Research LLM calls")
+    llm_max_retries: int = Field(default=1, description="Retries after a failed/timed-out LLM request")
+
+    # Cost accounting: JSON map of model name -> USD per 1M tokens, e.g.
+    # {"gpt-6-astra": {"input": 1.25, "cached_input": 0.125, "output": 10}}.
+    # Used when genai-prices doesn't know a model; unpriced calls report cost as null.
+    model_pricing_json: str = Field(default="{}", description="Per-model token prices (USD / 1M tokens)")
+
+    # Evals
+    eval_openai_api_key: str | None = Field(default=None, description="OpenAI key used by eval runs (system under test + OpenAI judge)")
+    eval_judge_model: str = Field(default="openai:gpt-6-astra", description="Model for the OpenAI judge")
+    jev_base_url: str | None = Field(default=None, description="OpenAI-compatible base URL for the Jev judge")
+    jev_api_key: str | None = Field(default=None, description="API key for the Jev judge endpoint")
+    jev_model: str = Field(default="jev", description="Model id served at jev_base_url")
+
     # Google Calendar Configuration
     google_client_id: str | None = Field(default=None, description="Google OAuth Client ID")
     google_client_secret: str | None = Field(default=None, description="Google OAuth Client Secret")

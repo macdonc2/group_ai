@@ -277,3 +277,4 @@ export interface ResearchStreamEvent {
   data: Record<string, unknown> | null;
   timestamp: number;
 }
+export * from './evals';

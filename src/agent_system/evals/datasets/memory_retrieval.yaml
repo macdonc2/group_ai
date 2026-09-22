@@ -1,0 +1,145 @@
+name: memory_retrieval
+description: Recall of seeded memories through automatic context (semantic search, graph, entity lookup) and the recall tools.
+rubrics: [memory_retrieval, task_completion]
+pass_threshold: 3.5
+
+x-household: &household
+  people:
+    - {name: Rachel, relationship_type: spouse, aliases: [Rach], context_notes: "Loves tacos, hates cilantro; works as a pediatric nurse"}
+    - {name: Zane, relationship_type: friend, context_notes: "Lives in Montrose; road cyclist; allergic to shellfish"}
+    - {name: Mark, relationship_type: colleague, context_notes: "Geophysicist at XOM; taught the user computer vision"}
+  pets:
+    - {name: Roxanne, species: dog, breed: boxer, personality: [goofy, food-motivated], food_preferences: [ham bones]}
+    - {name: George, species: cat, personality: [bitey]}
+    - {name: Bo, species: cat, aliases: [Bo Boy]}
+  locations:
+    - {name: Winnie's, location_type: bar, city: Houston, neighborhood: Midtown}
+  preferences:
+    - {category: food, value: spicy food, sentiment: 0.8}
+    - {category: drinks, value: IPAs, sentiment: -0.8}
+
+cases:
+  - id: spouse_food_preferences
+    seed: *household
+    turns: ["I want to cook dinner for Rachel tonight — any ideas?"]
+    expect:
+      must_recall: [cilantro]
+      must_mention: [cilantro]
+      answer_criteria: "Suggests dishes Rachel would like (tacos are a plus) and avoids or flags cilantro."
+
+  - id: friend_allergy_safety
+    seed: *household
+    turns: ["Zane's coming over for a seafood boil, what should I make?"]
+    expect:
+      must_recall: [shellfish]
+      must_mention: [shellfish]
+      answer_criteria: "Warns that Zane is allergic to shellfish and adapts the menu."
+
+  - id: pet_treat
+    seed: *household
+    turns: ["what treat should I get Roxanne for her birthday?"]
+    expect:
+      must_recall: [ham bones]
+      must_mention: [ham bone]
+      answer_criteria: "Uses that Roxanne is a food-motivated boxer who loves ham bones."
+
+  - id: alias_resolution_in_recall
+    seed: *household
+    turns: ["What does Rach do for work?"]
+    expect:
+      must_recall: [pediatric nurse]
+      must_mention: [nurse]
+
+  - id: nickname_pet
+    seed: *household
+    turns: ["Is Bo Boy a dog or a cat?"]
+    expect:
+      must_mention: [cat]
+      must_not_mention: ["Bo Boy is a dog"]
+
+  - id: colleague_specific_details
+    seed: *household
+    turns: ["Write a short thank-you note to Mark."]
+    expect:
+      must_recall: [geophysicist]
+      must_mention: [computer vision]
+      answer_criteria: "Mentions concrete details (geophysicist at XOM, taught computer vision) rather than generic praise."
+
+  - id: semantic_past_discussion
+    seed:
+      messages:
+        - {content: "I've been having trouble sleeping since I started drinking cold brew after 3pm", days_ago: 10}
+        - {content: "My knee has been sore after long runs on concrete", days_ago: 20}
+    turns: ["Any ideas why I'm sleeping so badly lately?"]
+    expect:
+      must_recall: [cold brew]
+      must_mention: [caffeine]
+      answer_criteria: "Connects the sleep trouble to the afternoon cold brew the user mentioned before."
+
+  - id: semantic_no_false_link
+    description: Unrelated past messages must not be presented as relevant.
+    seed:
+      messages:
+        - {content: "My knee has been sore after long runs on concrete", days_ago: 20}
+    turns: ["What's a good recipe for banana bread?"]
+    expect:
+      must_not_mention: [knee]
+      answer_criteria: "A banana bread recipe; does not bring up the user's knee."
+
+  - id: pets_by_species
+    seed: *household
+    turns: ["How many cats do I have and what are their names?"]
+    expect:
+      must_mention: [George, Bo, two]
+      must_not_mention: [Roxanne is a cat]
+
+  - id: place_memory
+    seed: *household
+    turns: ["Where's that bar I like in Midtown?"]
+    expect:
+      must_recall: [Winnie]
+      must_mention: [Winnie]
+
+  - id: preference_dislike
+    seed: *household
+    turns: ["Recommend me a beer for tonight."]
+    expect:
+      answer_criteria: "Accounts for the user's dislike of IPAs (recommends a non-IPA style or asks)."
+
+  - id: unknown_entity_no_fabrication
+    seed: *household
+    turns: ["What's my brother Kevin's favorite band?"]
+    expect:
+      must_not_mention: [Kevin's favorite band is]
+      answer_criteria: "Says it doesn't know about Kevin rather than inventing a band."
+
+  - id: empty_memory_honesty
+    turns: ["What's my dog's name?"]
+    expect:
+      answer_criteria: "Says it doesn't know the user's dog's name yet (nothing is stored) and does not guess."
+
+  - id: multi_hop_friend_location
+    seed:
+      people: [{name: Zane, relationship_type: friend}]
+      locations: [{name: Montrose, location_type: neighborhood, city: Houston}]
+      links: [{source_type: person, source_name: Zane, relationship: lives_in, target_type: location, target_name: Montrose}]
+    turns: ["Suggest a coffee shop near where Zane lives."]
+    expect:
+      must_mention: [Montrose]
+
+  - id: temporal_recall
+    seed:
+      messages:
+        - {content: "Booked flights to Lisbon for the conference in October", days_ago: 2}
+        - {content: "Thinking about getting a standing desk", days_ago: 40}
+    turns: ["What trip did I mention a couple of days ago?"]
+    expect:
+      must_mention: [Lisbon]
+      must_not_mention: [standing desk]
+
+  - id: multi_turn_memory_use
+    seed: *household
+    turns: ["I'm hosting a small dinner Saturday.", "Rachel and Zane are coming — what should I avoid serving?"]
+    expect:
+      must_mention: [cilantro, shellfish]
+      answer_criteria: "Names both constraints: no cilantro for Rachel, no shellfish for Zane."
