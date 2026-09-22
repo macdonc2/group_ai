@@ -17,7 +17,7 @@ export function TracePanel({ embedded = false }: TracePanelProps) {
   const startTime = traceNodes.find((n) => n.startTime)?.startTime;
   const endTime = [...traceNodes].reverse().find((n) => n.endTime)?.endTime;
   const totalDuration = startTime && endTime
-    ? ((endTime - startTime) / 1000).toFixed(2)
+    ? (endTime - startTime).toFixed(2) // server timestamps are epoch seconds
     : null;
   
   const completedCount = traceNodes.filter((n) => n.status === 'complete' || n.status === 'skipped').length;

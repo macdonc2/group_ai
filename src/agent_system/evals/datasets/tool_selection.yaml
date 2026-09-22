@@ -80,3 +80,25 @@ cases:
   - id: datetime_only
     turns: ["what time is it right now?"]
     expect: {tool: get_current_datetime}
+
+  - id: public_record_lookup_uses_web_search
+    description: >
+      "What patents am I on?" is a public-records question: it needs web_search with the user's
+      full name (given earlier as a standing instruction), not a memory recall.
+    seed:
+      messages:
+        - {content: "For patent searches, use my full name: Jordan Q. Rivera. Remember this for when I ask about my patents.", days_ago: 5}
+        - {content: "Here's one of my patents: https://patents.google.com/patent/US20230000000A1/en", days_ago: 5}
+    turns: ["What patents am I on?"]
+    expect:
+      tool: web_search
+      tool_args: {query: rivera}
+      must_not_mention: ["don't have live internet", "no internet access", "can't browse", "cannot browse", "don't have internet"]
+      answer_criteria: "Searches the web under Jordan Q. Rivera and reports what it found; never claims it can't search."
+
+  - id: no_false_capability_denial
+    description: A current-info request must search, and the reply must not deny having web access.
+    turns: ["Can you look up what's new in the latest Python release?"]
+    expect:
+      tool: web_search
+      must_not_mention: ["don't have live internet", "no internet access", "can't browse", "cannot browse", "don't have internet", "unable to browse"]

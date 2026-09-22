@@ -48,7 +48,7 @@ const NODE_LABELS: Record<string, string> = {
 export function TraceNode({ node, isLast }: TraceNodeProps) {
   const { icon, className } = STATUS_STYLES[node.status];
   const duration = node.startTime && node.endTime
-    ? ((node.endTime - node.startTime) / 1000).toFixed(2)
+    ? (node.endTime - node.startTime).toFixed(2) // server timestamps are epoch seconds
     : null;
   
   return (

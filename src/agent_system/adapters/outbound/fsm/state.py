@@ -84,6 +84,7 @@ class WorkflowState:
     
     # Current request
     user_input: str = ""
+    input_embedding: list[float] | None = None  # embedded once in AnalyzeIntent, reused for retrieval
     
     # Extracted information
     intent: Intent | None = None

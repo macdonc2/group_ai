@@ -8,6 +8,8 @@ The eval harness measures how the agent behaves. It covers:
 
 It runs two ways: against **seeded synthetic users**, where the right answer is known, and against **your real conversations**, which are judged with rubrics only. Results, failure analyses and a predicate-tree view of every turn are in the **Evals** tab. The tab is visible to superusers only.
 
+Memory also shapes routing. Before the router picks a tool, it's shown the user's own most relevant statements from other conversations (the `intent_memory` retrieval in the trace), so standing instructions such as "use my full name for patent searches" reach it. The assistant's own past replies are deliberately excluded, so an earlier wrong answer can't steer the next one.
+
 Contents:
 - [How it fits together](#how-it-fits-together)
 - [Turn tracing](#turn-tracing)
@@ -109,8 +111,8 @@ To add a branch to the tree, wrap the condition in `ctx.deps.decide(node, "reada
 | Suite | Kind | Cases | Rubrics | What it covers |
 |---|---|---|---|---|
 | `routing` | agent | 15 | agent_flow | Intent and the FSM path it drives: direct answer, tool, or plan. Also covers `auto_plan` off and clarifications that shouldn't re-run a tool. |
-| `tool_selection` | agent | 16 | agent_flow | Right tool, plus usable arguments with pronouns and references resolved (math, definitions, docs, web, recall, time). |
-| `memory_retrieval` | agent | 16 | memory_retrieval, task_completion | Recalling seeded people, pets, places, preferences and backdated messages. Includes aliases, multi-hop links, temporal recall, no fabrication, and no false links. |
+| `tool_selection` | agent | 18 | agent_flow | Right tool, plus usable arguments with pronouns and references resolved (math, definitions, docs, web, recall, time). Includes public-record lookups about the user (such as patents) going to `web_search` under the user's full name, and no false "I have no internet access" claims. |
+| `memory_retrieval` | agent | 17 | memory_retrieval, task_completion | Recalling seeded people, pets, places, preferences and backdated messages. Includes aliases, multi-hop links, temporal recall, no fabrication, and no false links. |
 | `entity_resolution` | agent | 15 | none (deterministic) | Knowledge-graph state after `FinalizeKnowledge`: new vs. existing entities, aliases, nicknames, relationship changes, no duplicates, no spurious entities. |
 | `e2e_tasks` | agent | 10 | task_completion, agent_flow | Multi-turn and planning tasks judged end to end, including honesty about what it can't do. |
 | `research` | research | 4 | research_sources, synthesis_groundedness | Deep Research at depth 1 with narration off. |

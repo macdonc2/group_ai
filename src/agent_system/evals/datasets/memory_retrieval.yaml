@@ -143,3 +143,14 @@ cases:
     expect:
       must_mention: [cilantro, shellfish]
       answer_criteria: "Names both constraints: no cilantro for Rachel, no shellfish for Zane."
+
+  - id: standing_instruction_reaches_router
+    description: A standing instruction from an earlier conversation must shape this turn's tool input.
+    seed:
+      messages:
+        - {content: "When you look up my publications, search under Dr. Priya N. Ramaswamy.", days_ago: 12}
+    turns: ["Find papers I've published."]
+    expect:
+      tool: web_search
+      tool_args: {query: ramaswamy}
+      must_recall: [Ramaswamy]

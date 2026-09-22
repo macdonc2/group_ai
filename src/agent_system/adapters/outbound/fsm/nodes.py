@@ -31,6 +31,40 @@ def react_tool_input(tool: str | None, proposed: str | None, user_input: str, st
     return step_description
 
 
+async def _intent_memory_hints(ctx, limit: int = 3, min_score: float = 0.72) -> list[str]:
+    """Top things the *user* said in other conversations that relate to this message.
+
+    Only user messages: the assistant's own past replies are not evidence (a past
+    wrong answer would otherwise steer the router into repeating it). Never raises.
+    """
+    if not (ctx.deps.knowledge_graph_port and ctx.deps.embedding_port):
+        return []
+    try:
+        if ctx.state.input_embedding is None:
+            ctx.state.input_embedding = (await ctx.deps.embedding_port.embed(ctx.state.user_input)).embedding
+        hits = await ctx.deps.knowledge_graph_port.semantic_search(
+            user_id=ctx.state.user.id, query_embedding=ctx.state.input_embedding, limit=12, min_score=min_score,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"intent memory hints skipped: {exc}")
+        return []
+    current_conv = str(ctx.state.conversation.id)
+    this_msg = ctx.state.user_input.strip().lower()
+    picked = [
+        h for h in hits
+        if h.get("role") == "user"
+        and h.get("conversation_id") != current_conv
+        and (h.get("content") or "").strip().lower() != this_msg
+    ][:limit]
+    ctx.deps.record_retrieval(
+        "intent_memory", ctx.state.user_input,
+        [{"id": h.get("id"), "score": h.get("score"), "role": "user", "content": h.get("content"),
+          "used_in_prompt": True} for h in picked],
+        limit=limit, min_score=min_score,
+    )
+    return [(h.get("content") or "")[:300] for h in picked]
+
+
 def _retrieval_hits_from_tool(data) -> list[dict]:
     """Flatten a recall tool's ToolResult.data into ranked retrieval hits for the trace."""
     if isinstance(data, list):
@@ -143,6 +177,18 @@ Current message to analyze: {ctx.state.user_input}
 Analyze the intent of the current message IN CONTEXT of the conversation above. If the user says "that", "it", "this", etc., resolve what they are referring to from the conversation history."""
         else:
             prompt = ctx.state.user_input
+
+        # Standing instructions and identity facts the user gave in earlier conversations
+        # ("for patent searches use my full name ...") must reach the router, or it picks
+        # the tool without them.
+        hints = await _intent_memory_hints(ctx)
+        if hints:
+            prompt = (
+                "Things the user told you before (from memory; follow any standing instructions "
+                "in them, e.g. names or preferences to use in tool inputs):\n"
+                + "\n".join(f"- {h}" for h in hints)
+                + "\n\n" + prompt
+            )
 
         logger.info("=" * 80)
         logger.info("🎯 ANALYZE INTENT - CONTEXT FED TO INTENT AGENT")
@@ -1433,13 +1479,14 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
         related_history: list[dict] = []
         try:
             if ctx.deps.knowledge_graph_port and ctx.deps.embedding_port:
-                # Embed the current user input
-                query_embedding = await ctx.deps.embedding_port.embed(ctx.state.user_input)
+                # Embed the current user input (AnalyzeIntent usually already did)
+                if ctx.state.input_embedding is None:
+                    ctx.state.input_embedding = (await ctx.deps.embedding_port.embed(ctx.state.user_input)).embedding
                 
                 # Search for semantically similar past messages
                 related_history = await ctx.deps.knowledge_graph_port.semantic_search(
                     user_id=ctx.state.user.id,
-                    query_embedding=query_embedding.embedding,
+                    query_embedding=ctx.state.input_embedding,
                     limit=25,  # Top 25 related messages for richer context
                     min_score=0.7,  # Only high-quality matches
                 )
