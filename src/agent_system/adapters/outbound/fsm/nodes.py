@@ -1,6 +1,7 @@
 """FSM workflow nodes using pydantic-graph."""
 
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Annotated
@@ -44,11 +45,14 @@ def react_tool_input(tool: str | None, proposed: str | None, user_input: str, st
     return step_description
 
 
-async def _intent_memory_hints(ctx, limit: int = 3, min_score: float = 0.72) -> list[str]:
-    """Top things the *user* said in other conversations that relate to this message.
+async def _intent_memory_hints(ctx, limit: int = 5, min_score: float = 0.7) -> list[str]:
+    """Top things the *user* told us in other conversations that relate to this message.
 
-    Only user messages: the assistant's own past replies are not evidence (a past
-    wrong answer would otherwise steer the router into repeating it). Never raises.
+    Only the user's statements: the assistant's past replies are not evidence (a
+    wrong answer would steer the router into repeating it), and past *questions*
+    aren't facts - a question asked repeatedly would otherwise fill every slot and
+    crowd out the instruction that matters ("use my full name ..."). Deduplicated.
+    Never raises.
     """
     if not (ctx.deps.knowledge_graph_port and ctx.deps.embedding_port):
         return []
@@ -63,12 +67,24 @@ async def _intent_memory_hints(ctx, limit: int = 3, min_score: float = 0.72) -> 
         return []
     current_conv = str(ctx.state.conversation.id)
     this_msg = ctx.state.user_input.strip().lower()
-    picked = [
-        h for h in hits
-        if h.get("role") == "user"
-        and h.get("conversation_id") != current_conv
-        and (h.get("content") or "").strip().lower() != this_msg
-    ][:limit]
+    picked: list[dict] = []
+    seen: set[str] = set()
+    for h in hits:
+        text = " ".join((h.get("content") or "").split())
+        key = text.lower().rstrip("?!. ")
+        if (
+            h.get("role") != "user"
+            or h.get("conversation_id") == current_conv
+            or not key
+            or key == this_msg.rstrip("?!. ")
+            or key in seen
+            or _is_question(text)
+        ):
+            continue
+        seen.add(key)
+        picked.append(h)
+        if len(picked) >= limit:
+            break
     ctx.deps.record_retrieval(
         "intent_memory", ctx.state.user_input,
         [{"id": h.get("id"), "score": h.get("score"), "role": "user", "content": h.get("content"),
@@ -76,6 +92,17 @@ async def _intent_memory_hints(ctx, limit: int = 3, min_score: float = 0.72) -> 
         limit=limit, min_score=min_score,
     )
     return [(h.get("content") or "")[:300] for h in picked]
+
+
+_QUESTION_START = re.compile(
+    r"^(what|who|when|where|why|how|which|is|are|am|do|does|did|can|could|would|should|will|tell me|show me)\b", re.I,
+)
+
+
+def _is_question(text: str) -> bool:
+    """A past question isn't a fact about the user; statements and instructions are."""
+    t = text.strip()
+    return t.endswith("?") or (len(t) < 120 and bool(_QUESTION_START.match(t)) and "remember" not in t.lower())
 
 
 def _retrieval_hits_from_tool(data) -> list[dict]:

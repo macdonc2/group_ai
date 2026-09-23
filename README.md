@@ -282,7 +282,7 @@ Every agent turn is traced, and an eval harness measures the agent's behaviour a
   - tokens and cost per LLM call, attributed to the node that made it.
 
   LLM usage is captured through pydantic-ai's OpenTelemetry instrumentation, so no call site changes. Chat turns are stored in `turn_traces`, and Deep Research jobs carry a per-stage usage rollup.
-- **Seeded evals.** Six suites with 80 cases in total: routing, tool selection, memory retrieval, entity resolution, end-to-end tasks, and Deep Research. Each case:
+- **Seeded evals.** Six suites with 81 cases in total: routing, tool selection, memory retrieval, entity resolution, end-to-end tasks, and Deep Research. Each case:
   - seeds a throwaway user with known people, pets, places, preferences and backdated messages;
   - plays its turns through the real FSM;
   - removes the user afterwards.

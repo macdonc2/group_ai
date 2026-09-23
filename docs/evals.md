@@ -111,7 +111,7 @@ To add a branch to the tree, wrap the condition in `ctx.deps.decide(node, "reada
 | Suite | Kind | Cases | Rubrics | What it covers |
 |---|---|---|---|---|
 | `routing` | agent | 15 | agent_flow | Intent and the FSM path it drives: direct answer, tool, or plan. Also covers `auto_plan` off and clarifications that shouldn't re-run a tool. |
-| `tool_selection` | agent | 19 | agent_flow | Right tool, plus usable arguments with pronouns and references resolved (math, definitions, docs, web, recall, time). Includes public-record lookups about the user (such as patents) going to `web_search` under the user's full name, and no false "I have no internet access" claims. |
+| `tool_selection` | agent | 20 | agent_flow | Right tool, plus usable arguments with pronouns and references resolved (math, definitions, docs, web, recall, time). Includes public-record lookups about the user (such as patents) going to `web_search` under the user's full name, and no false "I have no internet access" claims. |
 | `memory_retrieval` | agent | 17 | memory_retrieval, task_completion | Recalling seeded people, pets, places, preferences and backdated messages. Includes aliases, multi-hop links, temporal recall, no fabrication, and no false links. |
 | `entity_resolution` | agent | 15 | none (deterministic) | Knowledge-graph state after `FinalizeKnowledge`: new vs. existing entities, aliases, nicknames, relationship changes, no duplicates, no spurious entities. |
 | `e2e_tasks` | agent | 10 | task_completion, agent_flow | Multi-turn and planning tasks judged end to end, including honesty about what it can't do. |

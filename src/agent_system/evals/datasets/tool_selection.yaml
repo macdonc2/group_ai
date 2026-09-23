@@ -110,3 +110,19 @@ cases:
       tool: read_webpage
       tool_args: {url: python.org/downloads}
       must_mention: ["3.14"]
+
+  - id: repeated_questions_dont_crowd_out_instruction
+    description: >
+      Past repeats of the same question must not fill the router's memory slots and hide the
+      standing instruction with the user's full name (seen in prod: the query lost the name).
+    seed:
+      messages:
+        - {content: "What patents am I on?", days_ago: 1}
+        - {content: "What patents am I on?", days_ago: 2}
+        - {content: "what patents am i on", days_ago: 3}
+        - {content: "For patent searches, use my full name: Jordan Q. Rivera. Remember this for when I ask.", days_ago: 6}
+    turns: ["Hey, what are my patents?"]
+    expect:
+      tool: web_search
+      tool_args: {query: rivera}
+      must_not_mention: ["don't have live internet", "no internet access"]
