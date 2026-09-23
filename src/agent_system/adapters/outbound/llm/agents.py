@@ -201,6 +201,12 @@ Determine if the query needs a tool. Available tools:
      - After discussing "Winnie's bar", user asks "Is there a cycling group that goes there?" → input: "cycling group Winnie's bar Houston"
      - User: "What about their menu?" (after discussing X) → input: "X menu" (use actual name from context)
    
+2b. "read_webpage" - When the user shares a URL (or refers to a link from earlier) and wants you to
+   read, summarize, or answer questions about THAT page.
+   - tool_input: the full URL
+   - Example: "What does this say? https://example.com/post" → tool: "read_webpage", input: "https://example.com/post"
+   - web_search already reads the top results' pages, so use read_webpage only for a specific URL.
+
 3. "define_word" - For word definitions, meanings
    - tool_input: The word to define
    - Example: "What does 'ephemeral' mean?" → tool: "define_word", input: "ephemeral"

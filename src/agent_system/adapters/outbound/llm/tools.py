@@ -62,11 +62,16 @@ async def web_search(query: str, num_results: int = 5) -> ToolResult:
                 "url": r.get("href", r.get("link", "")),
                 "snippet": r.get("body", r.get("snippet", "")),
             })
+
+        # Snippets alone rarely hold the answer (an inventor page lists the patents,
+        # the snippet doesn't), so open the top results and keep their text.
+        await _attach_page_text(formatted_results)
+        read = sum(1 for r in formatted_results if r.get("page_text"))
         
         return ToolResult(
             success=True,
             data=formatted_results,
-            message=f"Found {len(formatted_results)} results for '{query}'",
+            message=f"Found {len(formatted_results)} results for '{query}' (read {read} pages)",
         )
         
     except ImportError:
@@ -82,6 +87,44 @@ async def web_search(query: str, num_results: int = 5) -> ToolResult:
                 data=None,
                 message=f"Search unavailable: {str(e)}. I can still help discuss this topic.",
             )
+
+
+async def _attach_page_text(results: list[dict]) -> None:
+    """Read the top N result pages (WEB_READ_PAGES) and attach `page_text` / `page_status`."""
+    from agent_system.adapters.outbound.web import read_pages
+    from agent_system.composition_root.config import get_settings
+
+    n = max(0, get_settings().web_read_pages)
+    targets = [r for r in results if r.get("url")][:n]
+    if not targets:
+        return
+    pages = await read_pages([r["url"] for r in targets], max_chars=3500, budget_s=20.0)
+    for r, page in zip(targets, pages, strict=True):
+        r["page_status"] = page.status if not page.detail else f"{page.status}: {page.detail}"
+        if page.text:
+            r["page_text"] = page.text
+
+
+async def read_webpage(url: str) -> ToolResult:
+    """Read one web page the user pointed at (JS-rendered if needed; robots.txt honored)."""
+    from agent_system.adapters.outbound.web import read_page
+
+    page = await read_page(url.strip(), max_chars=12000)
+    if page.text:
+        how = "rendered with a headless browser" if page.status == "rendered" else "fetched"
+        return ToolResult(success=True, data={"url": page.url, "text": page.text, "status": page.status},
+                          message=f"Page {how}: {page.url}\n\n{page.text}")
+    reasons = {
+        "blocked": "the site blocks automated readers",
+        "disallowed": "the site's robots.txt asks bots not to read it",
+        "unavailable": "the site refused or failed the request",
+        "skipped": "it isn't a readable web page",
+        "empty": "it has no readable text",
+    }
+    why = reasons.get(page.status, "it couldn't be fetched")
+    return ToolResult(success=False, data={"url": page.url, "status": page.status, "detail": page.detail},
+                      message=f"Couldn't read {page.url}: {why} ({page.detail or page.status}). "
+                              "Ask the user to paste the relevant text.")
 
 
 async def _web_search_instant_answer(query: str, num_results: int = 5) -> ToolResult:
@@ -2622,6 +2665,11 @@ AVAILABLE_TOOLS = {
         "function": web_search,
         "description": "Search the web for information",
         "parameters": {"query": "string", "num_results": "int (optional, default 5)"},
+    },
+    "read_webpage": {
+        "function": read_webpage,
+        "description": "Read the text of a specific web page (a URL the user shared or referred to). Renders JavaScript pages; honors robots.txt; reports when a site blocks automated readers.",
+        "parameters": {"url": "string (the full http(s) URL)"},
     },
     "search_internal_docs": {
         "function": search_internal_docs_tool,

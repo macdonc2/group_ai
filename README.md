@@ -168,7 +168,8 @@ Step 3/5: Work through the day-by-day process
 
 | Tool | Trigger Keywords | Description |
 |------|------------------|-------------|
-| `web_search` | "search", "look up", "find online" | Search the web via DuckDuckGo (with context-aware location injection) |
+| `web_search` | "search", "look up", "find online" | Search the web via DuckDuckGo (with context-aware location injection) and read the top `WEB_READ_PAGES` result pages, rendering JavaScript pages in headless Chromium |
+| `read_webpage` | a pasted URL, "summarize this page" | Read one page, rendering it if it needs JavaScript. Honors robots.txt and reports sites that block automated readers instead of evading them. |
 | `calculate` | "calculate", numbers in message | Evaluate math expressions |
 | `define_word` | "define", "meaning of" | Look up word definitions |
 | `get_current_datetime` | "time", "date", "today" | Get current date/time (in user's timezone) |
@@ -281,7 +282,7 @@ Every agent turn is traced, and an eval harness measures the agent's behaviour a
   - tokens and cost per LLM call, attributed to the node that made it.
 
   LLM usage is captured through pydantic-ai's OpenTelemetry instrumentation, so no call site changes. Chat turns are stored in `turn_traces`, and Deep Research jobs carry a per-stage usage rollup.
-- **Seeded evals.** Six suites with 79 cases in total: routing, tool selection, memory retrieval, entity resolution, end-to-end tasks, and Deep Research. Each case:
+- **Seeded evals.** Six suites with 80 cases in total: routing, tool selection, memory retrieval, entity resolution, end-to-end tasks, and Deep Research. Each case:
   - seeds a throwaway user with known people, pets, places, preferences and backdated messages;
   - plays its turns through the real FSM;
   - removes the user afterwards.
@@ -1077,6 +1078,10 @@ EVAL_JUDGE_MODEL=openai:gpt-6-astra
 JEV_BASE_URL=https://jev.example/v1   # OpenAI-compatible Jev judge; unset = disabled
 JEV_MODEL=jev
 MODEL_PRICING_JSON={"gpt-6-astra": {"input": 0, "output": 0}}   # USD per 1M tokens
+
+# Optional: web page reading (web_search reads the top N results; read_webpage reads a URL)
+WEB_READ_PAGES=3
+WEB_JS_RENDER=true                    # headless Chromium via Playwright (installed in the Docker image)
 
 # Optional: LLM request limits
 LLM_REQUEST_TIMEOUT_S=120

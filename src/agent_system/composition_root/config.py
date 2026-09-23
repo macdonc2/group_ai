@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     research_request_timeout_s: float = Field(default=600, description="Per-request timeout for Deep Research LLM calls")
     llm_max_retries: int = Field(default=1, description="Retries after a failed/timed-out LLM request")
 
+    # Web reading for the chat agent
+    web_read_pages: int = Field(default=3, description="How many top web_search results to open and read")
+    web_js_render: bool = Field(default=True, description="Render JavaScript pages in headless Chromium when Playwright is installed")
+
     # Cost accounting: JSON map of model name -> USD per 1M tokens, e.g.
     # {"gpt-6-astra": {"input": 1.25, "cached_input": 0.125, "output": 10}}.
     # Used when genai-prices doesn't know a model; unpriced calls report cost as null.

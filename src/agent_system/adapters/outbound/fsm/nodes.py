@@ -16,6 +16,19 @@ from agent_system.adapters.outbound.fsm.state import (
 logger = logging.getLogger(__name__)
 
 
+def format_web_results(items: list[dict]) -> str:
+    """Search results for the response prompt: snippet, plus the page's own text when it was read."""
+    blocks = []
+    for item in items:
+        block = f"• {item.get('title', '')}\n  URL: {item.get('url', '')}\n  Snippet: {item.get('snippet', '')}"
+        if item.get("page_text"):
+            block += f"\n  Page text (read from the site):\n  {item['page_text']}"
+        elif item.get("page_status"):
+            block += f"\n  (Page not read: {item['page_status']})"
+        blocks.append(block)
+    return "Search results:\n" + "\n\n".join(blocks)
+
+
 def react_tool_input(tool: str | None, proposed: str | None, user_input: str, step_description: str) -> str:
     """Input for a tool a ReAct step asked for.
 
@@ -1032,6 +1045,18 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             word = tool_input if tool_input else "word"
             ctx.state.tool_arguments = {"word": word}
 
+        elif tool_name == "read_webpage":
+            import re as _re
+
+            text = f"{tool_input or ''} {ctx.state.user_input}"
+            match = _re.search(r"https?://[^\s)>\]\"']+", text)
+            if not match:  # fall back to the most recent link in the conversation
+                for msg in reversed(ctx.state.conversation.get_context_messages()[-10:]):
+                    match = _re.search(r"https?://[^\s)>\]\"']+", msg.content.text)
+                    if match:
+                        break
+            ctx.state.tool_arguments = {"url": match.group(0).rstrip(".,") if match else (tool_input or "")}
+
         elif tool_name == "search_internal_docs":
             # Search internal docs for system/how-it-works questions
             query = tool_input if tool_input else "knowledge graph semantic search memory"
@@ -1357,11 +1382,7 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     # Format data nicely for the response
                     if isinstance(result.data, list):
                         if tool_name == "web_search":
-                            formatted = "\n".join([
-                                f"• {item['title']}\n  {item['snippet']}\n  URL: {item['url']}"
-                                for item in result.data[:5]
-                            ])
-                            ctx.state.tool_result = f"Search results:\n{formatted}"
+                            ctx.state.tool_result = format_web_results(result.data[:5])
                         elif tool_name == "search_internal_docs":
                             formatted = "\n\n".join([
                                 f"## {item['title']}\n{item['content']}"

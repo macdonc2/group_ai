@@ -102,3 +102,11 @@ cases:
     expect:
       tool: web_search
       must_not_mention: ["don't have live internet", "no internet access", "can't browse", "cannot browse", "don't have internet", "unable to browse"]
+
+  - id: read_shared_link
+    description: A pasted URL is read (JS-rendered if needed), not searched for.
+    turns: ["What's the latest Python version on this page? https://www.python.org/downloads/"]
+    expect:
+      tool: read_webpage
+      tool_args: {url: python.org/downloads}
+      must_mention: ["3.14"]

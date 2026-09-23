@@ -29,6 +29,13 @@ COPY src/ ./src/
 # Install Python dependencies (non-editable for production)
 RUN uv pip install --system --no-cache .
 
+# Headless Chromium for reading JavaScript-rendered pages (web_search / read_webpage).
+# The shell-only build is enough for text; installed where the non-root user can read it.
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN python -m playwright install --with-deps --only-shell chromium \
+    && chmod -R a+rX /ms-playwright \
+    && rm -rf /var/lib/apt/lists/*
+
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
 USER appuser

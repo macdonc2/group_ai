@@ -14,12 +14,26 @@ The agent has a collection of **tools** it can use to answer your questions and 
 
 ### Web Search
 
-Searches the internet for current information. The agent uses this for real-time questions that aren't covered by its built-in tools.
+Searches the internet for current information. The agent uses this for real-time questions that aren't covered by its built-in tools. It also **opens and reads the top few results**, not just their one-line snippets, so answers come from the pages themselves. For example, it takes the current Python version from python.org's own download page.
+
+It uses web search, under your full name if you've told it, for public records about you, such as patents you're on, papers you've written, or talks you've given.
 
 **When it's used:**
 - "What's the weather in Houston?"
 - "Latest news about SpaceX"
 - "How tall is the Eiffel Tower?"
+- "What patents am I on?"
+
+### Reading a Link
+
+Paste a URL and ask about it, and the agent reads that page:
+- It renders pages that only show their content with JavaScript, using a headless browser.
+- It respects each site's robots.txt, and it doesn't try to get around bot protection.
+- When a site blocks automated readers or refuses the request, the agent says so, and you can paste the text instead. Examples: Justia patent pages, LinkedIn profiles, some Google pages.
+
+**When it's used:**
+- "Summarize this: https://example.com/article"
+- "What's the latest version listed on this page? https://www.python.org/downloads/"
 
 ### Word Definitions
 
