@@ -1,4 +1,4 @@
-.PHONY: setup install dev backend frontend test eval eval-suite eval-list lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall build-backend push-backend rollout-backend deploy-backend build-frontend push-frontend rollout-frontend deploy-frontend
+.PHONY: setup install dev backend frontend test eval eval-suite eval-list eval-graph lint clean neo4j docker-build docker-push deploy k8s-secrets helm-deps helm-deploy helm-status helm-rollback helm-uninstall build-backend push-backend rollout-backend deploy-backend build-frontend push-frontend rollout-frontend deploy-frontend
 
 # ============================================================================
 # Development
@@ -51,6 +51,10 @@ eval-suite:
 
 eval-list:
 	@source .venv/bin/activate && python -m agent_system.evals list
+
+# Graph explorer agent against the synthetic graph fixture (needs only an OpenAI key)
+eval-graph:
+	@source .venv/bin/activate && python -m agent_system.evals graph-qa --repeats $(REPEATS)
 
 # Run linters
 lint:

@@ -27,7 +27,7 @@ src/agent_system/
 │   ├── services/              # Domain services
 │   └── events/                # Domain events
 ├── application/               # Use cases and orchestration
-│   ├── services/              # Application services
+│   ├── services/              # Application services (incl. graph_explorer: in-memory graph snapshot)
 │   └── dtos/                  # Data transfer objects
 ├── adapters/
 │   ├── inbound/api/           # FastAPI REST + WebSocket endpoints
@@ -47,7 +47,7 @@ frontend/
 │   │   ├── auth/              # Login, registration
 │   │   ├── chat/              # Chat interface
 │   │   ├── groups/            # Group collaboration
-│   │   ├── knowledge/         # Knowledge graph visualization
+│   │   ├── knowledge/         # Knowledge graph explorer: canvas, filters, node panel, ask panel
 │   │   ├── evals/             # Evals tab: runs, scorecards, predicate-tree viewer
 │   │   ├── settings/          # User settings, API keys
 │   │   └── trace/             # FSM workflow trace
@@ -241,6 +241,38 @@ Optional Neo4j integration for persistent memory and context:
 - **Single-node topics** — same topic across conversations becomes one connected node
 - **Rich relationship types** — RELATES_TO, INTERESTED_IN, DISCUSSED, LIKES, LOCATED_IN, etc.
 - **Interactive visualization** — force-directed graph in frontend with filtering
+- **Graph explorer** — filter by node and link type, search, isolate a node's neighbourhood, find paths, and ask an agent about the graph
+
+#### Graph Explorer
+
+The Knowledge Graph window doubles as an explorer with a small agent attached. Manual exploration (type filters, search, N-hop neighbourhood, path between two nodes) runs in the browser with no model call. The **Ask** panel sends a question to a single-loop PydanticAI agent that reads the graph through four tools and returns an answer plus the nodes to highlight and, when asked, a filter to apply.
+
+```mermaid
+flowchart LR
+    UI["Knowledge Graph window<br/>filters · canvas · node panel · ask panel"]
+    API["POST /knowledge/graph/ask"]
+    Agent["Graph explorer agent<br/>one loop · exits: answer, 8 requests, 90 s"]
+    Tools["search_nodes · get_node<br/>traverse · find_path"]
+    Snap["GraphSnapshot<br/>read-only, in memory"]
+    Neo[("Neo4j<br/>user-scoped query")]
+    LLM["OpenAI Responses API"]
+    Trace[("turn_traces")]
+
+    UI --> API --> Agent
+    Agent <--> Tools --> Snap --> Neo
+    Agent <--> LLM
+    Agent -- "validated answer:<br/>node ids + type filter" --> UI
+    API --> Trace
+```
+
+| Tool | Purpose |
+|------|---------|
+| `search_nodes` | Find nodes by name or stored details; list every node of a type |
+| `get_node` | Open one node: properties and all its links |
+| `traverse` | What is reachable within 1-3 hops, filtered by link or node type |
+| `find_path` | Shortest chain between two nodes |
+
+How it follows current agent-building guidance: one agent and one loop with explicit exits (structured answer, request cap, timeout); a schema-level summary in the prompt with node contents fetched just in time; short node handles instead of UUIDs; a few read-only tools with capped, high-signal output; graph text treated as untrusted data, with only validated node ids and type names reaching the UI; a per-user scoped query; and evals plus a turn trace for every question. Full reference: [docs/graph-explorer.md](docs/graph-explorer.md).
 
 ### Wrestler Themes
 
@@ -1010,6 +1042,7 @@ For group messages, embedding storage runs in the background (fire-and-forget) t
 Two sets of docs ship with this repository:
 
 - **This README** is the engineering account: architecture, the agent roster, the FSM, memory, API reference and setup.
+- **[docs/graph-explorer.md](docs/graph-explorer.md)** covers the graph explorer and its agent: architecture, tools, design decisions, evals and API.
 - **[docs/evals.md](docs/evals.md)** is the reference for the eval harness and turn tracing: suites, scorers, rubrics, judges, the Evals tab and the predicate tree, configuration and API.
 - **`src/agent_system/docs/`** is written for people using the app, and it is also loaded into the agent itself. `search_internal_docs` serves it, and the response agents route questions like "what tools do you have" or "how do I connect my calendar" to that tool, so the agent answers from these files. Anything shipped but missing there is a feature the agent will not know it has.
 
@@ -1247,6 +1280,11 @@ curl -X POST http://localhost:8000/api/v1/plans/<id>/activate \
 curl http://localhost:8000/api/v1/knowledge/graph \
   -H "Authorization: Bearer <token>"
 
+# Ask the graph explorer agent (returns answer, highlight_node_ids, filter, steps, usage)
+curl -X POST http://localhost:8000/api/v1/knowledge/graph/ask \
+  -H "Authorization: Bearer <token>" -H "Content-Type: application/json" \
+  -d '{"question": "Which places do the people I know go to?"}'
+
 # Clear knowledge graph
 curl -X DELETE http://localhost:8000/api/v1/knowledge/graph \
   -H "Authorization: Bearer <token>"
@@ -1345,6 +1383,7 @@ Unit tests check code; evals check the agent's behaviour against real models. Se
 make eval-suite SUITE=memory_retrieval JUDGE=both            # live models, seeded users
 python -m agent_system.evals run --suite routing --fail-under 0.8   # CI-style gate
 pytest tests/unit/evals                                       # scorers, rubrics, judges, trace math
+python -m agent_system.evals graph-qa --fail-under 0.9        # graph explorer agent on a synthetic graph (no DB or Neo4j)
 pytest tests/integration/test_eval_harness.py                 # whole harness on Neo4j + TestModel (Docker)
 ```
 
@@ -1364,6 +1403,7 @@ make neo4j      # Start Neo4j container
 make eval-list  # List eval suites and rubrics
 make eval       # Run all agent eval suites (JUDGE=openai|jev|both|none, REPEATS=n)
 make eval-suite SUITE=routing   # One suite, with the failure analysis printed
+make eval-graph # Graph explorer agent evals (REPEATS=n)
 ```
 
 ### Code Style
@@ -1390,8 +1430,9 @@ make eval-suite SUITE=routing   # One suite, with the failure analysis printed
 
 ### Knowledge Graph
 - Interactive force-directed visualization
-- Node filtering by type
-- Relationship exploration
+- Filter by node type and link type, with counts; search across labels and properties
+- Node panel: properties, links, 1-3 hop neighbourhood focus, path to another node
+- Ask panel: questions answered from the graph, with matching nodes highlighted and the lookups shown
 
 ### Evals (superusers)
 - Start suite runs and see run history, scorecards, judge scores, node latency, cost and failure analyses

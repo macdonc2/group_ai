@@ -1,3 +1,5 @@
+import type { GraphData } from '../components/knowledge/graphModel';
+import type { GraphAskResponse } from '../components/knowledge/GraphAskPanel';
 import type { 
   AgentResponse, 
   ConversationListItem, 
@@ -282,28 +284,19 @@ export const api = {
   },
 
   // Knowledge Graph
-  getKnowledgeGraph: async (): Promise<{
-    nodes: Array<{
-      id: string;
-      label: string;
-      fullLabel: string;
-      type: string;
-      color: string;
-      properties: Record<string, unknown>;
-    }>;
-    links: Array<{
-      source: string;
-      target: string;
-      type: string;
-      label: string;
-    }>;
-    stats: {
-      total_nodes: number;
-      total_links: number;
-      node_types: Record<string, number>;
-    };
-  }> => {
+  getKnowledgeGraph: async (): Promise<GraphData> => {
     return fetchApi('/knowledge/graph');
+  },
+
+  askKnowledgeGraph: async (
+    question: string,
+    selectedNodeId: string | null,
+    history: Array<{ question: string; answer: string }>,
+  ): Promise<GraphAskResponse> => {
+    return fetchApi('/knowledge/graph/ask', {
+      method: 'POST',
+      body: JSON.stringify({ question, selected_node_id: selectedNodeId, history }),
+    });
   },
 
   clearKnowledgeGraph: async (): Promise<{ deleted_nodes: number }> => {

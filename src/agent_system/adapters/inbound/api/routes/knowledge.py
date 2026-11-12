@@ -1,12 +1,21 @@
-"""Knowledge graph API routes."""
+"""Knowledge graph API routes: the graph itself and the graph explorer agent."""
+
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field
 
-from agent_system.adapters.inbound.api.dependencies import CurrentUserId, get_current_user
+from agent_system.adapters.inbound.api.dependencies import (
+    CurrentUserId,
+    SessionDep,
+    get_current_user,
+)
+from agent_system.application.services.graph_explorer import GraphSnapshot, clean_properties
 from agent_system.composition_root.container import get_container
 from agent_system.domain.entities import User
-from agent_system.domain.value_objects import KnowledgeNodeId
+from agent_system.domain.value_objects import UserId
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
@@ -20,12 +29,28 @@ TYPE_COLORS = {
     "person": "#06b6d4",      # cyan
     "pet": "#84cc16",         # lime
     "location": "#f97316",    # orange
+    "preference": "#eab308",  # yellow
+    "pattern": "#14b8a6",     # teal
+    "thread": "#a855f7",      # violet
+    "expertise": "#f43f5e",   # rose
+    "entity": "#0ea5e9",      # sky
+    "intent": "#64748b",      # slate
+    "contradiction": "#ef4444",  # red
 }
 
 
 def _node_label(text: str, max_len: int = 30) -> str:
     """Truncate label for display."""
     return text[:max_len] + "..." if len(text) > max_len else text
+
+
+async def _load_snapshot(current_user_id: str) -> GraphSnapshot:
+    """The current user's graph, scoped to their own data."""
+    container = await get_container()
+    if not container.knowledge_graph_adapter:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    nodes, edges = await container.knowledge_graph_adapter.get_user_subgraph(UserId.from_string(current_user_id))
+    return GraphSnapshot.from_records(nodes, edges)
 
 
 @router.get("/graph")
@@ -36,153 +61,116 @@ async def get_user_knowledge_graph(
     """Get the full knowledge graph for the current user.
 
     Returns nodes and links for visualization: KnowledgeNodes (user, topic,
-    tool, interaction, suggestion) plus social graph nodes (person, pet,
+    tool, interaction, suggestion, ...) plus social graph nodes (person, pet,
     location) as one unified graph.
     """
     container = await get_container()
-
     if not container.knowledge_graph_adapter:
-        raise HTTPException(
-            status_code=503,
-            detail="Knowledge graph service not available"
-        )
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
 
     try:
-        kg = container.knowledge_graph_adapter
-
         # Fix user node label if needed
-        await kg.update_user_label(
+        await container.knowledge_graph_adapter.update_user_label(
             user_id=current_user_id,
             label=current_user.email,
         )
-
-        # 1. Knowledge nodes (user, topic, tool, interaction, suggestion)
-        user_nodes = await kg.get_user_nodes(
-            user_id=current_user_id,
-            node_type=None,
-        )
-
-        nodes: list[dict] = []
-        node_ids: set[str] = set()
-
-        for node in user_nodes:
-            node_ids.add(str(node.id))
-            nodes.append({
-                "id": str(node.id),
-                "label": _node_label(node.label),
-                "fullLabel": node.label,
-                "type": node.node_type.value,
-                "color": TYPE_COLORS.get(node.node_type.value, "#6b7280"),
-                "properties": node.properties,
-            })
-
-        # 2. Social graph nodes (person, pet, location)
-        people = await kg.list_known_people(current_user_id)
-        pets = await kg.list_pets(current_user_id)
-        locations = await kg.list_locations(current_user_id)
-
-        for p in people or []:
-            nid = p.get("id") or p.get("name", "")
-            if nid and str(nid) not in node_ids:
-                node_ids.add(str(nid))
-                name = p.get("name", str(nid))
-                rel = p.get("relationship_type", "")
-                full = f"{name}" + (f" ({rel})" if rel else "")
-                nodes.append({
-                    "id": str(nid),
-                    "label": _node_label(name),
-                    "fullLabel": full,
-                    "type": "person",
-                    "color": TYPE_COLORS["person"],
-                    "properties": dict(p),
-                })
-
-        for p in pets or []:
-            nid = p.get("id") or p.get("name", "")
-            if nid and str(nid) not in node_ids:
-                node_ids.add(str(nid))
-                name = p.get("name", str(nid))
-                species = p.get("species", "")
-                full = f"{name}" + (f" ({species})" if species else "")
-                nodes.append({
-                    "id": str(nid),
-                    "label": _node_label(name),
-                    "fullLabel": full,
-                    "type": "pet",
-                    "color": TYPE_COLORS["pet"],
-                    "properties": dict(p),
-                })
-
-        for loc in locations or []:
-            nid = loc.get("id") or loc.get("name", "")
-            if nid and str(nid) not in node_ids:
-                node_ids.add(str(nid))
-                name = loc.get("name", str(nid))
-                loc_type = loc.get("location_type", "")
-                full = f"{name}" + (f" ({loc_type})" if loc_type else "")
-                nodes.append({
-                    "id": str(nid),
-                    "label": _node_label(name),
-                    "fullLabel": full,
-                    "type": "location",
-                    "color": TYPE_COLORS["location"],
-                    "properties": dict(loc),
-                })
-
-        # 3. Relationships: KnowledgeNodes + User->Person/Pet/Location
-        links: list[dict] = []
-        all_node_refs: list[dict] = [{"id": str(n.id)} for n in user_nodes]
-        all_node_refs += [{"id": n["id"]} for n in nodes if n["type"] in ("person", "pet", "location")]
-
-        for node_ref in all_node_refs:
-            nid = node_ref.get("id")
-            if not nid:
-                continue
-            try:
-                rels = await kg.get_relationships(
-                    node_id=KnowledgeNodeId.from_string(str(nid)),
-                    direction="both",
-                )
-                for rel in rels:
-                    src = str(rel.source_id)
-                    tgt = str(rel.target_id)
-                    if src in node_ids and tgt in node_ids:
-                        links.append({
-                            "source": src,
-                            "target": tgt,
-                            "type": rel.relation_type.value,
-                            "label": rel.relation_type.value.replace("_", " "),
-                        })
-            except Exception:
-                continue
-
-        # Deduplicate links
-        seen: set[str] = set()
-        unique_links: list[dict] = []
-        for link in links:
-            key = f"{link['source']}-{link['target']}-{link['type']}"
-            if key not in seen:
-                seen.add(key)
-                unique_links.append(link)
-
-        return {
-            "nodes": nodes,
-            "links": unique_links,
-            "stats": {
-                "total_nodes": len(nodes),
-                "total_links": len(unique_links),
-                "node_types": {
-                    t: sum(1 for n in nodes if n["type"] == t)
-                    for t in set(n["type"] for n in nodes)
-                }
-            }
-        }
-
+        snapshot = await _load_snapshot(current_user_id)
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Failed to retrieve knowledge graph: {str(e)}"
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve knowledge graph: {str(e)}")
+
+    nodes = []
+    for node in snapshot.nodes:
+        detail = node.properties.get("relationship_type") or node.properties.get("species") \
+            or node.properties.get("location_type")
+        nodes.append({
+            "id": node.id,
+            "label": _node_label(node.label),
+            "fullLabel": f"{node.label} ({detail})" if detail else node.label,
+            "type": node.type,
+            "color": TYPE_COLORS.get(node.type, "#6b7280"),
+            "degree": snapshot.degree(node.id),
+            "properties": clean_properties(node.properties),
+        })
+    links = [
+        {"source": e.source, "target": e.target, "type": e.type, "label": e.type.replace("_", " ").lower()}
+        for e in snapshot.edges
+    ]
+    return {
+        "nodes": nodes,
+        "links": links,
+        "stats": {
+            "total_nodes": len(nodes),
+            "total_links": len(links),
+            "node_types": snapshot.node_type_counts(),
+            "edge_types": snapshot.edge_type_counts(),
+        },
+    }
+
+
+class GraphTurn(BaseModel):
+    question: str = Field(max_length=2000)
+    answer: str = Field(max_length=8000)
+
+
+class GraphAskRequest(BaseModel):
+    question: str = Field(min_length=1, max_length=2000)
+    selected_node_id: str | None = Field(default=None, max_length=64)
+    history: list[GraphTurn] = Field(default_factory=list, max_length=6)
+
+
+@router.post("/graph/ask")
+async def ask_knowledge_graph(
+    payload: GraphAskRequest,
+    current_user_id: CurrentUserId,
+    session: SessionDep,
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """Ask the graph explorer agent a question about the current user's graph.
+
+    The agent only reads; the response carries the answer plus validated node
+    ids to highlight and (when the user asked for one) a type filter to apply.
+    """
+    from agent_system.adapters.inbound.api.routes.research import _resolve_api_key
+    from agent_system.adapters.outbound.llm.agents import _get_model
+    from agent_system.adapters.outbound.llm.graph_agent import ask_graph
+    from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
+    from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture
+    from agent_system.composition_root.config import get_settings
+
+    settings = get_settings()
+    api_key = _resolve_api_key(current_user, settings)
+    try:
+        snapshot = await _load_snapshot(current_user_id)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve knowledge graph: {str(e)}")
+
+    install_llm_capture()
+    trace = TurnTrace(user_input=payload.question)
+    trace.enter_node("GraphExplorer")
+    with bind_trace(trace):
+        result = await ask_graph(
+            snapshot,
+            payload.question.strip(),
+            model=_get_model(settings.graph_agent_model or settings.default_model, api_key),
+            selected_id=payload.selected_node_id,
+            history=[t.model_dump() for t in payload.history],
+            max_requests=settings.graph_agent_max_requests,
+            timeout_s=settings.graph_agent_timeout_s,
         )
+    for step in result.steps:
+        trace.add_tool_call(step["tool"], step["args"], step["summary"], True, step["duration_ms"])
+    trace.finish(response=result.answer, error=None if result.stopped == "answered" else result.stopped)
+    await save_turn_trace(
+        trace, user_id=current_user_id, conversation_id="graph-explorer", source="graph", session=session,
+    )
+
+    data = result.to_dict()
+    data["usage"]["cost_usd"] = trace.usage()["cost_usd"]
+    return data
 
 
 @router.delete("/graph")

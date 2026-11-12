@@ -1,78 +1,69 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { X, RefreshCw, Trash2, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { X, RefreshCw, Trash2, Maximize2, Search, SlidersHorizontal, PanelRight, Eraser } from 'lucide-react';
 import { api } from '../../lib/api';
-
-interface GraphNode {
-  id: string;
-  label: string;
-  fullLabel: string;
-  type: string;
-  color: string;
-  properties: Record<string, unknown>;
-}
-
-interface GraphLink {
-  source: string;
-  target: string;
-  type: string;
-  label: string;
-}
-
-interface GraphData {
-  nodes: GraphNode[];
-  links: GraphLink[];
-  stats: {
-    total_nodes: number;
-    total_links: number;
-    node_types: Record<string, number>;
-  };
-}
+import { GraphAskPanel, type GraphAskResponse } from './GraphAskPanel';
+import { GraphFilters } from './GraphFilters';
+import { NodeDetails } from './NodeDetails';
+import {
+  applyFilter,
+  buildIndex,
+  linkKey,
+  nodeColor,
+  searchNodes,
+  shortestPath,
+  type GraphData,
+  type GraphLink,
+  type GraphNode,
+  type Neighbor,
+} from './graphModel';
 
 interface KnowledgeGraphProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-// Color mapping for all node types (matches backend TYPE_COLORS)
-const NODE_TYPE_COLORS: Record<string, string> = {
-  user: '#3b82f6',
-  interaction: '#10b981',
-  topic: '#f59e0b',
-  tool: '#8b5cf6',
-  suggestion: '#ec4899',
-  person: '#06b6d4',
-  pet: '#84cc16',
-  location: '#f97316',
-};
+type SimNode = GraphNode & { x?: number; y?: number };
+type SimLink = { source: string | SimNode; target: string | SimNode; type: string; label: string };
 
-function getNodeColor(type: string): string {
-  return NODE_TYPE_COLORS[type] ?? '#6b7280';
-}
+const EMPTY: GraphData = { nodes: [], links: [], stats: { total_nodes: 0, total_links: 0, node_types: {}, edge_types: {} } };
+const MAX_AUTO_ZOOM = 2.5;
+const endId = (end: string | SimNode) => (typeof end === 'string' ? end : end.id);
 
 export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [ForceGraph, setForceGraph] = useState<React.ComponentType<any> | null>(null);
+  const [graphLibFailed, setGraphLibFailed] = useState(false);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const graphRef = useRef<any>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 });
-  
-  const [graphLibFailed, setGraphLibFailed] = useState(false);
-  
-  // Load the graph library when component mounts
+
+  // Explorer state
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hiddenNodeTypes, setHiddenNodeTypes] = useState<Set<string>>(new Set());
+  const [hiddenEdgeTypes, setHiddenEdgeTypes] = useState<Set<string>>(new Set());
+  const [focusDepth, setFocusDepth] = useState<number | null>(null);
+  const [query, setQuery] = useState('');
+  const [highlight, setHighlight] = useState<Set<string>>(new Set());
+  const [pathLinks, setPathLinks] = useState<Set<string>>(new Set());
+  const [pickingPath, setPickingPath] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [tab, setTab] = useState<'ask' | 'node'>('ask');
+  const [showFilters, setShowFilters] = useState(false);
+  const [showPanel, setShowPanel] = useState(false);
+  const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
+
   useEffect(() => {
     if (isOpen && !ForceGraph && !graphLibFailed) {
-      import('react-force-graph-2d').then(mod => {
-        setForceGraph(() => mod.default);
-      }).catch(err => {
-        console.error('Failed to load graph library:', err);
-        setGraphLibFailed(true);
-        // Don't set error - we'll show fallback view instead
-      });
+      import('react-force-graph-2d')
+        .then((mod) => setForceGraph(() => mod.default))
+        .catch((err) => {
+          console.error('Failed to load graph library:', err);
+          setGraphLibFailed(true);
+        });
     }
   }, [isOpen, ForceGraph, graphLibFailed]);
 
@@ -80,8 +71,7 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
     setLoading(true);
     setError(null);
     try {
-      const data = await api.getKnowledgeGraph();
-      setGraphData(data);
+      setGraphData(await api.getKnowledgeGraph());
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load knowledge graph');
     } finally {
@@ -89,114 +79,234 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
     }
   }, []);
 
+  const clearMarks = useCallback(() => {
+    setHighlight(new Set());
+    setPathLinks(new Set());
+    setNotice(null);
+    setPickingPath(false);
+  }, []);
+
   const handleClear = useCallback(async () => {
-    if (!confirm('Are you sure you want to clear your knowledge graph? This cannot be undone.')) {
-      return;
-    }
-    
+    if (!confirm('Are you sure you want to clear your knowledge graph? This cannot be undone.')) return;
     setLoading(true);
     try {
       await api.clearKnowledgeGraph();
-      setGraphData({ nodes: [], links: [], stats: { total_nodes: 0, total_links: 0, node_types: {} } });
-      setSelectedNode(null);
+      setGraphData(EMPTY);
+      setSelectedId(null);
+      clearMarks();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to clear knowledge graph');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [clearMarks]);
 
   useEffect(() => {
-    if (isOpen) {
-      loadGraph();
-    }
+    if (isOpen) loadGraph();
   }, [isOpen, loadGraph]);
 
+  // Size the canvas to its container (panels open/close, window resizes)
   useEffect(() => {
-    if (containerRef.current) {
-      const updateDimensions = () => {
-        if (containerRef.current) {
-          setDimensions({
-            width: containerRef.current.clientWidth,
-            height: containerRef.current.clientHeight - 60, // Account for header
-          });
-        }
-      };
-      
-      updateDimensions();
-      window.addEventListener('resize', updateDimensions);
-      return () => window.removeEventListener('resize', updateDimensions);
-    }
+    const el = canvasRef.current;
+    if (!isOpen || !el) return;
+    const update = () => setDimensions({ width: el.clientWidth, height: el.clientHeight });
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isOpen, graphData]);
+
+  const data = graphData ?? EMPTY;
+  const index = useMemo(() => buildIndex(data), [data]);
+  const selectedNode = selectedId ? (index.byId.get(selectedId) ?? null) : null;
+
+  const allowed = useCallback(
+    (nb: Neighbor) => !hiddenEdgeTypes.has(nb.link.type) && !hiddenNodeTypes.has(nb.node.type),
+    [hiddenEdgeTypes, hiddenNodeTypes],
+  );
+
+  const visible = useMemo(
+    () =>
+      applyFilter(data, index, {
+        hiddenNodeTypes,
+        hiddenEdgeTypes,
+        focus: selectedId && focusDepth ? { id: selectedId, depth: focusDepth } : null,
+      }),
+    [data, index, hiddenNodeTypes, hiddenEdgeTypes, selectedId, focusDepth],
+  );
+
+  // Keep one object per node across filter changes so the layout doesn't restart.
+  const simNodes = useRef(new Map<string, SimNode>());
+  const simData = useMemo(() => {
+    const cache = simNodes.current;
+    const nodes = visible.nodes.map((n) => {
+      const existing = cache.get(n.id);
+      if (existing) return Object.assign(existing, n);
+      const created: SimNode = { ...n };
+      cache.set(n.id, created);
+      return created;
+    });
+    const links: SimLink[] = visible.links.map((l) => ({ ...l }));
+    return { nodes, links };
+  }, [visible]);
+
+  const matches = useMemo(() => searchNodes(visible.nodes, query), [visible.nodes, query]);
+  // What stands out: search matches win, then agent/path highlights.
+  const emphasis = query.trim() ? matches : highlight;
+
+  const zoomTo = useCallback((ids: Set<string>) => {
+    if (!ids.size) return;
+    setTimeout(() => {
+      const graph = graphRef.current;
+      const points = [...ids].map((id) => simNodes.current.get(id)).filter((n) => n?.x != null && n?.y != null);
+      if (!graph || !points.length) return;
+      const xs = points.map((n) => n!.x!);
+      const ys = points.map((n) => n!.y!);
+      const spanX = Math.max(...xs) - Math.min(...xs) + 80;
+      const spanY = Math.max(...ys) - Math.min(...ys) + 80;
+      const el = canvasRef.current;
+      // Fit the marked nodes, but never zoom so far that a couple of nodes fill the canvas
+      const scale = Math.min(MAX_AUTO_ZOOM, (el?.clientWidth ?? 800) / spanX, (el?.clientHeight ?? 600) / spanY);
+      graph.centerAt((Math.max(...xs) + Math.min(...xs)) / 2, (Math.max(...ys) + Math.min(...ys)) / 2, 600);
+      graph.zoom(scale, 600);
+    }, 250);
+  }, []);
+
+  // Fit the whole graph once its first layout settles
+  const fitted = useRef(false);
+  const handleEngineStop = useCallback(() => {
+    if (fitted.current) return;
+    fitted.current = true;
+    graphRef.current?.zoomToFit(400, 60);
+  }, []);
+  useEffect(() => {
+    if (!isOpen) fitted.current = false;
   }, [isOpen]);
 
-  const handleNodeClick = useCallback((node: GraphNode) => {
-    setSelectedNode(node);
-  }, []);
+  const toggle = (set: Set<string>, value: string) => {
+    const next = new Set(set);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    return next;
+  };
 
-  const handleZoomIn = useCallback(() => {
-    if (graphRef.current) {
-      graphRef.current.zoom(graphRef.current.zoom() * 1.5, 400);
-    }
-  }, []);
+  const applyAnswer = useCallback(
+    (response: GraphAskResponse) => {
+      const ids = new Set(response.highlight_node_ids.filter((id) => index.byId.has(id)));
+      setQuery('');
+      setPathLinks(new Set());
+      setHighlight(ids);
+      setFocusDepth(null);
+      if (response.filter) {
+        const { node_types, edge_types } = response.filter;
+        if (node_types.length) {
+          setHiddenNodeTypes(new Set(Object.keys(data.stats.node_types).filter((t) => !node_types.includes(t))));
+        }
+        if (edge_types.length) {
+          setHiddenEdgeTypes(new Set(Object.keys(data.stats.edge_types ?? {}).filter((t) => !edge_types.includes(t))));
+        }
+        setNotice('Filter applied from the assistant');
+      } else {
+        // Make sure highlighted nodes aren't hidden by a stale filter
+        const types = new Set([...ids].map((id) => index.byId.get(id)!.type));
+        setHiddenNodeTypes((prev) => new Set([...prev].filter((t) => !types.has(t))));
+        setNotice(ids.size ? `${ids.size} node${ids.size === 1 ? '' : 's'} highlighted` : null);
+      }
+      zoomTo(ids);
+    },
+    [data, index, zoomTo],
+  );
 
-  const handleZoomOut = useCallback(() => {
-    if (graphRef.current) {
-      graphRef.current.zoom(graphRef.current.zoom() / 1.5, 400);
-    }
-  }, []);
+  const handleNodeClick = useCallback(
+    (node: SimNode) => {
+      if (pickingPath && selectedId && node.id !== selectedId) {
+        const path = shortestPath(index, selectedId, node.id, allowed);
+        setPickingPath(false);
+        if (!path) {
+          setNotice('No path between those nodes with the current filters');
+          return;
+        }
+        const ids = new Set(path.nodes);
+        setHighlight(ids);
+        setPathLinks(new Set(path.links.map(linkKey)));
+        setFocusDepth(null);
+        setNotice(`Path: ${path.nodes.map((id) => index.byId.get(id)?.label).join(' → ')}`);
+        zoomTo(ids);
+        return;
+      }
+      setSelectedId(node.id);
+      setTab('node');
+      setShowPanel(true);
+    },
+    [pickingPath, selectedId, index, allowed, zoomTo],
+  );
 
-  const handleFit = useCallback(() => {
-    if (graphRef.current) {
-      graphRef.current.zoomToFit(400, 50);
-    }
-  }, []);
+  const selectById = useCallback(
+    (id: string) => {
+      setSelectedId(id);
+      const node = simNodes.current.get(id);
+      if (node?.x != null && node.y != null) graphRef.current?.centerAt(node.x, node.y, 500);
+    },
+    [],
+  );
 
   if (!isOpen) return null;
 
+  const hasGraph = data.nodes.length > 0;
+  const dimmed = emphasis.size > 0;
+  const marked = highlight.size > 0 || pathLinks.size > 0;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div 
-        ref={containerRef}
-        className="bg-gray-900 rounded-none sm:rounded-lg shadow-xl w-full h-full sm:w-[90vw] sm:h-[85vh] flex flex-col"
-      >
-        {/* Header - Mobile optimized */}
-        <div className="flex items-center justify-between p-3 sm:p-4 border-b border-gray-700 shrink-0">
-          <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 min-w-0">
+      <div className="bg-gray-900 rounded-none sm:rounded-lg shadow-xl w-full h-full sm:w-[95vw] sm:h-[90vh] flex flex-col overflow-hidden">
+        {/* Header */}
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 p-2 sm:p-3 border-b border-gray-700 shrink-0">
+          <div className="min-w-0 flex-1 sm:flex-none">
             <h2 className="text-base sm:text-lg font-semibold text-white truncate">Knowledge Graph</h2>
             {graphData && (
-              <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-400">
-                <span>{graphData.stats.total_nodes} nodes</span>
-                <span>{graphData.stats.total_links} links</span>
-              </div>
+              <p className="text-xs text-gray-400">
+                {visible.nodes.length === data.nodes.length
+                  ? `${data.nodes.length} nodes · ${data.links.length} links`
+                  : `${visible.nodes.length} of ${data.nodes.length} nodes · ${visible.links.length} links`}
+              </p>
             )}
           </div>
-          
-          <div className="flex items-center gap-1 sm:gap-2 shrink-0">
-            {/* Zoom controls - hidden on very small screens */}
-            <div className="hidden xs:flex items-center gap-1 sm:gap-2">
-              <button
-                onClick={handleZoomIn}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded touch-manipulation"
-                title="Zoom In"
-              >
-                <ZoomIn size={18} />
-              </button>
-              <button
-                onClick={handleZoomOut}
-                className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded touch-manipulation"
-                title="Zoom Out"
-              >
-                <ZoomOut size={18} />
-              </button>
-            </div>
+
+          <div className="relative order-last w-full sm:order-none sm:w-auto sm:flex-1 min-w-0 sm:max-w-sm sm:ml-4">
+            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Find nodes…"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 pl-8 pr-10 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            />
+            {query.trim() && (
+              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-500">{matches.size}</span>
+            )}
+          </div>
+
+          <div className="flex items-center gap-1 shrink-0 sm:ml-auto">
             <button
-              onClick={handleFit}
+              onClick={() => setShowFilters((s) => !s)}
+              className={`lg:hidden p-2 rounded touch-manipulation ${showFilters ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              title="Filters"
+            >
+              <SlidersHorizontal size={18} />
+            </button>
+            <button
+              onClick={() => setShowPanel((s) => !s)}
+              className={`lg:hidden p-2 rounded touch-manipulation ${showPanel ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
+              title="Ask and details"
+            >
+              <PanelRight size={18} />
+            </button>
+            <button
+              onClick={() => graphRef.current?.zoomToFit(400, 50)}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded touch-manipulation"
-              title="Fit to View"
+              title="Fit to view"
             >
               <Maximize2 size={18} />
             </button>
-            <div className="hidden sm:block w-px h-6 bg-gray-700 mx-1 sm:mx-2" />
             <button
               onClick={loadGraph}
               disabled={loading}
@@ -208,16 +318,14 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
             <button
               onClick={handleClear}
               disabled={loading}
-              className="hidden sm:block p-2 text-red-400 hover:text-red-300 hover:bg-gray-700 rounded disabled:opacity-50 touch-manipulation"
-              title="Clear Graph"
+              className="hidden sm:block p-2 text-red-400 hover:text-red-300 hover:bg-gray-700 rounded disabled:opacity-50"
+              title="Clear graph"
             >
               <Trash2 size={18} />
             </button>
-            <div className="w-px h-6 bg-gray-700 mx-1 sm:mx-2" />
-            {/* Close button - larger on mobile */}
             <button
               onClick={onClose}
-              className="p-2.5 sm:p-2 text-white sm:text-gray-400 hover:text-white bg-gray-700 sm:bg-transparent hover:bg-gray-700 rounded-lg sm:rounded touch-manipulation"
+              className="p-2 text-white sm:text-gray-400 hover:text-white bg-gray-700 sm:bg-transparent hover:bg-gray-700 rounded-lg sm:rounded touch-manipulation"
               title="Close"
             >
               <X size={20} />
@@ -225,176 +333,230 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
           </div>
         </div>
 
-        {/* Content */}
-        <div className="flex-1 relative">
-          {loading && !graphData && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-            </div>
+        {/* Body: filters | canvas | ask + details */}
+        <div className="flex-1 min-h-0 flex relative">
+          {hasGraph && (
+            <aside
+              className={`${showFilters ? 'absolute inset-y-0 left-0 z-20 shadow-xl' : 'hidden'} lg:static lg:block w-56 shrink-0 bg-gray-900 border-r border-gray-700`}
+            >
+              <GraphFilters
+                nodeTypes={data.stats.node_types}
+                edgeTypes={data.stats.edge_types ?? {}}
+                hiddenNodeTypes={hiddenNodeTypes}
+                hiddenEdgeTypes={hiddenEdgeTypes}
+                onToggleNodeType={(t) => setHiddenNodeTypes((s) => toggle(s, t))}
+                onToggleEdgeType={(t) => setHiddenEdgeTypes((s) => toggle(s, t))}
+                onOnlyNodeType={(t) =>
+                  setHiddenNodeTypes(new Set(Object.keys(data.stats.node_types).filter((x) => x !== t)))
+                }
+                onOnlyEdgeType={(t) =>
+                  setHiddenEdgeTypes(new Set(Object.keys(data.stats.edge_types ?? {}).filter((x) => x !== t)))
+                }
+                onReset={() => {
+                  setHiddenNodeTypes(new Set());
+                  setHiddenEdgeTypes(new Set());
+                }}
+              />
+            </aside>
           )}
 
-          {error && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center">
-                <p className="text-red-400 mb-4">{error}</p>
+          <div ref={canvasRef} className="flex-1 min-w-0 relative overflow-hidden">
+            {loading && !graphData && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+              </div>
+            )}
+
+            {error && (
+              <div className="absolute inset-0 flex items-center justify-center z-10 bg-gray-900">
+                <div className="text-center px-4">
+                  <p className="text-red-400 mb-4">{error}</p>
+                  <button onClick={loadGraph} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {graphData && !hasGraph && !error && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="text-center text-gray-400">
+                  <p className="text-lg mb-2">No knowledge graph data yet</p>
+                  <p className="text-sm">Start chatting to build your knowledge graph!</p>
+                </div>
+              </div>
+            )}
+
+            {hasGraph && visible.nodes.length === 0 && (
+              <div className="absolute inset-0 flex items-center justify-center text-gray-400 text-sm">
+                Every node is filtered out. Reset the filters to see the graph.
+              </div>
+            )}
+
+            {hasGraph && !ForceGraph && !graphLibFailed && (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
+              </div>
+            )}
+
+            {/* Fallback list when the graph library can't load */}
+            {hasGraph && graphLibFailed && (
+              <div className="absolute inset-0 overflow-auto p-4">
+                <p className="text-yellow-400 text-sm text-center mb-4">
+                  Graph drawing is unavailable on this device; showing a list instead.
+                </p>
+                <div className="max-w-2xl mx-auto space-y-1.5">
+                  {visible.nodes
+                    .filter((n) => !dimmed || emphasis.has(n.id))
+                    .slice(0, 200)
+                    .map((node) => (
+                      <button
+                        key={node.id}
+                        onClick={() => handleNodeClick(node)}
+                        className="w-full flex items-center gap-2 p-2.5 bg-gray-800/50 rounded-lg hover:bg-gray-700/50 text-left"
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: nodeColor(node.type) }} />
+                        <span className="text-gray-200 text-sm truncate">{node.fullLabel}</span>
+                        <span className="text-gray-500 text-xs ml-auto capitalize">{node.type}</span>
+                      </button>
+                    ))}
+                </div>
+              </div>
+            )}
+
+            {hasGraph && ForceGraph && (
+              <ForceGraph
+                ref={graphRef}
+                graphData={simData}
+                width={dimensions.width}
+                height={dimensions.height}
+                backgroundColor="#111827"
+                nodeLabel={(node: SimNode) => `${node.fullLabel} · ${node.type}`}
+                linkLabel={(link: SimLink) => link.label}
+                linkColor={(link: SimLink) => {
+                  const key = linkKey({ ...link, source: endId(link.source), target: endId(link.target) } as GraphLink);
+                  if (pathLinks.has(key)) return '#fbbf24';
+                  const lit = emphasis.has(endId(link.source)) && emphasis.has(endId(link.target));
+                  return dimmed && !lit ? 'rgba(75,85,99,0.25)' : '#6b7280';
+                }}
+                linkWidth={(link: SimLink) =>
+                  pathLinks.has(linkKey({ ...link, source: endId(link.source), target: endId(link.target) } as GraphLink)) ? 3 : 1
+                }
+                linkDirectionalArrowLength={4}
+                linkDirectionalArrowRelPos={1}
+                onNodeClick={handleNodeClick}
+                onEngineStop={handleEngineStop}
+                cooldownTicks={120}
+                onBackgroundClick={() => setPickingPath(false)}
+                nodePointerAreaPaint={(node: SimNode, color: string, ctx: CanvasRenderingContext2D) => {
+                  ctx.fillStyle = color;
+                  ctx.beginPath();
+                  ctx.arc(node.x ?? 0, node.y ?? 0, 10, 0, 2 * Math.PI);
+                  ctx.fill();
+                }}
+                nodeCanvasObject={(node: SimNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                  const x = node.x ?? 0;
+                  const y = node.y ?? 0;
+                  const lit = !dimmed || emphasis.has(node.id);
+                  const radius = 4 + Math.min(5, Math.sqrt(node.degree ?? 1));
+                  ctx.globalAlpha = lit ? 1 : 0.18;
+                  ctx.beginPath();
+                  ctx.arc(x, y, radius, 0, 2 * Math.PI);
+                  ctx.fillStyle = node.color;
+                  ctx.fill();
+                  if (dimmed && lit) {
+                    ctx.lineWidth = 2 / globalScale;
+                    ctx.strokeStyle = '#fbbf24';
+                    ctx.stroke();
+                  }
+                  if (node.id === selectedId) {
+                    ctx.beginPath();
+                    ctx.arc(x, y, radius + 3 / globalScale + 1.5, 0, 2 * Math.PI);
+                    ctx.lineWidth = 2 / globalScale;
+                    ctx.strokeStyle = '#ffffff';
+                    ctx.stroke();
+                  }
+                  // Labels: always for emphasised/selected nodes, otherwise once zoomed in enough
+                  if ((dimmed && lit) || node.id === selectedId || (lit && globalScale > 0.9)) {
+                    const fontSize = 12 / globalScale;
+                    ctx.font = `${fontSize}px Sans-Serif`;
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'top';
+                    ctx.fillStyle = dimmed && lit ? '#f3f4f6' : '#9ca3af';
+                    ctx.fillText(node.label, x, y + radius + 2);
+                  }
+                  ctx.globalAlpha = 1;
+                }}
+              />
+            )}
+
+            {(notice || marked) && (
+              <div className="absolute top-2 left-2 right-2 flex justify-center pointer-events-none">
+                <div className="pointer-events-auto flex items-center gap-2 max-w-full bg-gray-800/95 border border-gray-700 rounded-full pl-3 pr-1.5 py-1 text-xs text-gray-200">
+                  <span className="truncate">{notice ?? 'Highlight active'}</span>
+                  <button
+                    onClick={clearMarks}
+                    className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-gray-700 hover:bg-gray-600 shrink-0"
+                  >
+                    <Eraser size={12} /> Clear
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {hasGraph && (
+            <aside
+              className={`${showPanel ? 'absolute inset-y-0 right-0 z-20 shadow-xl w-full sm:w-96' : 'hidden'} lg:static lg:flex lg:w-96 shrink-0 bg-gray-900 border-l border-gray-700 flex flex-col min-h-0`}
+            >
+              <div className="flex shrink-0 border-b border-gray-700 text-sm">
+                {(['ask', 'node'] as const).map((key) => (
+                  <button
+                    key={key}
+                    onClick={() => setTab(key)}
+                    className={`flex-1 py-2 ${tab === key ? 'text-white border-b-2 border-blue-500' : 'text-gray-400 hover:text-gray-200'}`}
+                  >
+                    {key === 'ask' ? 'Ask' : 'Node'}
+                  </button>
+                ))}
                 <button
-                  onClick={loadGraph}
-                  className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  onClick={() => setShowPanel(false)}
+                  className="lg:hidden px-3 text-gray-400 hover:text-white"
+                  title="Close panel"
                 >
-                  Retry
+                  <X size={16} />
                 </button>
               </div>
-            </div>
-          )}
-
-          {graphData && graphData.nodes.length === 0 && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center text-gray-400">
-                <p className="text-lg mb-2">No knowledge graph data yet</p>
-                <p className="text-sm">Start chatting to build your knowledge graph!</p>
+              <div className={`flex-1 min-h-0 ${tab === 'ask' ? '' : 'hidden'}`}>
+                <GraphAskPanel
+                  selectedNodeId={selectedId}
+                  selectedLabel={selectedNode?.fullLabel ?? null}
+                  onApply={applyAnswer}
+                  pending={pendingQuestion}
+                  onPendingConsumed={() => setPendingQuestion(null)}
+                />
               </div>
-            </div>
-          )}
-
-          {graphData && graphData.nodes.length > 0 && !ForceGraph && !graphLibFailed && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500" />
-            </div>
-          )}
-
-          {/* Fallback list view when graph library fails to load */}
-          {graphData && graphData.nodes.length > 0 && graphLibFailed && (
-            <div className="absolute inset-0 overflow-auto p-4">
-              <div className="max-w-2xl mx-auto">
-                <div className="text-center mb-6">
-                  <p className="text-yellow-400 text-sm mb-2">Graph visualization unavailable on this device</p>
-                  <p className="text-gray-400 text-xs">Showing data in list format instead</p>
+              {tab === 'node' && (
+                <div className="flex-1 min-h-0">
+                  <NodeDetails
+                    node={selectedNode}
+                    index={index}
+                    focusDepth={focusDepth}
+                    pickingPath={pickingPath}
+                    onSelect={selectById}
+                    onFocus={setFocusDepth}
+                    onStartPath={() => {
+                      setPickingPath((p) => !p);
+                      setShowPanel(false);
+                    }}
+                    onAsk={(question) => {
+                      setPendingQuestion(question);
+                      setTab('ask');
+                    }}
+                  />
                 </div>
-                
-                {/* Group nodes by type */}
-                {Object.entries(
-                  graphData.nodes.reduce((acc, node) => {
-                    if (!acc[node.type]) acc[node.type] = [];
-                    acc[node.type].push(node);
-                    return acc;
-                  }, {} as Record<string, GraphNode[]>)
-                ).map(([type, nodes]) => (
-                  <div key={type} className="mb-6">
-                    <h3 className="text-white font-medium capitalize mb-3 flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full"
-                        style={{ backgroundColor: getNodeColor(type) }}
-                      />
-                      {type} ({nodes.length})
-                    </h3>
-                    <div className="space-y-2">
-                      {nodes.slice(0, 20).map((node) => (
-                        <div
-                          key={node.id}
-                          onClick={() => handleNodeClick(node)}
-                          className="p-3 bg-gray-800/50 rounded-lg cursor-pointer hover:bg-gray-700/50 transition-colors"
-                        >
-                          <p className="text-gray-200 text-sm">{node.fullLabel}</p>
-                        </div>
-                      ))}
-                      {nodes.length > 20 && (
-                        <p className="text-gray-500 text-xs text-center">
-                          +{nodes.length - 20} more {type}s
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {graphData && graphData.nodes.length > 0 && ForceGraph && (
-            <ForceGraph
-              ref={graphRef}
-              graphData={graphData}
-              width={dimensions.width}
-              height={dimensions.height}
-              nodeLabel={(node: GraphNode) => node.fullLabel}
-              nodeColor={(node: GraphNode) => node.color}
-              nodeRelSize={6}
-              linkLabel={(link: GraphLink) => link.label}
-              linkColor={() => '#4b5563'}
-              linkWidth={1}
-              linkDirectionalArrowLength={4}
-              linkDirectionalArrowRelPos={1}
-              onNodeClick={(node: GraphNode) => handleNodeClick(node)}
-              backgroundColor="#111827"
-              nodeCanvasObject={(node: GraphNode & { x: number; y: number }, ctx: CanvasRenderingContext2D, globalScale: number) => {
-                const label = node.label;
-                const fontSize = 12 / globalScale;
-                ctx.font = `${fontSize}px Sans-Serif`;
-                
-                // Draw node circle
-                ctx.beginPath();
-                ctx.arc(node.x, node.y, 6, 0, 2 * Math.PI);
-                ctx.fillStyle = node.color;
-                ctx.fill();
-                
-                // Draw label
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'top';
-                ctx.fillStyle = '#9ca3af';
-                ctx.fillText(label, node.x, node.y + 8);
-              }}
-            />
-          )}
-
-          {/* Legend - collapsible on mobile, hidden in fallback mode */}
-          {graphData && graphData.nodes.length > 0 && ForceGraph && !graphLibFailed && (
-            <div className="absolute bottom-2 sm:bottom-4 left-2 sm:left-4 bg-gray-800/90 rounded-lg p-2 sm:p-3 text-xs sm:text-sm max-w-[45vw] sm:max-w-none">
-              <h4 className="text-white font-medium mb-1 sm:mb-2">Node Types</h4>
-              <div className="space-y-0.5 sm:space-y-1">
-                {Object.entries(graphData.stats.node_types).map(([type, count]) => (
-                  <div key={type} className="flex items-center gap-1.5 sm:gap-2">
-                    <span
-                      className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: getNodeColor(type) }}
-                    />
-                    <span className="text-gray-300 capitalize truncate">{type}</span>
-                    <span className="text-gray-500">({count})</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Node Details Panel - full width on mobile */}
-          {selectedNode && (
-            <div className="absolute inset-x-2 sm:inset-x-auto top-2 sm:top-4 sm:right-4 sm:w-80 bg-gray-800/95 rounded-lg p-3 sm:p-4 text-sm">
-              <div className="flex items-center justify-between mb-2 sm:mb-3">
-                <h4 className="text-white font-medium">Node Details</h4>
-                <button
-                  onClick={() => setSelectedNode(null)}
-                  className="p-1 text-gray-400 hover:text-white touch-manipulation"
-                >
-                  <X size={18} />
-                </button>
-              </div>
-              <div className="space-y-2">
-                <div>
-                  <span className="text-gray-400">Type:</span>
-                  <span className="ml-2 text-white capitalize">{selectedNode.type}</span>
-                </div>
-                <div>
-                  <span className="text-gray-400">Label:</span>
-                  <p className="text-white mt-1 break-words">{selectedNode.fullLabel}</p>
-                </div>
-                {Object.keys(selectedNode.properties).length > 0 && (
-                  <div>
-                    <span className="text-gray-400">Properties:</span>
-                    <pre className="mt-1 text-xs text-gray-300 bg-gray-900 rounded p-2 overflow-auto max-h-32 sm:max-h-40">
-                      {JSON.stringify(selectedNode.properties, null, 2)}
-                    </pre>
-                  </div>
-                )}
-              </div>
-            </div>
+              )}
+            </aside>
           )}
         </div>
       </div>

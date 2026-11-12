@@ -141,6 +141,19 @@ class KnowledgeGraphPort(ABC):
         ...
 
     @abstractmethod
+    async def get_user_subgraph(self, user_id: UserId) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """Get one user's whole graph as plain records.
+
+        Args:
+            user_id: The user's ID
+
+        Returns:
+            (nodes, edges): nodes as `{id, type, label, properties}`, edges as
+            `{source, target, type, weight}`. Must not include other users' data.
+        """
+        ...
+
+    @abstractmethod
     async def find_connected_nodes(
         self,
         node_id: KnowledgeNodeId,

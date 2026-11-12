@@ -72,6 +72,32 @@ async def _run(args: argparse.Namespace) -> int:
     return code
 
 
+async def _run_graph_qa(args: argparse.Namespace) -> int:
+    from agent_system.adapters.outbound.llm.agents import _get_model
+    from agent_system.composition_root.config import get_settings
+    from agent_system.evals.graph_qa import run_graph_qa
+
+    s = get_settings()
+    key = s.eval_openai_api_key or s.openai_api_key
+    if not key:
+        print("Set EVAL_OPENAI_API_KEY or OPENAI_API_KEY to run graph-qa.")
+        return 2
+    model = _get_model(args.model or s.graph_agent_model or s.default_model, key)
+    summary = await run_graph_qa(model=model, case_ids=args.case or None, repeats=args.repeats,
+                                 concurrency=args.concurrency, max_requests=s.graph_agent_max_requests)
+    for r in summary["results"]:
+        failed = [k for k, ok in r["checks"].items() if not ok]
+        mark = "PASS" if r["passed"] else "FAIL " + ",".join(failed)
+        print(f"{r['case_id']}#{r['repeat']}: {mark}  tools={r['tools']}  {round(r['usage']['duration_ms'])}ms")
+        if not r["passed"] or args.verbose:
+            print(f"    answer: {r['answer'][:300]}")
+    print(f"\npass rate: {summary['passed']}/{summary['cases']} ({summary['pass_rate']})  "
+          f"avg tool calls {summary['avg_tool_calls']}  avg {summary['avg_duration_ms']}ms  tokens {summary['tokens']}")
+    if args.fail_under is not None and (summary["pass_rate"] or 0) < args.fail_under:
+        return 1
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="python -m agent_system.evals")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -85,6 +111,13 @@ def main() -> None:
     run.add_argument("--no-analysis", action="store_true", help="Skip the LLM failure write-up")
     run.add_argument("--show-analysis", action="store_true", help="Print the failure analysis markdown")
     run.add_argument("--fail-under", type=float, help="Exit 1 when pass rate is below this (CI gate)")
+    gq = sub.add_parser("graph-qa", help="Run the graph explorer agent against the synthetic graph fixture")
+    gq.add_argument("--case", action="append", help="Only these case ids (repeatable)")
+    gq.add_argument("--repeats", type=int, default=1)
+    gq.add_argument("--concurrency", type=int, default=4)
+    gq.add_argument("--model", help="Override the model, e.g. openai:gpt-5.6-luna")
+    gq.add_argument("--verbose", action="store_true", help="Print every answer, not just failures")
+    gq.add_argument("--fail-under", type=float, help="Exit 1 when pass rate is below this (CI gate)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING)
 
@@ -98,6 +131,8 @@ def main() -> None:
             print(f"{name:<20} {s.kind:<8} {n:>3} cases  rubrics={','.join(s.rubrics)}  {s.description}")
         print(f"\nrubrics: {', '.join(list_rubrics())}")
         return
+    if args.cmd == "graph-qa":
+        sys.exit(asyncio.run(_run_graph_qa(args)))
     sys.exit(asyncio.run(_run(args)))
 
 

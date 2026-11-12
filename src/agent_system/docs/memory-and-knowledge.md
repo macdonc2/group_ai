@@ -121,25 +121,25 @@ You can ask the agent in a group chat things like:
 
 ---
 
-## Knowledge Graph Visualization
+## Knowledge Graph Visualization and Explorer
 
-You can see your knowledge graph visually:
+You can see and explore your knowledge graph visually:
 
 1. Click the **Knowledge Graph** button (brain icon) in the interface
-2. An interactive graph appears showing nodes and connections
-3. Each node type has a different color:
-   - People, pets, locations, topics, interactions, and more
-4. Click on any node to see its details
-5. Use the filter buttons to show/hide specific node types
-6. Zoom, pan, and drag nodes to explore
+2. The window shows your graph: each dot is a person, pet, place, topic, preference or past conversation, and the lines show how they relate
 
-This gives you a bird's-eye view of everything the agent knows about your world.
+What you can do there:
 
-### Clearing the Graph
+- **Filter** -- the left panel lists every node type and link type with counts. Untick a type to hide it, or click "only" to show just that type.
+- **Search** -- type in "Find nodes" to highlight everything whose name or details match.
+- **Inspect a node** -- click any node to open the Node panel with its stored details and every link. Click a link to jump to the node on the other end.
+- **Focus on a neighbourhood** -- with a node selected, choose 1, 2 or 3 hops to show only what is that close to it.
+- **Find a path** -- with a node selected, click "Find path to..." and then click another node to see the shortest chain connecting them.
+- **Ask about the graph** -- the Ask panel answers questions from what is stored in your graph, for example "Who do I know, and how?", "Which places do the people I know go to?", "How is June connected to Blue Door Coffee?" or "Show only people and pets". The nodes behind the answer are highlighted in the graph, and you can expand the answer to see which lookups it ran. If you have a node selected, you can say "this" to refer to it.
 
-If you want to start fresh, you can clear your entire knowledge graph from the visualization view. This removes all learned information -- people, pets, locations, topics, preferences, and embeddings. Conversation history (the messages themselves) is not affected.
+The Ask panel only reads your graph. It cannot change or delete anything, it only sees your own data, and if the graph does not contain the answer it says so instead of guessing.
 
----
+**Clear Graph** (the red bin icon) permanently deletes your knowledge graph: topics, past-conversation summaries, people, pets, places and preferences.
 
 ## Privacy
 

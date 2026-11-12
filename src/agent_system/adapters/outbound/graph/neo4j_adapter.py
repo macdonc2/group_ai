@@ -280,6 +280,76 @@ class Neo4jAdapter(KnowledgeGraphPort):
                 nodes.append(self._record_to_node(record["n"]))
         return nodes
 
+    # Binds `n` to every node that belongs to $user_id: knowledge nodes within 3 hops
+    # of the user's node, plus their people, pets, places, preferences and threads.
+    # The walk never continues *through* a tool node or a node owned by someone
+    # else: tool nodes are shared by all users, so an unrestricted walk crosses
+    # into other users' graphs. Message embeddings are memory, not graph, and are
+    # left out.
+    _USER_SCOPE = """
+        OPTIONAL MATCH p = (:KnowledgeNode {node_type: 'user', user_id: $user_id})-[*0..3]-(n:KnowledgeNode)
+        WHERE all(x IN nodes(p) WHERE x.user_id IS NULL OR x.user_id = $user_id)
+          AND none(x IN nodes(p)[1..-1] WHERE x.node_type = 'tool')
+        WITH collect(DISTINCT n) AS reached
+        OPTIONAL MATCH (s)
+        WHERE (s:PersonNode OR s:PetNode OR s:LocationNode OR s:PreferenceNode OR s:ThreadNode)
+          AND s.user_id = $user_id
+        WITH reached, collect(DISTINCT s) AS owned
+        UNWIND reached + owned AS n
+    """
+
+    async def get_user_subgraph(self, user_id: UserId) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        """One user's whole graph as plain records, in a single round trip.
+
+        Returns (nodes, edges): nodes are `{id, type, label, properties}` and
+        edges `{source, target, type, weight}`; edge types are returned as stored,
+        including ones outside `RelationType` (entity links use free-form types).
+
+        Scoped by `_USER_SCOPE`, so it never includes another user's data.
+        """
+        query = """
+        """ + self._USER_SCOPE + """
+        WITH collect(DISTINCT n) AS ns
+        UNWIND ns AS a
+        OPTIONAL MATCH (a)-[r]->(b) WHERE b IN ns
+        RETURN a AS n, labels(a) AS labels,
+               [x IN collect({type: type(r), target: b.id, weight: r.weight}) WHERE x.type IS NOT NULL] AS out
+        """
+        social = {"PersonNode": "person", "PetNode": "pet", "LocationNode": "location",
+                  "PreferenceNode": "preference", "ThreadNode": "thread"}
+        nodes: list[dict[str, Any]] = []
+        edges: list[dict[str, Any]] = []
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(query, user_id=str(user_id))
+            async for record in result:
+                raw = dict(record["n"])
+                node_id = raw.get("id")
+                if not node_id:
+                    continue
+                kind = next((social[lbl] for lbl in record["labels"] if lbl in social), None)
+                if kind:
+                    props = {k: v for k, v in raw.items() if k != "embedding"}
+                    label = raw.get("name") or raw.get("value") or str(node_id)
+                else:
+                    kind = raw.get("node_type") or "unknown"
+                    props_json = raw.get("properties_json") or raw.get("properties")
+                    try:
+                        props = json.loads(props_json) if isinstance(props_json, str) else dict(props_json or {})
+                    except (ValueError, TypeError):
+                        props = {}
+                    for key in ("created_at", "updated_at"):
+                        if raw.get(key):
+                            props.setdefault(key, raw[key])
+                    label = raw.get("label") or str(node_id)
+                nodes.append({"id": str(node_id), "type": str(kind), "label": str(label), "properties": props})
+                for out in record["out"]:
+                    if out.get("target"):
+                        edges.append({
+                            "source": str(node_id), "target": str(out["target"]),
+                            "type": out["type"], "weight": out.get("weight") or 1.0,
+                        })
+        return nodes, edges
+
     async def find_connected_nodes(
         self,
         node_id: KnowledgeNodeId,
@@ -523,13 +593,15 @@ class Neo4jAdapter(KnowledgeGraphPort):
 
     async def clear_user_graph(self, user_id: UserId) -> int:
         """Clear all nodes and relationships for a user."""
+        # Scoped like get_user_subgraph. The previous unbounded `-[*]-` walk also
+        # deleted other users' nodes reachable through shared tool nodes, and left
+        # this user's people, pets and places behind. Shared tool nodes are kept.
         query = """
-        MATCH (u:KnowledgeNode {node_type: 'user', user_id: $user_id})-[*]-(n:KnowledgeNode)
+        """ + self._USER_SCOPE + """
+        WITH DISTINCT n
+        WHERE coalesce(n.node_type, '') <> 'tool'
         DETACH DELETE n
-        WITH count(n) as deleted
-        MATCH (u:KnowledgeNode {node_type: 'user', user_id: $user_id})
-        DETACH DELETE u
-        RETURN deleted + 1 as total_deleted
+        RETURN count(n) AS total_deleted
         """
         async with self.driver.session(database=self._database) as session:
             result = await session.run(query, user_id=str(user_id))

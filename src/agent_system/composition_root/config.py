@@ -64,6 +64,11 @@ class Settings(BaseSettings):
     research_request_timeout_s: float = Field(default=600, description="Per-request timeout for Deep Research LLM calls")
     llm_max_retries: int = Field(default=1, description="Retries after a failed/timed-out LLM request")
 
+    # Graph explorer agent (Knowledge Graph > Ask)
+    graph_agent_model: str | None = Field(default=None, description="Model for the graph explorer agent (defaults to default_model)")
+    graph_agent_max_requests: int = Field(default=8, description="Hard cap on model calls per graph question")
+    graph_agent_timeout_s: float = Field(default=90, description="Wall-clock limit for one graph question")
+
     # Web reading for the chat agent
     web_read_pages: int = Field(default=3, description="How many top web_search results to open and read")
     web_js_render: bool = Field(default=True, description="Render JavaScript pages in headless Chromium when Playwright is installed")
