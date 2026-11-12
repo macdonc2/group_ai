@@ -1,0 +1,55 @@
+# Local copy of the observability stack, for development and for learning the
+# moving parts. Same components and the same Collector pipeline as the cluster.
+#
+#   docker compose -f infra/observability/docker-compose.yml up -d
+#   OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 LOG_FORMAT=json make backend 2>&1 | tee infra/observability/logs/backend.log
+#   open http://localhost:3000   (Grafana, no login locally)
+#
+# app --OTLP--> collector --> tempo (traces)
+#                         --> prometheus (metrics, scraped from the collector)
+#      stdout JSON --file--> collector --> loki (logs)
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol/config.yaml:ro
+      - ./logs:/var/log/app:ro
+    ports:
+      - "4318:4318"   # OTLP/HTTP from the app
+    depends_on: [tempo, loki]
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo.yaml"]
+    user: "0"   # local only: lets Tempo write to the named volume
+    volumes:
+      - ./tempo.yaml:/etc/tempo.yaml:ro
+      - tempo-data:/var/tempo
+
+  loki:
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    depends_on: [prometheus, tempo, loki]
+
+volumes:
+  tempo-data:

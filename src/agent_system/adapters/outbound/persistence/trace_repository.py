@@ -42,6 +42,12 @@ async def save_turn_trace(
 
         data = trace.to_dict()
         usage = data["usage"]
+        try:
+            from agent_system.adapters.outbound.telemetry.otel import record_turn
+
+            record_turn(source, "error" if data.get("error") else "ok")
+        except Exception:  # noqa: BLE001 - a metric must never cost a turn
+            pass
         row = TurnTraceModel(
             id=str(uuid.uuid4()),
             user_id=str(user_id),

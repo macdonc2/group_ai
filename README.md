@@ -334,6 +334,12 @@ Every agent turn is traced, and an eval harness measures the agent's behaviour a
 
 Run with `make eval`, `make eval-suite SUITE=memory_retrieval JUDGE=both`, `python -m agent_system.evals run …`, or from the tab. Endpoints are under `/api/v1/evals`.
 
+### Observability & Security
+
+Every request gets an ID that is returned in `X-Request-ID` and stamped on every log line it produces, along with the user's ID; logs are JSON in production. `/health` is liveness and `/health/ready` checks the database. OpenTelemetry traces and metrics (HTTP, SQL, outbound calls, and pydantic-ai agent, model and tool spans in one trace) are exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `infra/observability` has a local Collector + Prometheus + Tempo + Loki + Grafana stack with a dashboard. Design and trade-offs: [docs/observability.md](docs/observability.md).
+
+Access control: data is scoped to its owner (another user's conversation or plan returns 404), the group chat socket authenticates with the access token, accounts are re-checked on every request, failed logins are throttled, and the app refuses to start in production with a placeholder `SECRET_KEY`.
+
 ### Installable App
 
 The frontend ships a web app manifest (`frontend/public/manifest.webmanifest`) with maskable icons, so it installs to a phone home screen and launches standalone in portrait, without browser chrome. On iOS that is Safari's **Share > Add to Home Screen**; the layout accounts for the standalone viewport and safe areas. On wide screens the reading columns scale with the viewport rather than staying fixed.

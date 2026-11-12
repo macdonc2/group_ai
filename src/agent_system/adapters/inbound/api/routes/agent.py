@@ -56,7 +56,7 @@ def setup_user_api_key(user: User, settings) -> str:
     # Prefer the system-wide key when available (centrally managed & verified)
     if settings.openai_api_key:
         api_key = settings.openai_api_key
-        logger.debug("Using system API key for %s", user.email)
+        logger.debug("Using system API key for %s", user.id)
 
     # Fall back to user's personal encrypted key
     if not api_key and user.has_api_key():
@@ -65,7 +65,7 @@ def setup_user_api_key(user: User, settings) -> str:
             encryption = get_api_key_encryption()
             decrypted_key = encryption.decrypt(user.encrypted_openai_api_key)
             api_key = decrypted_key
-            logger.debug("Using user's personal API key for %s", user.email)
+            logger.debug("Using user's personal API key for %s", user.id)
         except Exception as e:
             logger.warning("Failed to decrypt user API key: %s", e)
             api_key = None

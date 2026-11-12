@@ -417,20 +417,41 @@ def _output_text(raw: Any) -> str | None:
 
 
 _installed = False
+_provider: Any = None
 
 
-def install_llm_capture() -> None:
-    """Instrument every pydantic-ai Agent with a private tracer provider whose
-    only processor records into the bound TurnTrace. Idempotent; spans are not
-    exported anywhere."""
+def tracer_provider(resource: Any = None) -> Any:
+    """The one tracer provider for this process.
+
+    It always has the TurnTrace capture processor. When export is configured
+    (see `otel.setup_telemetry`) an OTLP exporter is added to the same
+    provider, so the spans that feed the in-app trace viewer are the very
+    spans that reach the tracing backend.
+    """
+    global _provider
+    if _provider is None:
+        from opentelemetry.sdk.trace import TracerProvider
+
+        _provider = TracerProvider(resource=resource) if resource is not None else TracerProvider()
+        _provider.add_span_processor(_TraceSpanProcessor())
+    return _provider
+
+
+def install_llm_capture(meter_provider: Any = None) -> None:
+    """Instrument every pydantic-ai Agent so its spans reach `tracer_provider()`.
+
+    Idempotent. Without export configured the spans go nowhere but the bound
+    TurnTrace. `meter_provider`, when given, also turns on pydantic-ai's token
+    and cost histograms.
+    """
     global _installed
     if _installed:
         return
-    from opentelemetry.sdk.trace import TracerProvider
     from pydantic_ai import Agent
     from pydantic_ai.models.instrumented import InstrumentationSettings
 
-    provider = TracerProvider()
-    provider.add_span_processor(_TraceSpanProcessor())
-    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_binary_content=False, version=2))
+    kwargs: dict[str, Any] = {"tracer_provider": tracer_provider(), "include_binary_content": False, "version": 2}
+    if meter_provider is not None:
+        kwargs["meter_provider"] = meter_provider
+    Agent.instrument_all(InstrumentationSettings(**kwargs))
     _installed = True

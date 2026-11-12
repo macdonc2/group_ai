@@ -140,7 +140,7 @@ async def login(
     )
     access_token = create_access_token(token_data)
     
-    logger.info(f"User logged in: {user.email}")
+    logger.info(f"User logged in: {user.id}")
     
     return LoginResponse(
         access_token=access_token,
@@ -189,7 +189,7 @@ async def register_user(
     await user_repo.save(user)
     await session.commit()
     
-    logger.info(f"New user registered by {admin.email}: {user.email}")
+    logger.info(f"New user registered by {admin.user_id}: {user.id}")
     
     return UserRead(
         id=str(user.id),
@@ -256,7 +256,7 @@ async def change_password(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User changed password: {user.email}")
+    logger.info(f"User changed password: {user.id}")
     
     return {"message": "Password changed successfully"}
 
@@ -335,7 +335,7 @@ async def verify_user(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User verified by {admin.email}: {user.email}")
+    logger.info(f"User verified by {admin.user_id}: {user.id}")
     
     return UserRead(
         id=str(user.id),
@@ -375,7 +375,7 @@ async def deactivate_user(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User deactivated by {admin.email}: {user.email}")
+    logger.info(f"User deactivated by {admin.user_id}: {user.id}")
     
     return UserRead(
         id=str(user.id),
@@ -414,7 +414,7 @@ async def delete_user(
     await user_repo.delete(user.id)
     await session.commit()
     
-    logger.info(f"User deleted by {admin.email}: {user.email}")
+    logger.info(f"User deleted by {admin.user_id}: {user.id}")
 
 
 @router.post("/bootstrap", response_model=LoginResponse)
@@ -457,7 +457,7 @@ async def bootstrap_admin(
     )
     access_token = create_access_token(token_data)
     
-    logger.info(f"Bootstrap: Created first admin user: {user.email}")
+    logger.info(f"Bootstrap: Created first admin user: {user.id}")
     
     return LoginResponse(
         access_token=access_token,
@@ -510,7 +510,7 @@ async def set_api_key(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User set API key: {user.email}")
+    logger.info(f"User set API key: {user.id}")
     
     return APIKeyStatusResponse(
         has_api_key=True,
@@ -563,7 +563,7 @@ async def remove_api_key(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User removed API key: {user.email}")
+    logger.info(f"User removed API key: {user.id}")
     
     return APIKeyStatusResponse(
         has_api_key=False,
@@ -616,7 +616,7 @@ async def set_timezone(
     await user_repo.update(user)
     await session.commit()
     
-    logger.info(f"User set timezone: {user.email} -> {data.timezone}")
+    logger.info(f"User set timezone: {user.id} -> {data.timezone}")
     
     return TimezoneResponse(
         timezone=user.timezone,

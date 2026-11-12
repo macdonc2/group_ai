@@ -8,20 +8,15 @@ from collections.abc import AsyncGenerator
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-# Configure logging for the application
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],
+from agent_system.adapters.inbound.api.dependencies import get_database, set_database
+from agent_system.adapters.inbound.api.observability import (
+    RequestContextMiddleware,
+    configure_logging,
 )
-# Set specific loggers to appropriate levels
-logging.getLogger("agent_system").setLevel(logging.INFO)
-logging.getLogger("uvicorn").setLevel(logging.INFO)
-
-from agent_system.adapters.inbound.api.dependencies import set_database
 from agent_system.adapters.inbound.api.routes import (
     agent_router,
     auth_router,
@@ -35,6 +30,7 @@ from agent_system.adapters.inbound.api.routes import (
     tools_router,
 )
 from agent_system.adapters.outbound.persistence import Database
+from agent_system.adapters.outbound.telemetry.otel import instrument_database, setup_telemetry, shutdown_telemetry
 from agent_system.adapters.outbound.research.runner import (
     ResearchRunner,
     ResearchSettings,
@@ -42,6 +38,25 @@ from agent_system.adapters.outbound.research.runner import (
     set_runner,
 )
 from agent_system.composition_root.config import Settings, get_settings, secret_key_problem
+
+logger = logging.getLogger(__name__)
+
+
+def _deployed(settings: Settings) -> bool:
+    return settings.app_env.lower() == "production" or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+
+
+async def _check(name: str, probe: Any, timeout_s: float = 2.0) -> str:
+    """Run one dependency probe with a deadline; never raises."""
+    import asyncio
+
+    try:
+        await asyncio.wait_for(probe(), timeout_s)
+        return "ok"
+    except Exception as exc:  # noqa: BLE001 - any failure means "down"
+        logger.warning("Readiness check failed: %s (%s)", name, type(exc).__name__, extra={"event": "dependency_down", "dependency": name})
+        return "down"
+
 
 # Load environment variables from .env file
 # This ensures OPENAI_API_KEY is available for PydanticAI
@@ -58,6 +73,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         Configured FastAPI application
     """
     settings = settings or get_settings()
+    configure_logging(
+        as_json=settings.log_format == "json" or (settings.log_format == "auto" and _deployed(settings))
+    )
     
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
@@ -67,8 +85,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # a laptop.
         problem = secret_key_problem(get_settings().secret_key)
         if problem:
-            deployed = settings.app_env.lower() == "production" or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
-            if deployed:
+            if _deployed(settings):
                 raise RuntimeError(f"Refusing to start: {problem}. Set a random SECRET_KEY of 32+ characters.")
             logging.getLogger("agent_system").warning("%s; fine for local development only.", problem)
 
@@ -76,6 +93,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         db = Database(settings.database_url, echo=settings.debug)
         await db.create_tables()
         set_database(db)
+        instrument_database(db.engine)
 
         # Deep Research runs in-process; anything mid-flight at the last
         # shutdown is gone, so say so on those rows and start a fresh runner.
@@ -94,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         
         # Cleanup
+        shutdown_telemetry()
         await db.dispose()
     
     app = FastAPI(
@@ -113,6 +132,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_headers=["*"],
     )
     
+    # Tracing and metrics, when a Collector endpoint is configured. Set up
+    # before our own middleware is added so that middleware sits outside it.
+    setup_telemetry(app, endpoint=settings.otel_exporter_otlp_endpoint, environment=settings.app_env)
+
+    # Outermost of our middleware: every request, including ones CORS answers
+    # itself, gets an ID and an access-log line.
+    app.add_middleware(RequestContextMiddleware)
+
+    @app.exception_handler(Exception)
+    async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+        """Give the caller the request ID to quote instead of a bare
+        "Internal Server Error". The traceback is logged by the middleware."""
+        request_id = request.scope.get("request_id")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "request_id": request_id},
+            headers={"X-Request-ID": request_id} if request_id else None,
+        )
+
     # Include routers
     app.include_router(auth_router, prefix="/api/v1")
     app.include_router(agent_router, prefix="/api/v1")
@@ -143,8 +181,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     async def health_check() -> dict[str, Any]:
-        """Health check endpoint."""
+        """Liveness: the process is up and answering. Deliberately checks
+        nothing else, because failing it makes Kubernetes restart the pod, and
+        a restart does not fix a database that is down."""
         return {"status": "healthy", "version": "0.1.0"}
+
+    @app.get("/health/ready")
+    async def readiness(response: Response) -> dict[str, Any]:
+        """Readiness: can this pod do useful work right now?
+
+        The SQL database is required (no login without it), so its failure
+        returns 503 and takes the pod out of rotation. The graph store is
+        reported but does not fail the check: chat degrades without it, and
+        with a single replica, failing here would take the whole API down.
+        """
+        from sqlalchemy import text
+
+        async def database() -> None:
+            async with get_database().session() as session:
+                await session.execute(text("SELECT 1"))
+
+        checks = {"database": await _check("database", database)}
+
+        from agent_system.composition_root import container as container_module
+
+        graph = getattr(container_module._container, "knowledge_graph_adapter", None)
+        driver = getattr(graph, "_driver", None)
+        checks["graph"] = await _check("graph", driver.verify_connectivity) if driver else "not_connected"
+
+        ready = checks["database"] == "ok"
+        if not ready:
+            response.status_code = 503
+        return {"status": "ready" if ready else "not_ready", "checks": checks}
     
     @app.get("/")
     async def root() -> dict[str, Any]:

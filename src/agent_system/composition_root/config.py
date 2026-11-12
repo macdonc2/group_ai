@@ -42,6 +42,16 @@ class Settings(BaseSettings):
         description="'production' makes a weak SECRET_KEY fatal at startup (also implied when running in Kubernetes)",
     )
 
+    log_format: str = Field(
+        default="auto",
+        description="'json', 'text', or 'auto' (JSON when deployed, readable text on a laptop)",
+    )
+
+    otel_exporter_otlp_endpoint: str | None = Field(
+        default=None,
+        description="OTLP/HTTP endpoint of an OpenTelemetry Collector, e.g. http://otel-collector:4318. Unset = no export",
+    )
+
     # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")

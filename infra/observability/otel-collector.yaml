@@ -1,0 +1,88 @@
+# The Collector sits between the app and the backends. The app only knows
+# "send OTLP here"; everything below can change without redeploying the app.
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Logs: the app writes JSON lines to stdout; here they are read from a file.
+  # (In the cluster the same parsing runs over the pod log files.)
+  filelog:
+    include: [/var/log/app/*.log]
+    start_at: beginning
+    operators:
+      - type: json_parser
+        on_error: drop          # non-JSON lines (startup banners) are skipped
+      - type: severity_parser
+        parse_from: attributes.level
+      - type: trace_parser      # this is what links a log line to its trace
+        trace_id: { parse_from: attributes.trace_id }
+        span_id: { parse_from: attributes.span_id }
+      - type: move
+        from: attributes.msg
+        to: body
+
+processors:
+  # Refuse data rather than be OOM-killed when a backend is slow.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 200
+
+  batch: {}
+
+  # Privacy: prompts, model output and tool payloads are user content. They
+  # are kept in the app's own trace store (Evals tab) and removed here, before
+  # anything is written to the tracing backend.
+  attributes/drop_llm_content:
+    actions:
+      - { action: delete, key: gen_ai.input.messages }
+      - { action: delete, key: gen_ai.output.messages }
+      - { action: delete, key: gen_ai.system_instructions }
+      - { action: delete, key: gen_ai.tool.call.arguments }
+      - { action: delete, key: gen_ai.tool.call.result }
+      - { action: delete, key: tool_arguments }
+      - { action: delete, key: tool_response }
+      - { action: delete, key: final_result }
+      - { action: delete, key: pydantic_ai.all_messages }
+      - { action: delete, key: events }
+
+  # Outbound URLs can carry search terms and API keys in the query string.
+  transform/strip_query_strings:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["url.full"], "\\?.*", "?REDACTED")
+          - replace_pattern(attributes["http.url"], "\\?.*", "?REDACTED")
+          - delete_key(attributes, "url.query")
+
+  resource/logs:
+    attributes:
+      - { action: upsert, key: service.name, value: agent-system-backend }
+
+exporters:
+  otlphttp/tempo:
+    endpoint: http://tempo:4318
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+  # Metrics are exposed here and scraped by Prometheus.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    resource_to_telemetry_conversion:
+      enabled: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, attributes/drop_llm_content, transform/strip_query_strings, batch]
+      exporters: [otlphttp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [filelog]
+      processors: [memory_limiter, resource/logs, batch]
+      exporters: [otlphttp/loki]

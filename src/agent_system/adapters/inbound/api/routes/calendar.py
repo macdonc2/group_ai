@@ -204,7 +204,7 @@ async def disconnect_google_calendar(
             encryption = get_api_key_encryption()
             refresh_token = encryption.decrypt(user.encrypted_google_refresh_token)
             await container.google_calendar_adapter.revoke_token(refresh_token)
-            logger.info(f"Revoked Google token for {user.email}")
+            logger.info(f"Revoked Google token for {user.id}")
         except Exception as e:
             logger.warning(f"Failed to revoke Google token: {e}")
             # Continue anyway - we'll still disconnect locally
@@ -214,7 +214,7 @@ async def disconnect_google_calendar(
     await user_repo.update(updated_user)
     await session.commit()
 
-    logger.info(f"Disconnected Google Calendar for {user.email}")
+    logger.info(f"Disconnected Google Calendar for {user.id}")
     return CalendarStatusResponse(
         connected=False,
         email=None,

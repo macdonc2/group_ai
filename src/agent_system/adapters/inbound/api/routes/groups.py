@@ -724,7 +724,7 @@ async def update_event(
                                 # Sync this event to the member's calendar
                                 event = await sync_service.sync_event_to_google(event, member_user)
                                 synced_count += 1
-                                logger.info(f"Synced event {event.id} to {member_user.email}'s calendar")
+                                logger.info(f"Synced event {event.id} to {member_user.id}'s calendar")
                         except Exception as member_e:
                             logger.warning(f"Failed to sync event to member {member.user_id}: {member_e}")
                     

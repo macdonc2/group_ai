@@ -101,6 +101,10 @@ async def authenticate_token(raw: str | None) -> TokenData | None:
         user = await session.get(UserModel, claims.user_id)
     if user is None or not user.is_active or not user.is_verified:
         return None
+
+    from agent_system.adapters.inbound.api.observability import set_request_user
+
+    set_request_user(user.id)
     return TokenData(user_id=user.id, email=user.email, is_superuser=bool(user.is_superuser))
 
 
