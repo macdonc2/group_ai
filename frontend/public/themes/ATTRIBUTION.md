@@ -13,3 +13,6 @@ the credit line for whichever theme was used.
 | ultimate_warrior.jpg | The Ultimate Warrior, April 2014 | https://commons.wikimedia.org/wiki/File:The_Ultimate_Warrior_entrance_April_7th_2014_(cropped).jpg | Megan Elice Meadows | [CC BY-SA 2.0](https://creativecommons.org/licenses/by-sa/2.0/) |
 
 The two CC BY-SA crops are themselves shared under CC BY-SA 2.0.
+
+The app icons in `public/icons/` (favicon, Apple touch icon, PWA icons) are resized copies of
+`macho_man.jpg` and carry the same credit: Rob DiCaterino, CC BY 2.0.

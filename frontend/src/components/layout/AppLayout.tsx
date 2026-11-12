@@ -450,8 +450,9 @@ export function AppLayout() {
             
             <button
               onClick={() => setShowKnowledgeGraph(true)}
-              className="hidden sm:inline-flex p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
+              className="inline-flex items-center justify-center p-2 text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700 rounded transition-colors"
               title="View Knowledge Graph"
+              aria-label="View Knowledge Graph"
             >
               <Share2 size={18} />
             </button>
