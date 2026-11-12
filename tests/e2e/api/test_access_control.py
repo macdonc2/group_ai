@@ -23,8 +23,14 @@ def _bearer(token: str) -> dict[str, str]:
 
 
 @pytest.fixture
-def world(tmp_path):
+def world(tmp_path, monkeypatch):
     """A running app with Alice's conversation, plan and group in it."""
+    # The chat route reads the cached global settings; give it a key so the
+    # test reaches the ownership check whatever the machine's .env holds.
+    from agent_system.composition_root.config import get_settings
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    get_settings.cache_clear()
     settings = Settings(
         openai_api_key="sk-test", database_url=f"sqlite+aiosqlite:///{tmp_path / 'acl.db'}", debug=False,
     )
@@ -58,6 +64,7 @@ def world(tmp_path):
             "conversation_id": conversation["id"], "plan_id": plan.json()["id"],
             "ws_path": f"{API}/groups/{group['id']}/conversations/{group_conversation['id']}/ws",
         }
+    get_settings.cache_clear()
 
 
 # -- conversations ---------------------------------------------------------
