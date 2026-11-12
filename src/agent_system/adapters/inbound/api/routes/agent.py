@@ -128,7 +128,7 @@ async def chat_with_agent(
         conversation = await conv_repo.get(
             ConversationId.from_string(data.conversation_id)
         )
-        if not conversation:
+        if not conversation or str(conversation.user_id) != current_user_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Conversation not found",
@@ -335,7 +335,7 @@ async def chat_with_agent_stream(
             # Get or create conversation
             if conversation_id:
                 conversation = await conv_repo.get(ConversationId.from_string(conversation_id))
-                if not conversation:
+                if not conversation or str(conversation.user_id) != current_user_id:
                     await event_queue.put(StreamEvent(
                         event_type="error",
                         node_name=None,

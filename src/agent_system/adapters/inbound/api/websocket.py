@@ -88,9 +88,10 @@ class ConnectionManager:
         conversation_id: str,
         user_id: str,
         user_info: str | None = None,
+        subprotocol: str | None = None,
     ) -> None:
         """Accept and register a WebSocket connection."""
-        await websocket.accept()
+        await websocket.accept(subprotocol=subprotocol)
         
         async with self._lock:
             # Initialize nested dicts if needed

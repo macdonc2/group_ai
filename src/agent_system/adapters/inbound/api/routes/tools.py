@@ -2,9 +2,10 @@
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
+from agent_system.adapters.inbound.api.auth import get_current_user_token
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
     SessionDep,
@@ -27,7 +28,9 @@ from agent_system.adapters.outbound.llm.tools import (
     get_word_definition,
 )
 
-router = APIRouter(prefix="/tools", tags=["tools"])
+# Every tool route needs a signed-in user: several call outside services, and an
+# open one is a free proxy for anyone who finds it.
+router = APIRouter(prefix="/tools", tags=["tools"], dependencies=[Depends(get_current_user_token)])
 
 
 class ToolInfo(BaseModel):

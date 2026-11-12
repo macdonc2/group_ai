@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect, status
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
 logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1053,14 +1053,31 @@ async def get_social_suggestions(
 logger = logging.getLogger(__name__)
 
 
+WS_AUTH_SUBPROTOCOL = "bearer"
+
+
+def _token_from_subprotocols(header: str | None):
+    """The caller's identity from `Sec-WebSocket-Protocol: bearer, <jwt>`, or None."""
+    from agent_system.adapters.inbound.api.auth import decode_access_token
+
+    offered = [part.strip() for part in (header or "").split(",") if part.strip()]
+    if len(offered) != 2 or offered[0] != WS_AUTH_SUBPROTOCOL:
+        return None
+    return decode_access_token(offered[1])
+
+
 @router.websocket("/{group_id}/conversations/{conversation_id}/ws")
 async def websocket_chat(
     websocket: WebSocket,
     group_id: str,
     conversation_id: str,
-    user_id: str = Query(..., description="User ID for authentication"),
 ):
     """WebSocket endpoint for real-time group chat.
+
+    Authentication: browsers cannot set an Authorization header on a WebSocket,
+    so the client offers two subprotocols, `bearer` and its access token
+    (`new WebSocket(url, ['bearer', token])`). The user is whoever the token
+    says; nothing in the URL is trusted, and the token stays out of access logs.
     
     Message types from client:
     - {"type": "message", "data": {"content": "..."}}
@@ -1085,6 +1102,13 @@ async def websocket_chat(
     from agent_system.adapters.inbound.api.dependencies import _database
     from agent_system.domain.value_objects import Message as DomainMessage
     
+    # Who is this? Decided by the token alone, before anything is accepted.
+    token_data = _token_from_subprotocols(websocket.headers.get("sec-websocket-protocol"))
+    if token_data is None:
+        await websocket.close(code=4401, reason="Not authenticated")
+        return
+    user_id = token_data.user_id
+
     # Verify access before accepting connection
     if _database is None:
         await websocket.close(code=1011, reason="Database not initialized")
@@ -1126,6 +1150,7 @@ async def websocket_chat(
         conversation_id,
         user_id,
         user_info,
+        subprotocol=WS_AUTH_SUBPROTOCOL,
     )
     
     try:

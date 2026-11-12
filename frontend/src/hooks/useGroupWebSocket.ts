@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { useAuthStore } from '../stores/authStore';
 import type { GroupMessage, ExtractedEvent, GroupWSMessage, GroupWSMessageType } from '../types';
 
 interface UseGroupWebSocketOptions {
@@ -99,10 +100,17 @@ export function useGroupWebSocket({
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/api/v1/groups/${groupId}/conversations/${conversationId}/ws?user_id=${userId}`;
-    
+    const wsUrl = `${protocol}//${host}/api/v1/groups/${groupId}/conversations/${conversationId}/ws`;
+
+    // A browser WebSocket can't send an Authorization header, so the access
+    // token travels as a subprotocol. The server identifies the user from it.
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      setError('Not signed in');
+      return;
+    }
     console.log('[WS] Connecting to:', wsUrl);
-    const ws = new WebSocket(wsUrl);
+    const ws = new WebSocket(wsUrl, ['bearer', token]);
     globalWs = ws;
     
     ws.onopen = () => {

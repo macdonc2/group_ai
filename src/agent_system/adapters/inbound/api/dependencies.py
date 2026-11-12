@@ -125,15 +125,13 @@ async def require_conversation_access(
     repo = SQLAlchemyConversationRepository(session)
     conversation = await repo.get(ConversationId.from_string(conversation_id))
     
-    if not conversation:
+    # Someone else's conversation is reported as missing, so IDs can't be probed.
+    if not conversation or str(conversation.user_id) != current_user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Conversation not found",
         )
-    
-    # In production, check if current_user_id matches conversation.user_id
-    # For now, we allow access
-    
+
     return conversation_id
 
 
@@ -161,12 +159,10 @@ async def require_plan_access(
     repo = SQLAlchemyPlanRepository(session)
     plan = await repo.get(PlanId.from_string(plan_id))
     
-    if not plan:
+    if not plan or str(plan.user_id) != current_user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Plan not found",
         )
-    
-    # In production, check if current_user_id matches plan.user_id
-    
+
     return plan_id

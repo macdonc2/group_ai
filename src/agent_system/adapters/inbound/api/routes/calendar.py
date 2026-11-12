@@ -350,6 +350,14 @@ class GoogleEventInfo(BaseModel):
     is_all_day: bool = False
 
 
+async def _in_event_group(event, user_id: str, session) -> bool:
+    """Events belong to a group; only its members may act on one."""
+    from agent_system.adapters.outbound.persistence import SQLAlchemyGroupRepository
+
+    group = await SQLAlchemyGroupRepository(session).get(event.group_id)
+    return bool(group and group.is_member(UserId.from_string(user_id)))
+
+
 @router.post("/sync-event", response_model=SyncEventResponse)
 async def sync_event_to_google(
     data: SyncEventRequest,
@@ -387,7 +395,7 @@ async def sync_event_to_google(
     # Get event
     event_repo = SQLAlchemyExtractedEventRepository(session)
     event = await event_repo.get(EventId.from_string(data.event_id))
-    if not event:
+    if not event or not await _in_event_group(event, current_user_id, session):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
         )
@@ -483,7 +491,7 @@ async def delete_synced_event(
 
     event_repo = SQLAlchemyExtractedEventRepository(session)
     event = await event_repo.get(EventId.from_string(event_id))
-    if not event:
+    if not event or not await _in_event_group(event, current_user_id, session):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Event not found"
         )
