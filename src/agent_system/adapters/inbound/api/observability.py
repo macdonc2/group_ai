@@ -128,7 +128,8 @@ def configure_logging(as_json: bool) -> None:
     logging.getLogger("uvicorn.access").disabled = True
     # httpx logs every outbound URL at INFO, query string and all (search
     # terms, and for some APIs credentials). Failures still surface.
-    logging.getLogger("httpx").setLevel(logging.WARNING)
+    for name in ("httpx", "httpx2", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
     for name in ("uvicorn", "uvicorn.error"):
         logging.getLogger(name).handlers[:] = []
         logging.getLogger(name).propagate = True
@@ -148,11 +149,17 @@ def _header(scope: dict[str, Any], name: str) -> str | None:
 
 
 def _route_path(scope: dict[str, Any]) -> str:
-    """The route template (`/conversations/{conversation_id}`), not the raw
-    path: it groups requests by endpoint and keeps IDs out of the path field.
-    The query string is never logged, since some endpoints carry a token there."""
-    route = scope.get("route")
-    return getattr(route, "path", None) or scope.get("path", "")
+    """The path with its parameters put back as names
+    (`/api/v1/conversations/{conversation_id}`): it groups requests by
+    endpoint and keeps IDs out of the path field. Built from the matched path
+    parameters rather than the route object, whose `path` includes the router
+    prefix in some FastAPI versions and not in others. The query string is
+    never logged, since some endpoints carry a token there."""
+    path = scope.get("path", "")
+    for name, value in (scope.get("path_params") or {}).items():
+        if value not in (None, ""):
+            path = path.replace(str(value), "{" + name + "}", 1)
+    return path
 
 
 class RequestContextMiddleware:
