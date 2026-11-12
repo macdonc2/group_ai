@@ -25,7 +25,7 @@ async def client():
     await db.create_tables()
     set_database(db)
     async with db.session() as s:
-        s.add(UserModel(id=USER_ID, email="p@example.com", hashed_password="x"))
+        s.add(UserModel(id=USER_ID, email="p@example.com", hashed_password="x", is_verified=True))
         await s.commit()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:

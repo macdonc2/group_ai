@@ -2,7 +2,7 @@
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from agent_system.adapters.inbound.api.auth import (
     CurrentUserToken,
@@ -13,6 +13,7 @@ from agent_system.adapters.inbound.api.auth import (
     verify_password,
 )
 from agent_system.adapters.inbound.api.dependencies import SessionDep
+from agent_system.adapters.inbound.api.throttle import FailureThrottle
 from pydantic import BaseModel
 
 from agent_system.adapters.inbound.api.schemas import (
@@ -53,29 +54,69 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
 
+# Failed logins allowed per 15 minutes. The per-account limit is keyed by
+# address as well, so a stranger hammering someone's email locks out the
+# stranger, not the account's owner. The per-address limit catches one client
+# trying many different emails.
+LOGIN_WINDOW_S = 15 * 60
+account_throttle = FailureThrottle(limit=5, window_s=LOGIN_WINDOW_S)
+address_throttle = FailureThrottle(limit=30, window_s=LOGIN_WINDOW_S)
+
+_DUMMY_HASH: str | None = None
+
+
+def _client_address(request: Request) -> str:
+    """The caller's address. The API is only reachable through the ingress,
+    which overwrites X-Real-IP with the address it saw."""
+    return request.headers.get("x-real-ip") or (request.client.host if request.client else "unknown")
+
+
+def _burn_password_check(password: str) -> None:
+    """Spend the same time as a real check when the email is unknown, so
+    response time doesn't reveal which emails have accounts."""
+    global _DUMMY_HASH
+    if _DUMMY_HASH is None:
+        _DUMMY_HASH = hash_password("not-a-real-password")
+    verify_password(password, _DUMMY_HASH)
+
+
 @router.post("/login", response_model=LoginResponse)
 async def login(
     data: LoginRequest,
+    request: Request,
     session: SessionDep,
 ):
     """Authenticate a user and return an access token."""
+    address = _client_address(request)
+    account_key = f"{data.email.lower()}|{address}"
+    wait = max(account_throttle.retry_after(account_key), address_throttle.retry_after(address))
+    if wait:
+        logger.warning("Login throttled for address %s", address)
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many failed sign-in attempts. Try again later.",
+            headers={"Retry-After": str(wait)},
+        )
+
     user_repo = SQLAlchemyUserRepository(session)
-    
-    # Find user by email
     user = await user_repo.get_by_email(data.email)
-    
-    if not user:
+
+    if user:
+        password_ok = verify_password(data.password, user.hashed_password)
+    else:
+        _burn_password_check(data.password)
+        password_ok = False
+
+    if not password_ok:
+        account_throttle.fail(account_key)
+        address_throttle.fail(address)
+        logger.warning("Failed login from address %s", address)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
-    
-    # Verify password
-    if not verify_password(data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid email or password",
-        )
+
+    account_throttle.clear(account_key)
     
     # Check if user is active
     if not user.is_active:

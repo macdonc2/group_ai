@@ -37,6 +37,11 @@ class Settings(BaseSettings):
         description="Secret key for JWT tokens",
     )
 
+    app_env: str = Field(
+        default="development",
+        description="'production' makes a weak SECRET_KEY fatal at startup (also implied when running in Kubernetes)",
+    )
+
     # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
@@ -92,6 +97,27 @@ class Settings(BaseSettings):
         default="http://localhost:8000/api/calendar/callback",
         description="Google OAuth redirect URI",
     )
+
+
+MIN_SECRET_KEY_CHARS = 32
+_PLACEHOLDER_SECRET_KEYS = {
+    "change-me-in-production",
+    "your-secret-key-for-jwt-min-32-chars",  # the value in .env.example
+}
+
+
+def secret_key_problem(secret_key: str) -> str | None:
+    """Why this SECRET_KEY must not be used for real, or None when it is fine.
+
+    The key signs every login token and encrypts stored API keys, so anyone
+    who knows it can sign in as any user. A value published in the repository
+    is known to everyone.
+    """
+    if secret_key in _PLACEHOLDER_SECRET_KEYS:
+        return "SECRET_KEY is a placeholder value that is published in the repository"
+    if len(secret_key) < MIN_SECRET_KEY_CHARS:
+        return f"SECRET_KEY is shorter than {MIN_SECRET_KEY_CHARS} characters"
+    return None
 
 
 @lru_cache

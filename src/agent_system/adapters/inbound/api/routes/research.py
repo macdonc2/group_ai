@@ -10,7 +10,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
-from agent_system.adapters.inbound.api.auth import decode_access_token
+from agent_system.adapters.inbound.api.auth import authenticate_token
 from agent_system.adapters.inbound.api.dependencies import CurrentUserId, SessionDep
 from agent_system.adapters.inbound.api.schemas import (
     FigureRead,
@@ -47,14 +47,14 @@ def _resolve_api_key(user, settings) -> str:
     )
 
 
-def _user_from_query_or_header(token: str | None, authorization: str | None) -> str:
+async def _user_from_query_or_header(token: str | None, authorization: str | None) -> str:
     """<img>/<audio> tags can't send headers; accept ?token= as well."""
     raw = token
     if not raw and authorization and authorization.lower().startswith("bearer "):
         raw = authorization.split(" ", 1)[1]
     if not raw:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token required")
-    data = decode_access_token(raw)
+    data = await authenticate_token(raw)
     if data is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return data.user_id
@@ -143,7 +143,7 @@ async def stream_research(
     after: int = Query(0, description="Replay only events with seq greater than this"),
 ) -> StreamingResponse:
     """Replay persisted events, then tail live ones until the job ends."""
-    user_id = _user_from_query_or_header(token, None)
+    user_id = await _user_from_query_or_header(token, None)
     repo = SQLAlchemyResearchRepository(session)
     job = await repo.get(job_id, user_id)
     if not job:
@@ -205,7 +205,7 @@ async def get_figure(
     job_id: str, ordinal: int, session: SessionDep,
     token: str | None = Query(None), authorization: str | None = Header(None),
 ) -> Response:
-    user_id = _user_from_query_or_header(token, authorization)
+    user_id = await _user_from_query_or_header(token, authorization)
     repo = SQLAlchemyResearchRepository(session)
     if not await repo.get(job_id, user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
@@ -220,7 +220,7 @@ async def get_audio(
     job_id: str, session: SessionDep,
     token: str | None = Query(None), authorization: str | None = Header(None),
 ) -> Response:
-    user_id = _user_from_query_or_header(token, authorization)
+    user_id = await _user_from_query_or_header(token, authorization)
     repo = SQLAlchemyResearchRepository(session)
     if not await repo.get(job_id, user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")

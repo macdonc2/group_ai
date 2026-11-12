@@ -18,6 +18,7 @@ from agent_system.adapters.outbound.research import runner as runner_mod
 from agent_system.composition_root.config import Settings
 
 USER_ID = "44444444-4444-4444-4444-444444444444"
+OTHER_ID = "55555555-5555-5555-5555-555555555555"
 
 
 class FakeRunner:
@@ -87,7 +88,8 @@ async def client(settings, monkeypatch):
     await db.create_tables()
     set_database(db)
     async with db.session() as s:
-        s.add(UserModel(id=USER_ID, email="r@example.com", hashed_password="x"))
+        s.add(UserModel(id=USER_ID, email="r@example.com", hashed_password="x", is_verified=True))
+        s.add(UserModel(id=OTHER_ID, email="other@example.com", hashed_password="x", is_verified=True))
         await s.commit()
 
     fake = FakeRunner(db)
@@ -158,7 +160,7 @@ async def test_full_lifecycle(client: AsyncClient):
 async def test_other_users_cannot_see_or_stream(client: AsyncClient):
     r = await client.post("/api/v1/research", json={"question": "Private question here"}, headers=_auth())
     job_id = r.json()["id"]
-    other = "55555555-5555-5555-5555-555555555555"
+    other = OTHER_ID
     assert (await client.get(f"/api/v1/research/{job_id}", headers=_auth(other))).status_code == 404
     assert (await client.get(f"/api/v1/research/{job_id}/stream", params={"token": _token(other)})).status_code == 404
     assert (await client.get("/api/v1/research", headers=_auth(other))).json() == []

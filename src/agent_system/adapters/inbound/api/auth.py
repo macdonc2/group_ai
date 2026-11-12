@@ -81,6 +81,29 @@ def decode_access_token(token: str) -> TokenData | None:
         return None
 
 
+async def authenticate_token(raw: str | None) -> TokenData | None:
+    """Who a token belongs to *now*, or None.
+
+    A valid signature only proves the token was issued at some point in the
+    last 30 days. The account is looked up on every request so that disabling
+    a user, or removing their admin rights, takes effect immediately instead
+    of when the token expires. Admin status comes from the database, never
+    from the token.
+    """
+    claims = decode_access_token(raw) if raw else None
+    if claims is None:
+        return None
+
+    from agent_system.adapters.inbound.api.dependencies import get_database
+    from agent_system.adapters.outbound.persistence.models import UserModel
+
+    async with get_database().session() as session:
+        user = await session.get(UserModel, claims.user_id)
+    if user is None or not user.is_active or not user.is_verified:
+        return None
+    return TokenData(user_id=user.id, email=user.email, is_superuser=bool(user.is_superuser))
+
+
 async def get_current_user_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
 ) -> TokenData:
@@ -97,7 +120,7 @@ async def get_current_user_token(
     if credentials is None:
         raise credentials_exception
     
-    token_data = decode_access_token(credentials.credentials)
+    token_data = await authenticate_token(credentials.credentials)
     if token_data is None:
         raise credentials_exception
     
@@ -111,7 +134,7 @@ async def get_optional_user_token(
     if credentials is None:
         return None
     
-    return decode_access_token(credentials.credentials)
+    return await authenticate_token(credentials.credentials)
 
 
 async def require_superuser(

@@ -9,7 +9,7 @@ from collections.abc import AsyncGenerator
 from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
-from agent_system.adapters.inbound.api.auth import decode_access_token
+from agent_system.adapters.inbound.api.auth import authenticate_token
 from agent_system.adapters.outbound.llm.personas import is_valid_persona
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
@@ -278,14 +278,13 @@ async def chat_with_agent_stream(
             detail="Token required",
         )
     
-    try:
-        token_data = decode_access_token(token)
-        current_user_id = token_data.user_id
-    except Exception:
+    token_data = await authenticate_token(token)
+    if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid token",
         )
+    current_user_id = token_data.user_id
     
     from agent_system.adapters.outbound.fsm import (
         AgentDependencies,

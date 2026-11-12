@@ -41,7 +41,7 @@ from agent_system.adapters.outbound.research.runner import (
     mark_interrupted_on_startup,
     set_runner,
 )
-from agent_system.composition_root.config import Settings, get_settings
+from agent_system.composition_root.config import Settings, get_settings, secret_key_problem
 
 # Load environment variables from .env file
 # This ensures OPENAI_API_KEY is available for PydanticAI
@@ -62,6 +62,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan handler."""
+        # Tokens are signed and verified with the process-wide settings, so
+        # that is the key to judge. Fatal where real users are, a warning on
+        # a laptop.
+        problem = secret_key_problem(get_settings().secret_key)
+        if problem:
+            deployed = settings.app_env.lower() == "production" or bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+            if deployed:
+                raise RuntimeError(f"Refusing to start: {problem}. Set a random SECRET_KEY of 32+ characters.")
+            logging.getLogger("agent_system").warning("%s; fine for local development only.", problem)
+
         # Initialize database
         db = Database(settings.database_url, echo=settings.debug)
         await db.create_tables()

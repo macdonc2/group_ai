@@ -1056,14 +1056,14 @@ logger = logging.getLogger(__name__)
 WS_AUTH_SUBPROTOCOL = "bearer"
 
 
-def _token_from_subprotocols(header: str | None):
+async def _token_from_subprotocols(header: str | None):
     """The caller's identity from `Sec-WebSocket-Protocol: bearer, <jwt>`, or None."""
-    from agent_system.adapters.inbound.api.auth import decode_access_token
+    from agent_system.adapters.inbound.api.auth import authenticate_token
 
     offered = [part.strip() for part in (header or "").split(",") if part.strip()]
     if len(offered) != 2 or offered[0] != WS_AUTH_SUBPROTOCOL:
         return None
-    return decode_access_token(offered[1])
+    return await authenticate_token(offered[1])
 
 
 @router.websocket("/{group_id}/conversations/{conversation_id}/ws")
@@ -1103,7 +1103,7 @@ async def websocket_chat(
     from agent_system.domain.value_objects import Message as DomainMessage
     
     # Who is this? Decided by the token alone, before anything is accepted.
-    token_data = _token_from_subprotocols(websocket.headers.get("sec-websocket-protocol"))
+    token_data = await _token_from_subprotocols(websocket.headers.get("sec-websocket-protocol"))
     if token_data is None:
         await websocket.close(code=4401, reason="Not authenticated")
         return
