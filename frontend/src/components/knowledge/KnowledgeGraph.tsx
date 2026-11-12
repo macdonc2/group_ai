@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { X, RefreshCw, Trash2, Maximize2, Search, SlidersHorizontal, PanelRight, Eraser } from 'lucide-react';
+import { X, RefreshCw, Trash2, Maximize2, Search, SlidersHorizontal, Eraser, Share2, Sparkles, CircleDot } from 'lucide-react';
 import { api } from '../../lib/api';
 import { GraphAskPanel, type GraphAskResponse } from './GraphAskPanel';
 import { GraphFilters } from './GraphFilters';
@@ -27,6 +27,35 @@ type SimLink = { source: string | SimNode; target: string | SimNode; type: strin
 
 const EMPTY: GraphData = { nodes: [], links: [], stats: { total_nodes: 0, total_links: 0, node_types: {}, edge_types: {} } };
 const MAX_AUTO_ZOOM = 2.5;
+type MobileView = 'graph' | 'ask' | 'node' | 'filters';
+
+/**
+ * The part of the screen that is actually visible. On phones the on-screen
+ * keyboard shrinks the visual viewport without resizing the page, so a
+ * full-screen sheet has to follow it or its input ends up under the keyboard.
+ */
+function useVisibleViewport(active: boolean) {
+  const [box, setBox] = useState<{ top: number; height: number; keyboard: boolean } | null>(null);
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!active || !viewport) return;
+    const update = () =>
+      setBox({
+        top: viewport.offsetTop,
+        height: viewport.height,
+        keyboard: window.innerHeight - viewport.height > 120,
+      });
+    update();
+    viewport.addEventListener('resize', update);
+    viewport.addEventListener('scroll', update);
+    return () => {
+      viewport.removeEventListener('resize', update);
+      viewport.removeEventListener('scroll', update);
+    };
+  }, [active]);
+  return box;
+}
+
 const endId = (end: string | SimNode) => (typeof end === 'string' ? end : end.id);
 
 export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
@@ -52,8 +81,9 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
   const [pickingPath, setPickingPath] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [tab, setTab] = useState<'ask' | 'node'>('ask');
-  const [showFilters, setShowFilters] = useState(false);
-  const [showPanel, setShowPanel] = useState(false);
+  // Phones show one thing at a time, switched from the bottom bar
+  const [mobileView, setMobileView] = useState<MobileView>('graph');
+  const viewport = useVisibleViewport(isOpen);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -191,8 +221,9 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
   };
 
   const applyAnswer = useCallback(
-    (response: GraphAskResponse) => {
+    (response: GraphAskResponse, reveal = false) => {
       const ids = new Set(response.highlight_node_ids.filter((id) => index.byId.has(id)));
+      if (reveal) setMobileView('graph');
       setQuery('');
       setPathLinks(new Set());
       setHighlight(ids);
@@ -236,7 +267,6 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
       }
       setSelectedId(node.id);
       setTab('node');
-      setShowPanel(true);
     },
     [pickingPath, selectedId, index, allowed, zoomTo],
   );
@@ -250,6 +280,11 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
     [],
   );
 
+  const showSheet = (view: MobileView) => {
+    setMobileView(view);
+    if (view === 'ask' || view === 'node') setTab(view);
+  };
+
   if (!isOpen) return null;
 
   const hasGraph = data.nodes.length > 0;
@@ -257,10 +292,16 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
   const marked = highlight.size > 0 || pathLinks.size > 0;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-gray-900 rounded-none sm:rounded-lg shadow-xl w-full h-full sm:w-[95vw] sm:h-[90vh] flex flex-col overflow-hidden">
-        {/* Header */}
-        <div className="flex flex-wrap items-center gap-2 sm:gap-3 p-2 sm:p-3 border-b border-gray-700 shrink-0">
+    <div
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      style={viewport ? { top: viewport.top, height: viewport.height, bottom: 'auto' } : undefined}
+    >
+      <div className="bg-gray-900 rounded-none sm:rounded-lg shadow-xl w-full h-full sm:w-[95vw] sm:h-[90%] flex flex-col overflow-hidden">
+        {/* Header. The app draws under the iPhone status bar, so keep the buttons below it. */}
+        <div
+          className="flex flex-wrap items-center gap-2 sm:gap-3 px-2 pb-2 sm:px-3 sm:pb-3 border-b border-gray-700 shrink-0"
+          style={{ paddingTop: 'max(env(safe-area-inset-top), 0.5rem)' }}
+        >
           <div className="min-w-0 flex-1 sm:flex-none">
             <h2 className="text-base sm:text-lg font-semibold text-white truncate">Knowledge Graph</h2>
             {graphData && (
@@ -278,7 +319,7 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Find nodes…"
-              className="w-full rounded-lg bg-gray-800 border border-gray-700 pl-8 pr-10 py-1.5 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              className="w-full rounded-lg bg-gray-800 border border-gray-700 pl-8 pr-10 py-1.5 text-base sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
             />
             {query.trim() && (
               <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-xs text-gray-500">{matches.size}</span>
@@ -286,20 +327,6 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
           </div>
 
           <div className="flex items-center gap-1 shrink-0 sm:ml-auto">
-            <button
-              onClick={() => setShowFilters((s) => !s)}
-              className={`lg:hidden p-2 rounded touch-manipulation ${showFilters ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-              title="Filters"
-            >
-              <SlidersHorizontal size={18} />
-            </button>
-            <button
-              onClick={() => setShowPanel((s) => !s)}
-              className={`lg:hidden p-2 rounded touch-manipulation ${showPanel ? 'bg-gray-700 text-white' : 'text-gray-400 hover:text-white hover:bg-gray-700'}`}
-              title="Ask and details"
-            >
-              <PanelRight size={18} />
-            </button>
             <button
               onClick={() => graphRef.current?.zoomToFit(400, 50)}
               className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded touch-manipulation"
@@ -337,7 +364,7 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
         <div className="flex-1 min-h-0 flex relative">
           {hasGraph && (
             <aside
-              className={`${showFilters ? 'absolute inset-y-0 left-0 z-20 shadow-xl' : 'hidden'} lg:static lg:block w-56 shrink-0 bg-gray-900 border-r border-gray-700`}
+              className={`${mobileView === 'filters' ? 'absolute inset-0 z-20' : 'hidden'} lg:static lg:block lg:w-56 shrink-0 bg-gray-900 lg:border-r border-gray-700`}
             >
               <GraphFilters
                 nodeTypes={data.stats.node_types}
@@ -448,10 +475,11 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
                 onEngineStop={handleEngineStop}
                 cooldownTicks={120}
                 onBackgroundClick={() => setPickingPath(false)}
-                nodePointerAreaPaint={(node: SimNode, color: string, ctx: CanvasRenderingContext2D) => {
+                nodePointerAreaPaint={(node: SimNode, color: string, ctx: CanvasRenderingContext2D, globalScale: number) => {
+                  // Keep a finger-sized target on screen however far the graph is zoomed out
                   ctx.fillStyle = color;
                   ctx.beginPath();
-                  ctx.arc(node.x ?? 0, node.y ?? 0, 10, 0, 2 * Math.PI);
+                  ctx.arc(node.x ?? 0, node.y ?? 0, Math.max(10, 16 / globalScale), 0, 2 * Math.PI);
                   ctx.fill();
                 }}
                 nodeCanvasObject={(node: SimNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
@@ -490,6 +518,42 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
               />
             )}
 
+            {/* Phones: tapping a node keeps the graph in view and offers the next step */}
+            {selectedNode && (
+              <div className="lg:hidden absolute bottom-2 left-2 right-2 flex items-center gap-2 bg-gray-800/95 border border-gray-700 rounded-xl px-3 py-2">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: nodeColor(selectedNode.type) }} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-white truncate">{selectedNode.label}</p>
+                  <p className="text-xs text-gray-400 capitalize">
+                    {pickingPath ? 'Tap another node for the path' : selectedNode.type}
+                  </p>
+                </div>
+                <button
+                  onClick={() => showSheet('node')}
+                  className="px-3 py-1.5 rounded-lg bg-gray-700 text-gray-100 text-xs touch-manipulation"
+                >
+                  Details
+                </button>
+                <button
+                  onClick={() => showSheet('ask')}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs touch-manipulation"
+                >
+                  Ask
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedId(null);
+                    setFocusDepth(null);
+                    setPickingPath(false);
+                  }}
+                  className="p-1.5 text-gray-400 touch-manipulation"
+                  aria-label="Deselect node"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+
             {(notice || marked) && (
               <div className="absolute top-2 left-2 right-2 flex justify-center pointer-events-none">
                 <div className="pointer-events-auto flex items-center gap-2 max-w-full bg-gray-800/95 border border-gray-700 rounded-full pl-3 pr-1.5 py-1 text-xs text-gray-200">
@@ -507,9 +571,9 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
 
           {hasGraph && (
             <aside
-              className={`${showPanel ? 'absolute inset-y-0 right-0 z-20 shadow-xl w-full sm:w-96' : 'hidden'} lg:static lg:flex lg:w-96 shrink-0 bg-gray-900 border-l border-gray-700 flex flex-col min-h-0`}
+              className={`${mobileView === 'ask' || mobileView === 'node' ? 'absolute inset-0 z-20 flex' : 'hidden'} lg:static lg:flex lg:w-96 shrink-0 bg-gray-900 lg:border-l border-gray-700 flex-col min-h-0`}
             >
-              <div className="flex shrink-0 border-b border-gray-700 text-sm">
+              <div className="hidden lg:flex shrink-0 border-b border-gray-700 text-sm">
                 {(['ask', 'node'] as const).map((key) => (
                   <button
                     key={key}
@@ -519,13 +583,6 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
                     {key === 'ask' ? 'Ask' : 'Node'}
                   </button>
                 ))}
-                <button
-                  onClick={() => setShowPanel(false)}
-                  className="lg:hidden px-3 text-gray-400 hover:text-white"
-                  title="Close panel"
-                >
-                  <X size={16} />
-                </button>
               </div>
               <div className={`flex-1 min-h-0 ${tab === 'ask' ? '' : 'hidden'}`}>
                 <GraphAskPanel
@@ -544,14 +601,17 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
                     focusDepth={focusDepth}
                     pickingPath={pickingPath}
                     onSelect={selectById}
-                    onFocus={setFocusDepth}
+                    onFocus={(depth) => {
+                      setFocusDepth(depth);
+                      setMobileView('graph');
+                    }}
                     onStartPath={() => {
                       setPickingPath((p) => !p);
-                      setShowPanel(false);
+                      setMobileView('graph');
                     }}
                     onAsk={(question) => {
                       setPendingQuestion(question);
-                      setTab('ask');
+                      showSheet('ask');
                     }}
                   />
                 </div>
@@ -559,6 +619,41 @@ export function KnowledgeGraph({ isOpen, onClose }: KnowledgeGraphProps) {
             </aside>
           )}
         </div>
+
+        {/* Phone navigation: one view at a time. Hidden while typing so the keyboard has room. */}
+        {hasGraph && !viewport?.keyboard && (
+          <nav
+            className="lg:hidden shrink-0 grid grid-cols-4 border-t border-gray-700 bg-gray-900"
+            style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
+          >
+            {(
+              [
+                ['graph', 'Graph', Share2],
+                ['ask', 'Ask', Sparkles],
+                ['node', 'Node', CircleDot],
+                ['filters', 'Filters', SlidersHorizontal],
+              ] as const
+            ).map(([key, label, Icon]) => (
+              <button
+                key={key}
+                onClick={() => showSheet(key)}
+                aria-current={mobileView === key}
+                className={`relative flex flex-col items-center gap-0.5 py-2 text-[11px] touch-manipulation ${
+                  mobileView === key ? 'text-blue-400' : 'text-gray-400'
+                }`}
+              >
+                <Icon size={20} />
+                {label}
+                {key === 'filters' && (hiddenNodeTypes.size > 0 || hiddenEdgeTypes.size > 0) && (
+                  <span className="absolute top-1.5 left-1/2 ml-2 w-2 h-2 rounded-full bg-blue-500" />
+                )}
+                {key === 'graph' && marked && mobileView !== 'graph' && (
+                  <span className="absolute top-1.5 left-1/2 ml-2 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+            ))}
+          </nav>
+        )}
       </div>
     </div>
   );

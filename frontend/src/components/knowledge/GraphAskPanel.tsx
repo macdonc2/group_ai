@@ -36,7 +36,7 @@ interface GraphAskPanelProps {
   selectedNodeId: string | null;
   selectedLabel: string | null;
   /** Apply an answer to the graph view (highlight nodes, optionally filter types). */
-  onApply: (response: GraphAskResponse) => void;
+  onApply: (response: GraphAskResponse, reveal?: boolean) => void;
   /** Question queued from elsewhere in the explorer ("Ask about this node"). */
   pending: string | null;
   onPendingConsumed: () => void;
@@ -190,7 +190,7 @@ export function GraphAskPanel({ selectedNodeId, selectedLabel, onApply, pending,
                 </div>
                 {(turn.response.highlight_node_ids.length > 0 || turn.response.filter) && (
                   <button
-                    onClick={() => onApply(turn.response!)}
+                    onClick={() => onApply(turn.response!, true)}
                     className="mt-2 flex items-center gap-1 text-xs text-blue-400 hover:text-blue-300"
                     title="Show this answer in the graph"
                   >
@@ -236,7 +236,7 @@ export function GraphAskPanel({ selectedNodeId, selectedLabel, onApply, pending,
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about your graph…"
             maxLength={2000}
-            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            className="flex-1 min-w-0 rounded-lg bg-gray-800 border border-gray-700 px-3 py-2 text-base sm:text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
           />
           <button
             type="submit"
