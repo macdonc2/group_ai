@@ -90,7 +90,12 @@ def fmt_flow(trace: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def _tool_names() -> str:
+def _tool_names(trace: dict[str, Any] | None = None) -> str:
+    """The tools the engine that produced `trace` could call (the judge grades against these)."""
+    if trace is not None and "ChatLoop" in trace.get("path", []):
+        from agent_system.adapters.outbound.llm.chat_agent import TOOL_NAMES
+
+        return ", ".join(TOOL_NAMES)
     from agent_system.adapters.outbound.llm.tools import AVAILABLE_TOOLS
 
     return ", ".join(sorted(AVAILABLE_TOOLS))
@@ -204,7 +209,7 @@ async def judge_agent_case(
         "retrieved": fmt_retrieved(last),
         "criteria": case.expect.answer_criteria or DEFAULT_CRITERIA,
         "flow": fmt_flow(last),
-        "tools": _tool_names(),
+        "tools": _tool_names(last),
         "tool_outputs": "\n".join(f"{t['tool']}: {str(t.get('result'))[:1500]}" for t in last.get("tool_calls", [])),
     }
     rubric_names = case.rubrics if case.rubrics is not None else suite.rubrics
@@ -545,6 +550,7 @@ async def run_suite(
         for c in cases for rep in range(repeats)
     ]
     config = {"repeats": repeats, "concurrency": concurrency, "case_ids": case_ids, "origin": origin,
+              "chat_engine": env.settings.chat_engine,
               "model": env.settings.default_model, "fallback_model": env.settings.fallback_model}
     return await _execute(env, suite, judge, judges, run_id, work, config, concurrency, progress, analyze_failures)
 

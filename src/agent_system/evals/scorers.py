@@ -55,9 +55,26 @@ def tools_used(trace: dict[str, Any]) -> list[str]:
     return [t["tool"] for t in trace.get("tool_calls", [])]
 
 
+# --- Loop engine (CHAT_ENGINE=loop) -----------------------------------------
+# The loop has no intent classifier and no node route, and it merged or dropped
+# some FSM tools. Suites were written against the FSM, so expectations are
+# translated here instead of being forked into a second set of YAML files.
+
+LOOP_TOOL_EQUIVALENTS = {  # FSM tool name -> loop tool that does the same job
+    "list_pets": "list_entities", "list_known_people": "list_entities", "list_locations": "list_entities",
+    "get_person_info": "recall_about_topic", "get_pet_info": "recall_about_topic",
+    "get_location_info": "recall_about_topic",
+}
+LOOP_ANSWERS_DIRECTLY = {"get_current_datetime", "define_word", "random_fact"}  # no tool needed in the loop
+
+
+def is_loop_trace(trace: dict[str, Any]) -> bool:
+    return "ChatLoop" in trace.get("path", [])
+
+
 def score_intent(case: EvalCase, trace: dict[str, Any]) -> Score | None:
     want = _as_list(case.expect.intent)
-    if not want:
+    if not want or is_loop_trace(trace):  # the loop has no intent step to score
         return None
     got = detected_intent(trace)
     ok = got in want
@@ -67,7 +84,7 @@ def score_intent(case: EvalCase, trace: dict[str, Any]) -> Score | None:
 def score_route(case: EvalCase, trace: dict[str, Any]) -> Score | None:
     want = case.expect.route
     forbid = case.expect.forbid_nodes
-    if not want and not forbid:
+    if (not want and not forbid) or is_loop_trace(trace):  # FSM node routes do not exist in the loop
         return None
     path = trace.get("path", [])
     ok_order = True
@@ -88,6 +105,13 @@ def score_tool(case: EvalCase, trace: dict[str, Any]) -> Score | None:
     if not want:
         return None
     used = tools_used(trace)
+    if is_loop_trace(trace) and want != ["none"]:
+        if all(t in LOOP_ANSWERS_DIRECTLY for t in want):
+            # the date is in the prompt and the model knows definitions and trivia: any tool is a wasted call
+            ok = not used
+            return Score("tool", 1.0 if ok else 0.0, ok, "wrong_tool",
+                         {"expected": "none (answered directly in the loop)", "actual": used})
+        want = sorted({LOOP_TOOL_EQUIVALENTS.get(t, t) for t in want})
     ok = not used if want == ["none"] else any(t in want for t in used)
     return Score("tool", 1.0 if ok else 0.0, ok, "wrong_tool", {"expected": want, "actual": used})
 
@@ -98,6 +122,10 @@ def score_tool_args(case: EvalCase, trace: dict[str, Any]) -> Score | None:
         return None
     calls = trace.get("tool_calls", [])
     target = _as_list(case.expect.tool)
+    if is_loop_trace(trace):
+        if target and all(t in LOOP_ANSWERS_DIRECTLY for t in target):
+            return None  # no call to inspect
+        target = [LOOP_TOOL_EQUIVALENTS.get(t, t) for t in target]
     call = next((c for c in calls if not target or c["tool"] in target), calls[0] if calls else None)
     if call is None:
         return Score("tool_args", 0.0, False, "bad_args", {"expected": want, "actual": None})

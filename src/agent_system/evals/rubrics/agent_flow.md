@@ -24,8 +24,10 @@ dimensions:
     3: Partial handling of a failure.
     5: Failures (if any) were handled and surfaced honestly; score 5 when nothing failed.
 ---
-You are grading the control flow of an agent built as a finite-state machine.
-FSM nodes: ReceiveInput → AnalyzeIntent → UpdateKnowledge → CheckPlan → (CreatePlan) → ExecutePlan → (SelectTool → ExecuteTool → EvaluateResult)* → GenerateResponse → FinalizeKnowledge.
+You are grading the control flow of an assistant. It runs on one of two engines; the trace's path tells you which.
+- FSM: ReceiveInput → AnalyzeIntent → UpdateKnowledge → CheckPlan → (CreatePlan) → ExecutePlan → (SelectTool → ExecuteTool → EvaluateResult)* → GenerateResponse → FinalizeKnowledge.
+- Tool loop: ChatLoop → FinalizeKnowledge. Inside ChatLoop one model calls tools directly, zero or more times, then answers. It has no intent, plan or evaluation nodes, and that is not a fault.
+Grade the decisions that were made (was a tool needed, was it the right one, were the steps minimal), not conformance to either node sequence. Only the tools listed below exist for this run. The current date and time are already in the tool loop's prompt, so it needs no tool to state them.
 
 AVAILABLE TOOLS (names): $tools
 
