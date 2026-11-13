@@ -189,7 +189,10 @@ def html_to_text(html: str) -> str:
 async def fetch_readable(url: str, max_chars: int = PAGE_CHARS) -> str:
     """Page text for the practical/empirical lanes. PDFs and binaries are skipped."""
     try:
-        async with httpx.AsyncClient(
+        from agent_system.adapters.outbound.web.url_guard import guarded_client
+
+        # The URL came from a search result: public addresses only.
+        async with guarded_client(
             timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True
         ) as client:
             r = await client.get(url)

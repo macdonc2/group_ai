@@ -30,8 +30,8 @@ def routes(request: httpx.Request) -> httpx.Response:
 
 @pytest.fixture(autouse=True)
 def fake_http(monkeypatch):
-    real = httpx.AsyncClient
-    monkeypatch.setattr(reader.httpx, "AsyncClient", lambda **kw: real(transport=httpx.MockTransport(routes), **kw))
+    # Stand in for the guarded client; the address guard has its own tests.
+    monkeypatch.setattr(reader, "guarded_client", lambda **kw: httpx.AsyncClient(transport=httpx.MockTransport(routes), **kw))
     reader._robots.clear()
 
 

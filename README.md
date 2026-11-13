@@ -338,7 +338,7 @@ Run with `make eval`, `make eval-suite SUITE=memory_retrieval JUDGE=both`, `pyth
 
 Every request gets an ID that is returned in `X-Request-ID` and stamped on every log line it produces, along with the user's ID; logs are JSON in production. `/health` is liveness and `/health/ready` checks the database. OpenTelemetry traces and metrics (HTTP, SQL, outbound calls, and pydantic-ai agent, model and tool spans in one trace) are exported when `OTEL_EXPORTER_OTLP_ENDPOINT` is set, and `infra/observability` has a local Collector + Prometheus + Tempo + Loki + Grafana stack with a dashboard. Design and trade-offs: [docs/observability.md](docs/observability.md).
 
-Access control: data is scoped to its owner (another user's conversation or plan returns 404), the group chat socket authenticates with the access token, accounts are re-checked on every request, failed logins are throttled, and the app refuses to start in production with a placeholder `SECRET_KEY`.
+Access control: data is scoped to its owner (another user's conversation or plan returns 404), the group chat socket authenticates with the access token, accounts are re-checked on every request, failed logins are throttled, and the app refuses to start in production with a placeholder `SECRET_KEY`. Web fetching is limited to public addresses: URLs from search results or model output are resolved, refused if any address is loopback, private, link-local (cloud metadata) or otherwise internal, re-checked on every redirect and for every request the headless browser makes, and the connection is pinned to the validated address (`adapters/outbound/web/url_guard.py`).
 
 ### Installable App
 

@@ -10,6 +10,11 @@
 
 The reader identifies itself honestly and does not try to get around bot
 protection: a 401/403/429 or a challenge page is reported as `blocked`.
+
+Only public internet addresses are fetched (see `url_guard`): URLs come from
+search results and model output, so one pointing at localhost, the cluster or
+the cloud metadata service is refused, on every redirect hop and for every
+request the headless browser makes.
 """
 
 from __future__ import annotations
@@ -20,12 +25,14 @@ import logging
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlparse
 from urllib.robotparser import RobotFileParser
 
 import httpx
 
 from agent_system.adapters.outbound.research.sources import html_to_text
+from agent_system.adapters.outbound.web.url_guard import BlockedURL, guarded_client, public_addresses
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +75,8 @@ async def _allowed(client: httpx.AsyncClient, url: str) -> bool:
             if r.status_code == 200:
                 parser = RobotFileParser()
                 parser.parse(r.text.splitlines())
+        except BlockedURL:
+            raise  # not "no rules": the site itself is off limits
         except Exception:  # noqa: BLE001 - unreachable robots.txt means no rules
             parser = None
         _robots[origin] = (time.monotonic(), parser)
@@ -110,19 +119,38 @@ async def _get_browser():
         return _browser
 
 
+async def _filter_browser_request(route: Any) -> None:
+    """Decide every request the headless browser wants to make.
+
+    A public page can embed or script requests to anywhere, so the address
+    check has to cover sub-resources and redirects too, not just the page we
+    asked for. (The browser resolves names itself, so unlike the plain fetch
+    this cannot pin the address; the check narrows the window, it does not
+    close it.)
+    """
+    request = route.request
+    if request.resource_type in {"image", "media", "font"}:  # not needed for text
+        await route.abort()
+        return
+    if request.url.startswith(("data:", "blob:", "about:")):
+        await route.continue_()
+        return
+    try:
+        await public_addresses(request.url)
+    except BlockedURL as exc:
+        logger.warning("Browser request refused: %s", exc, extra={"event": "ssrf_blocked"})
+        await route.abort("blockedbyclient")
+        return
+    await route.continue_()
+
+
 async def _render(url: str, max_chars: int) -> PageResult:
     async with _render_slots:
         browser = await _get_browser()
         context = await browser.new_context(user_agent=USER_AGENT, java_script_enabled=True)
         try:
             page = await context.new_page()
-            # Images, fonts and media aren't needed for text.
-            await page.route(
-                "**/*",
-                lambda route: route.abort()
-                if route.request.resource_type in {"image", "media", "font"}
-                else route.continue_(),
-            )
+            await page.route("**/*", _filter_browser_request)
             resp = await page.goto(url, wait_until="domcontentloaded", timeout=15000)
             if resp is not None and resp.status in (401, 403, 429):
                 return PageResult(url, "", "blocked", f"HTTP {resp.status}")
@@ -146,7 +174,7 @@ async def read_page(url: str, max_chars: int = 6000, allow_render: bool = True) 
     if not url or not url.startswith(("http://", "https://")):
         return PageResult(url, "", "skipped", "not an http(s) URL")
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
+        async with guarded_client(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
             if not await _allowed(client, url):
                 return PageResult(url, "", "disallowed", "robots.txt disallows this page")
             r = await client.get(url)
@@ -170,6 +198,9 @@ async def read_page(url: str, max_chars: int = 6000, allow_render: bool = True) 
                 except Exception as exc:  # noqa: BLE001
                     logger.info("render failed for %s: %s", url, exc)
             return PageResult(url, text[:max_chars], "ok" if text else "empty")
+    except BlockedURL as exc:
+        logger.warning("Fetch refused: %s", exc, extra={"event": "ssrf_blocked"})
+        return PageResult(url, "", "disallowed", "not a public web address")
     except Exception as exc:  # noqa: BLE001
         return PageResult(url, "", "error", f"{type(exc).__name__}: {str(exc)[:120]}")
 

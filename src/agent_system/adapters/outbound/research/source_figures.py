@@ -58,8 +58,10 @@ def rank_sources_for_figures(sources: list[Source], findings: list[Finding], lim
 
 async def download_pdf(url: str) -> bytes | None:
     try:
-        async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True,
-                                     headers={"User-Agent": "agent-system-deep-research/1.0"}) as client:
+        from agent_system.adapters.outbound.web.url_guard import guarded_client
+
+        async with guarded_client(timeout=TIMEOUT, follow_redirects=True,
+                                  headers={"User-Agent": "agent-system-deep-research/1.0"}) as client:
             r = await client.get(url)
             r.raise_for_status()
             if "pdf" not in r.headers.get("content-type", "") and not r.content.startswith(b"%PDF"):
