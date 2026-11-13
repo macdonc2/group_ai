@@ -309,6 +309,11 @@ async def chat_with_agent_stream(
         data: dict | None,
     ) -> None:
         """Callback to emit events to the queue."""
+        if event_type == "response":
+            # The workflow announces its reply before this route has saved the conversation.
+            # The browser closes the stream on "response", and that hang-up cancels the save,
+            # losing the turn. The route sends its own "response" below, after saving.
+            return
         event = StreamEvent(
             event_type=event_type,
             node_name=node_name,

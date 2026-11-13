@@ -198,7 +198,14 @@ export const useChatStore = create<ChatState>()(
         // Final response - update suggestions
         if (event.data) {
           const suggestions = (event.data.suggestions as Suggestion[]) || [];
-          set({ suggestions, isStreaming: false });
+          set((s) => ({
+            suggestions,
+            isStreaming: false,
+            // The turn is over: any step still marked running (the post-reply step) has finished
+            traceNodes: s.traceNodes.map((node) =>
+              node.status === 'running' ? { ...node, status: 'complete', endTime: event.timestamp } : node
+            ),
+          }));
           
           // Update last assistant message with final response (in case we missed chunks)
           const response = event.data.response as string;
