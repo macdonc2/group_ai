@@ -751,6 +751,40 @@ class Neo4jAdapter(KnowledgeGraphPort):
             record = await result.single()
             return record["id"] if record else node_id
 
+    async def delete_conversation_memory(self, user_id: UserId, conversation_id: str) -> int:
+        """Remove the derived memory of one conversation (or journal entry) for one user.
+
+        Deletes its message embeddings and its summary (interaction) node. People, pets,
+        places, preferences and topics are merged facts with no link back to a single
+        source, so they are kept. Both statements filter on the owner, so a caller can
+        never delete another user's memory by guessing a conversation id.
+        """
+        needle = json.dumps({"conversation_id": conversation_id})[1:-1]  # '"conversation_id": "<id>"'
+        deleted = 0
+        async with self.driver.session(database=self._database) as session:
+            result = await session.run(
+                """
+                MATCH (m:MessageEmbedding {user_id: $user_id, conversation_id: $conversation_id})
+                DETACH DELETE m
+                RETURN count(m) AS deleted
+                """,
+                user_id=str(user_id), conversation_id=conversation_id,
+            )
+            record = await result.single()
+            deleted += record["deleted"] if record else 0
+            result = await session.run(
+                """
+                MATCH (n:KnowledgeNode {node_type: 'interaction', user_id: $user_id})
+                WHERE n.properties_json CONTAINS $needle
+                DETACH DELETE n
+                RETURN count(n) AS deleted
+                """,
+                user_id=str(user_id), needle=needle,
+            )
+            record = await result.single()
+            deleted += record["deleted"] if record else 0
+        return deleted
+
     async def semantic_search(
         self,
         user_id: UserId,

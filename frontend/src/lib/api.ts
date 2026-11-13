@@ -23,6 +23,7 @@ import type {
   ConversationTrace,
   RunComparison,
 } from '../types';
+import type { JournalDays, JournalEntry, JournalMessage, JournalStreamEvent } from '../types/journal';
 import { useAuthStore } from '../stores/authStore';
 
 const API_BASE = '/api/v1';
@@ -373,6 +374,84 @@ export const api = {
     is_primary: boolean;
   }>> => {
     return fetchApi('/calendar/calendars');
+  },
+
+  // Journal
+  journalDays: async (month?: string): Promise<JournalDays> => {
+    return fetchApi<JournalDays>(`/journal/days${month ? `?month=${month}` : ''}`);
+  },
+
+  journalEntries: async (date: string): Promise<JournalEntry[]> => {
+    return fetchApi<JournalEntry[]>(`/journal/entries?date=${date}`);
+  },
+
+  createJournalEntry: async (body: string, date: string): Promise<JournalEntry> => {
+    return fetchApi<JournalEntry>('/journal/entries', { method: 'POST', body: JSON.stringify({ body, date }) });
+  },
+
+  updateJournalEntry: async (id: string, body: string): Promise<JournalEntry> => {
+    return fetchApi<JournalEntry>(`/journal/entries/${id}`, { method: 'PUT', body: JSON.stringify({ body }) });
+  },
+
+  deleteJournalEntry: async (id: string): Promise<void> => {
+    await fetchApi(`/journal/entries/${id}`, { method: 'DELETE' });
+  },
+
+  retryJournalMemory: async (id: string): Promise<JournalEntry> => {
+    return fetchApi<JournalEntry>(`/journal/entries/${id}/remember`, { method: 'POST' });
+  },
+
+  answerJournalSuggestion: async (entryId: string, suggestionId: string, answer: 'accept' | 'dismiss'): Promise<JournalEntry> => {
+    return fetchApi<JournalEntry>(`/journal/entries/${entryId}/suggestions/${suggestionId}/${answer}`, { method: 'POST' });
+  },
+
+  journalChat: async (date: string): Promise<JournalMessage[]> => {
+    return fetchApi<JournalMessage[]>(`/journal/chat?date=${date}`);
+  },
+
+  clearJournalChat: async (date: string): Promise<void> => {
+    await fetchApi(`/journal/chat?date=${date}`, { method: 'DELETE' });
+  },
+
+  // Streams the journal agent's reply. A POST read with fetch (not EventSource), so the
+  // message and the token travel in the body and a header, never in the URL.
+  streamJournalChat: async (
+    date: string,
+    message: string,
+    onEvent: (event: JournalStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const response = await fetch(`${API_BASE}/journal/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify({ date, message }),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      if (response.status === 401) useAuthStore.getState().logout();
+      throw new ApiError(response.status, await response.text());
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut = buffer.indexOf('\n\n');
+      while (cut !== -1) {
+        const line = buffer.slice(0, cut).trim();
+        buffer = buffer.slice(cut + 2);
+        if (line.startsWith('data:')) {
+          try {
+            onEvent(JSON.parse(line.slice(5)) as JournalStreamEvent);
+          } catch {
+            // a malformed event is skipped; the final "response" event carries the whole reply
+          }
+        }
+        cut = buffer.indexOf('\n\n');
+      }
+    }
   },
 
   // Deep Research

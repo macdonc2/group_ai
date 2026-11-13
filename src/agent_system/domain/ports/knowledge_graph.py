@@ -285,6 +285,17 @@ class KnowledgeGraphPort(ABC):
         """
         ...
 
+    async def delete_conversation_memory(self, user_id: UserId, conversation_id: str) -> int:
+        """Remove one conversation's (or journal entry's) message embeddings and summary node.
+
+        Scoped to `user_id`. Merged facts (people, pets, places, preferences, topics) stay.
+        Not abstract, so adapters that predate it keep working; they simply cannot forget.
+
+        Returns:
+            Number of nodes deleted
+        """
+        raise NotImplementedError
+
     @abstractmethod
     async def semantic_search(
         self,

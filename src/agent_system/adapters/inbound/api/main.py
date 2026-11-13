@@ -25,6 +25,7 @@ from agent_system.adapters.inbound.api.routes import (
     conversations_router,
     evals_router,
     groups_router,
+    journal_router,
     knowledge_router,
     plans_router,
     research_router,
@@ -175,6 +176,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(conversations_router, prefix="/api/v1")
     app.include_router(evals_router, prefix="/api/v1")
     app.include_router(groups_router, prefix="/api/v1")
+    app.include_router(journal_router, prefix="/api/v1")
     app.include_router(knowledge_router, prefix="/api/v1")
     app.include_router(plans_router, prefix="/api/v1")
     app.include_router(research_router, prefix="/api/v1")

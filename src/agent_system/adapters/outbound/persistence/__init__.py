@@ -11,6 +11,13 @@ from agent_system.adapters.outbound.persistence.group_repositories import (
     SQLAlchemyGroupConversationRepository,
     SQLAlchemyGroupRepository,
 )
+from agent_system.adapters.outbound.persistence.journal_models import (
+    JournalEntryModel,
+    JournalMessageModel,
+)
+from agent_system.adapters.outbound.persistence.journal_repository import (
+    SQLAlchemyJournalRepository,
+)
 from agent_system.adapters.outbound.persistence.mappers import (
     ConversationMapper,
     ExtractedEventMapper,
@@ -70,6 +77,8 @@ __all__ = [
     "TurnTraceModel",
     "EvalRunModel",
     "EvalCaseResultModel",
+    "JournalEntryModel",
+    "JournalMessageModel",
     # Mappers
     "UserMapper",
     "ConversationMapper",
@@ -89,4 +98,5 @@ __all__ = [
     "SQLAlchemyGroupConversationRepository",
     "SQLAlchemyExtractedEventRepository",
     "SQLAlchemyResearchRepository",
+    "SQLAlchemyJournalRepository",
 ]
