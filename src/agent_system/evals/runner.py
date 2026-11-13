@@ -269,7 +269,8 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
         if case.expect.forbid_memory:  # everything the turn could have stored about the user
             memory_text = json.dumps({"patterns": last.get("learned_patterns", []), "graph": snapshot}, default=str)
         scores = score_agent_case(case, last["trace"], last["response"], snapshot,
-                                  all_traces=[t["trace"] for t in turns], memory_text=memory_text)
+                                  all_traces=[t["trace"] for t in turns], memory_text=memory_text,
+                                  llm_call_budget=suite.max_llm_calls)
         judgements, judge_trace = await judge_agent_case(case, suite, turns, judges) if judges else ({}, None)
     finally:
         if seeded is not None:

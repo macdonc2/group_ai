@@ -2,6 +2,7 @@ name: tool_selection
 description: The intent agent picks the right tool and SelectTool builds usable, context-resolved arguments.
 rubrics: [agent_flow]
 pass_threshold: 3.5
+max_llm_calls: 8  # one tool and an answer, plus post-reply memory work; planning turns do not belong in this suite
 
 cases:
   - id: word_problem_math

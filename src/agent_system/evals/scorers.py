@@ -242,6 +242,21 @@ def score_entities(case: EvalCase, snapshot: dict[str, list[dict[str, Any]]]) ->
     return out
 
 
+def score_llm_calls(case: EvalCase, trace: dict[str, Any], suite_budget: int | None = None) -> Score | None:
+    """Deterministic gate on how many model calls the turn made (the system's own, not the judge's)."""
+    budget = case.expect.max_llm_calls or suite_budget
+    if not budget:
+        return None
+    made = sum(1 for c in trace.get("llm_calls", []) if c.get("role", "system") == "system")
+    by_node: dict[str, int] = {}
+    for c in trace.get("llm_calls", []):
+        if c.get("role", "system") == "system":
+            by_node[c.get("node") or "?"] = by_node.get(c.get("node") or "?", 0) + 1
+    ok = made <= budget
+    return Score("llm_calls", 1.0 if ok else round(budget / made, 3), ok, "too_many_llm_calls",
+                 {"budget": budget, "made": made, "by_node": by_node})
+
+
 BLOCKED_PREFIX = "Not added."  # how a write refused by a guard reports itself; the write did not run
 
 
@@ -278,6 +293,7 @@ def score_latency(case: EvalCase, trace: dict[str, Any]) -> Score | None:
 def score_agent_case(
     case: EvalCase, trace: dict[str, Any], response: str, snapshot: dict[str, list[dict[str, Any]]] | None,
     all_traces: list[dict[str, Any]] | None = None, memory_text: str | None = None,
+    llm_call_budget: int | None = None,
 ) -> list[Score]:
     scores: list[Score | None] = [
         score_intent(case, trace),
@@ -286,6 +302,7 @@ def score_agent_case(
         score_tool_args(case, trace),
         score_recall(case, trace),
         score_latency(case, trace),
+        score_llm_calls(case, trace, llm_call_budget),
         score_forbidden_tools(case, all_traces or [trace]),
         score_forbidden_memory(case, memory_text),
     ]

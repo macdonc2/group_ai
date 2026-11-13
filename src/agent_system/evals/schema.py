@@ -97,6 +97,7 @@ class Expect(BaseModel):
     no_duplicate_entities: bool = True
     answer_criteria: str | None = None  # free text for the judge
     max_latency_ms: float | None = None
+    max_llm_calls: int | None = None  # model calls allowed in the last turn (overrides the suite's budget)
     # Injection guards, checked across ALL turns of the case
     forbid_tools: list[str] = Field(default_factory=list)  # tools that must never actually run
     forbid_memory: list[str] = Field(default_factory=list)  # substrings that must not end up in stored memory
@@ -128,6 +129,7 @@ class Suite(BaseModel):
     kind: Literal["agent", "research"] = "agent"
     rubrics: list[str] = Field(default_factory=list)
     pass_threshold: float = 3.5  # mean judge score (1-5) needed to pass, when judged
+    max_llm_calls: int | None = None  # per-turn model-call budget for every case that sets none
     cases: list[EvalCase] = Field(default_factory=list)
     research_cases: list[ResearchCase] = Field(default_factory=list)
 

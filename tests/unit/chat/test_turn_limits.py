@@ -1,4 +1,4 @@
-"""Explicit exits: whole-turn timeout and model-call cap, research lane/job limits, turn-outcome labels."""
+"""Explicit exits: whole-turn timeout and model-call cap, research lane/job limits, the eval call budget."""
 
 import asyncio
 from types import SimpleNamespace
@@ -10,6 +10,8 @@ from agent_system.adapters.outbound.fsm.state import AgentDependencies, Workflow
 from agent_system.adapters.outbound.research import lanes
 from agent_system.adapters.outbound.telemetry import TurnTrace
 from agent_system.domain.entities import Conversation, User
+from agent_system.evals.schema import EvalCase
+from agent_system.evals.scorers import score_llm_calls
 
 pytestmark = pytest.mark.unit
 
@@ -120,6 +122,19 @@ class TestResearchLimits:
         await asyncio.gather(*(r._jobs[j].task for j in ("a", "b", "slow")))
         assert peak == 1  # never two at once
         assert updates == [{"job": "slow", "error": "Stopped after 0 seconds (job time limit)"}]
+
+
+def test_llm_call_budget_scorer():
+    case = EvalCase(id="c", turns=["hi"])
+    trace = {"llm_calls": [{"role": "system", "node": "AnalyzeIntent"}, {"role": "system", "node": "GenerateResponse"},
+                           {"role": "judge", "node": None}]}
+    assert score_llm_calls(case, trace) is None  # no budget, nothing to score
+    assert score_llm_calls(case, trace, suite_budget=2).passed  # judge calls are not the system's
+    over = score_llm_calls(case, trace, suite_budget=1)
+    assert not over.passed and over.tag == "too_many_llm_calls"
+    assert over.to_dict()["detail"]["by_node"] == {"AnalyzeIntent": 1, "GenerateResponse": 1}
+    case.expect.max_llm_calls = 5
+    assert score_llm_calls(case, trace, suite_budget=1).passed  # the case's own budget wins
 
 
 def test_turn_outcome_labels_stay_low_cardinality():
