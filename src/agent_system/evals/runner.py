@@ -10,6 +10,7 @@ percentiles, cost) and write the failure analysis.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import subprocess
@@ -135,6 +136,9 @@ class EvalEnv:
         container = await get_container()
         if dependencies._database is None:  # CLI: tools that open their own sessions need it
             dependencies.set_database(container.database)
+        from agent_system.evals.web_fixture import install_web_fixture_hook
+
+        install_web_fixture_hook()
         embedder = OpenAIEmbeddingAdapter(api_key=api_key)
         kg = container.knowledge_graph_adapter
         if kg is not None:
@@ -194,7 +198,8 @@ async def play_turns(case: EvalCase, seeded: Any, env: EvalEnv) -> list[dict[str
             await conv_repo.update(conversation)
             await session.commit()  # release the write lock between turns (matters on SQLite)
             user = state.user
-            turns.append({"user": text, "response": response, "trace": deps.trace.to_dict()})
+            turns.append({"user": text, "response": response, "trace": deps.trace.to_dict(),
+                          "learned_patterns": [p.description for p in user.learned_patterns]})
     return turns
 
 
@@ -250,11 +255,21 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
     seeded = None
     try:
         seeded = await seed_user(case, run_id, env.database, env.kg, env.embedder)
-        turns = await play_turns(case, seeded, env)
-        wants_kg = case.expect.entities or case.expect.forbid_entities
+        from agent_system.evals.web_fixture import reset_web_fixture, set_web_fixture
+
+        token = set_web_fixture(case.web_fixture)
+        try:
+            turns = await play_turns(case, seeded, env)
+        finally:
+            reset_web_fixture(token)
+        wants_kg = case.expect.entities or case.expect.forbid_entities or case.expect.forbid_memory
         snapshot = await snapshot_entities(env.kg, seeded.user.id) if wants_kg else None
         last = turns[-1]
-        scores = score_agent_case(case, last["trace"], last["response"], snapshot)
+        memory_text = None
+        if case.expect.forbid_memory:  # everything the turn could have stored about the user
+            memory_text = json.dumps({"patterns": last.get("learned_patterns", []), "graph": snapshot}, default=str)
+        scores = score_agent_case(case, last["trace"], last["response"], snapshot,
+                                  all_traces=[t["trace"] for t in turns], memory_text=memory_text)
         judgements, judge_trace = await judge_agent_case(case, suite, turns, judges) if judges else ({}, None)
     finally:
         if seeded is not None:

@@ -97,6 +97,9 @@ class Expect(BaseModel):
     no_duplicate_entities: bool = True
     answer_criteria: str | None = None  # free text for the judge
     max_latency_ms: float | None = None
+    # Injection guards, checked across ALL turns of the case
+    forbid_tools: list[str] = Field(default_factory=list)  # tools that must never actually run
+    forbid_memory: list[str] = Field(default_factory=list)  # substrings that must not end up in stored memory
 
 
 class EvalCase(BaseModel):
@@ -105,6 +108,7 @@ class EvalCase(BaseModel):
     tags: list[str] = Field(default_factory=list)
     seed: Seed = Field(default_factory=Seed)
     turns: list[str]  # user messages, played in one conversation
+    web_fixture: str | None = None  # canned text returned by web_search / read_webpage (no live web)
     expect: Expect = Field(default_factory=Expect)  # applies to the LAST turn (entities: final KG state)
     rubrics: list[str] | None = None  # override the suite's rubrics
 
