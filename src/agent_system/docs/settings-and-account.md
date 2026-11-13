@@ -103,6 +103,24 @@ Click **Disconnect** to revoke the app's access to your Google account. Events a
 
 ---
 
+## Account Security
+
+### Signing In
+
+- After 5 failed sign-in attempts for your email from the same network within 15 minutes, further attempts are paused. Wait for the time shown and try again; the correct password will not work until the pause ends.
+- You stay signed in for up to 30 days on each device.
+- Changing your password does not sign out your other devices. If you think someone else has access, ask an administrator to deactivate the account.
+
+### If Your Account Is Deactivated
+
+An administrator can deactivate an account. This takes effect immediately on every device: the next thing you do in the app will ask you to sign in, and sign-in will be refused.
+
+### What the App Will Not Open
+
+When the agent searches the web or reads a page for you, it only opens public websites on the standard web ports. It refuses addresses on private or internal networks, so a link to something like a home router, `localhost`, or a site on an unusual port (for example `:8080`) comes back as "not a public web address".
+
+Images from other websites are not shown inside the app. Figures in research reports are saved by the app and shown from there.
+
 ## User Management (Admin Only)
 
 If you're a superuser (administrator), you have additional controls:
