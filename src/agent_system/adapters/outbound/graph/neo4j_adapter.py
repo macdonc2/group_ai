@@ -261,21 +261,21 @@ class Neo4jAdapter(KnowledgeGraphPort):
         node_type: KnowledgeNodeType | None = None,
     ) -> list[KnowledgeNode]:
         """Get all nodes associated with a user."""
-        type_filter = f"AND n.node_type = '{node_type.value}'" if node_type else ""
-        
-        # Match user node by user_id property (not id), then traverse to connected nodes
-        query = f"""
-        MATCH (u:KnowledgeNode {{node_type: 'user', user_id: $user_id}})-[*1..3]-(n:KnowledgeNode)
-        WHERE n.id <> u.id {type_filter}
-        RETURN DISTINCT n
-        UNION
-        MATCH (u:KnowledgeNode {{node_type: 'user', user_id: $user_id}})
-        RETURN u as n
+        # Scoped by `_USER_SCOPE`. The previous plain `-[*1..3]-` walk went through
+        # tool nodes, which every user shares, and so returned other users'
+        # conversation summaries to anyone who had used the same tool.
+        query = """
+        """ + self._USER_SCOPE + """
+        WITH DISTINCT n
+        WHERE n:KnowledgeNode AND ($node_type IS NULL OR n.node_type = $node_type)
+        RETURN n
         """
-        
+
         nodes = []
         async with self.driver.session(database=self._database) as session:
-            result = await session.run(query, user_id=str(user_id))
+            result = await session.run(
+                query, user_id=str(user_id), node_type=node_type.value if node_type else None
+            )
             async for record in result:
                 nodes.append(self._record_to_node(record["n"]))
         return nodes
@@ -426,10 +426,17 @@ class Neo4jAdapter(KnowledgeGraphPort):
             conversation_id=conversation_id,
         )
         await self.create_node(interaction_node)
-        
+
         # Ensure user node exists
         user_node_id = KnowledgeNodeId.generate()
         user_id_str = str(user_id)
+        # Stamp the owner on the summary itself, so ownership does not depend
+        # only on which node it happens to be linked to.
+        async with self.driver.session(database=self._database) as session:
+            await session.run(
+                "MATCH (n:KnowledgeNode {id: $id}) SET n.user_id = $user_id",
+                id=str(interaction_node.id), user_id=user_id_str,
+            )
         display_label = user_label or user_id_str
         now = datetime.utcnow().isoformat()
         
@@ -1840,9 +1847,14 @@ class Neo4jAdapter(KnowledgeGraphPort):
         # Priority 0: topic/fact nodes with defining keywords (dog, pet, cat, spouse, etc.)
         # Priority 1: other topic/fact nodes
         # Priority 2: interaction nodes
+        # Only nodes reachable from this user's own node (`_USER_SCOPE`). This used
+        # to accept any node with no `user_id`, which was every conversation
+        # summary of every user and every group: a keyword search over
+        # everybody's history.
         knowledge_query = """
-        MATCH (k:KnowledgeNode)
-        WHERE (k.user_id = $user_id OR k.user_id IS NULL)
+        """ + self._USER_SCOPE + """
+        WITH DISTINCT n AS k
+        WHERE k:KnowledgeNode AND k.label IS NOT NULL
           AND toLower(k.label) CONTAINS toLower($topic)
         WITH k, toLower(k.label) as lbl
         WITH k, lbl,
