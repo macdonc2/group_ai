@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from agent_system.adapters.inbound.api.dependencies import get_database, set_database
+from agent_system.adapters.inbound.api.security_headers import SecurityHeadersMiddleware
 from agent_system.adapters.inbound.api.observability import (
     RequestContextMiddleware,
     configure_logging,
@@ -115,22 +116,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         shutdown_telemetry()
         await db.dispose()
     
+    # The interactive docs describe every endpoint and parameter. Useful on a
+    # laptop; on the public site they are a map for anyone probing it.
+    docs_on = settings.enable_api_docs if settings.enable_api_docs is not None else not _deployed(settings)
     app = FastAPI(
         title="Agent System API",
         description="Hexagonal architecture agentic reasoning system with PydanticAI",
         version="0.1.0",
         lifespan=lifespan,
         debug=settings.debug,
+        docs_url="/docs" if docs_on else None,
+        redoc_url="/redoc" if docs_on else None,
+        openapi_url="/openapi.json" if docs_on else None,
     )
-    
-    # Configure CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Configure appropriately for production
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+
+    # CORS decides which *other* websites' pages may call this API from a
+    # browser. Deployed, the frontend is served from the same origin, so the
+    # answer is none and no CORS headers are sent at all. Locally the Vite dev
+    # server is a different origin. Credentials are never allowed: auth is a
+    # bearer token the page adds itself, not a cookie the browser attaches.
+    origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+    if not origins and not _deployed(settings):
+        origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    if origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=False,
+            allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+            allow_headers=["Authorization", "Content-Type", "X-Request-ID"],
+            expose_headers=["X-Request-ID"],
+        )
+    app.add_middleware(SecurityHeadersMiddleware)
     
     # Tracing and metrics, when a Collector endpoint is configured. Set up
     # before our own middleware is added so that middleware sits outside it.
@@ -217,12 +234,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.get("/")
     async def root() -> dict[str, Any]:
         """Root endpoint with API information."""
-        return {
-            "name": "Agent System API",
-            "version": "0.1.0",
-            "docs": "/docs",
-            "health": "/health",
-        }
+        return {"name": "Agent System API", "version": "0.1.0", "health": "/health"}
     
     return app
 

@@ -149,3 +149,13 @@ service:
     type: ClusterIP
     port: 80
     targetPort: 8080
+
+# NetworkPolicy: default-deny between pods, with only the paths the app needs.
+# OFF by default because this cluster (kubenet, networkPolicy: none) has no
+# policy engine: the objects would be accepted and silently not enforced,
+# which is worse than not having them. Turn on only after enabling Azure
+# Network Policy, Calico or Cilium on the cluster.
+networkPolicy:
+  enabled: false
+  ingressNamespace: ingress
+

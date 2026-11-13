@@ -38,21 +38,6 @@ spec:
                 name: {{ include "agent-system.fullname" . }}-backend
                 port:
                   number: {{ .Values.service.backend.port }}
-          # OpenAPI docs
-          - path: /docs
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "agent-system.fullname" . }}-backend
-                port:
-                  number: {{ .Values.service.backend.port }}
-          - path: /redoc
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "agent-system.fullname" . }}-backend
-                port:
-                  number: {{ .Values.service.backend.port }}
           # Everything else goes to frontend
           - path: /
             pathType: Prefix

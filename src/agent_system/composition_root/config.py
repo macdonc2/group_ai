@@ -52,6 +52,18 @@ class Settings(BaseSettings):
         description="OTLP/HTTP endpoint of an OpenTelemetry Collector, e.g. http://otel-collector:4318. Unset = no export",
     )
 
+    cors_allow_origins: str = Field(
+        default="",
+        description=(
+            "Comma-separated origins allowed to call the API from a browser. Empty: none when deployed "
+            "(the frontend is served from the same origin, so CORS is not needed), the Vite dev server locally"
+        ),
+    )
+    enable_api_docs: bool | None = Field(
+        default=None,
+        description="Serve /docs, /redoc and /openapi.json. Default: on locally, off when deployed",
+    )
+
     # API Configuration
     api_host: str = Field(default="0.0.0.0", description="API host")
     api_port: int = Field(default=8000, description="API port")
