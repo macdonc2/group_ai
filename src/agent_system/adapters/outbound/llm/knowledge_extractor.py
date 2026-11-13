@@ -356,6 +356,11 @@ async def extract_knowledge_from_text(
         prompt_parts.append("")
 
     # Add the current message
+    prompt_parts.append(
+        "Extract only what the user states in the CURRENT MESSAGE below. The context above is for resolving "
+        "references (who 'he' or 'she' is); never extract a fact that appears only in the context or in "
+        "assistant text, and never treat people or pets from a quoted page or document as the user's own."
+    )
     prompt_parts.append("CURRENT MESSAGE TO ANALYZE:")
     prompt_parts.append(text)
 

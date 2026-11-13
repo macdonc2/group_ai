@@ -114,6 +114,9 @@ class WorkflowState:
     is_complete: bool = False
     error: str | None = None
     
+    # Set once a tool has put web text into this turn; write tools then refuse to run
+    untrusted_seen: bool = False
+
     # Group context (for group chats)
     group_context: dict[str, str] | None = None
     
