@@ -59,6 +59,9 @@ const WORKFLOW_NODES = [
   'FinalizeKnowledge',
 ];
 
+// The loop engine's turn: one model loop that calls tools itself, then the same post-reply step
+const LOOP_NODES = ['ChatLoop', 'FinalizeKnowledge'];
+
 export const useChatStore = create<ChatState>()(
   persist(
     (set, get) => ({
@@ -117,7 +120,8 @@ export const useChatStore = create<ChatState>()(
         if (event.node_name) {
           // Initialize all nodes as pending on first event
           if (state.traceNodes.length === 0) {
-            const initialNodes: TraceNode[] = WORKFLOW_NODES.map((name) => ({
+            const names = event.node_name === 'ChatLoop' ? LOOP_NODES : WORKFLOW_NODES;
+            const initialNodes: TraceNode[] = names.map((name) => ({
               name,
               status: 'pending',
               message: '',
@@ -143,6 +147,15 @@ export const useChatStore = create<ChatState>()(
         
       case 'node_complete':
       case 'tool_result':
+        // In the loop engine a tool result is a step inside the still-running loop, not its end
+        if (event.event_type === 'tool_result' && event.node_name === 'ChatLoop') {
+          set((s) => ({
+            traceNodes: s.traceNodes.map((node) =>
+              node.name === 'ChatLoop' ? { ...node, message: event.message, data: event.data ?? undefined } : node
+            ),
+          }));
+          break;
+        }
         if (event.node_name) {
           set((s) => ({
             traceNodes: s.traceNodes.map((node) =>

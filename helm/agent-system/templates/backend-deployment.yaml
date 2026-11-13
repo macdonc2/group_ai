@@ -74,6 +74,10 @@ spec:
               value: {{ .Values.env.DEFAULT_MODEL | quote }}
             - name: FALLBACK_MODEL
               value: {{ .Values.env.FALLBACK_MODEL | quote }}
+            # Chat engine for 1:1 chats: "fsm" (default) or "loop". Superusers can also pick
+            # per message with the FSM/Loop button in the chat UI.
+            - name: CHAT_ENGINE
+              value: {{ .Values.env.CHAT_ENGINE | default "fsm" | quote }}
             - name: TTS_MODEL
               value: {{ .Values.env.TTS_MODEL | quote }}
             - name: TTS_VOICE

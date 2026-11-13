@@ -76,6 +76,8 @@ env:
   LLM_PROVIDER: "openai"
   DEFAULT_MODEL: "gpt-6-astra"
   FALLBACK_MODEL: "gpt-5.6-luna"
+  # Chat engine for 1:1 chats: "fsm" or "loop" (single tool loop). Group chats always use the FSM.
+  CHAT_ENGINE: "fsm"
   TTS_MODEL: "gpt-4o-mini-tts"
   TTS_VOICE: "marin"
 

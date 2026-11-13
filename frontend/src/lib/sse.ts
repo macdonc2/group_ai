@@ -11,7 +11,8 @@ export function createSSEConnection(
   message: string,
   conversationId: string | null,
   options: SSEOptions,
-  persona?: string | null
+  persona?: string | null,
+  engine?: 'fsm' | 'loop' | null
 ): { abort: () => void } {
   const params = new URLSearchParams({ message });
   if (conversationId) {
@@ -19,6 +20,10 @@ export function createSSEConnection(
   }
   if (persona && persona !== 'none') {
     params.append('persona', persona);
+  }
+  // Superusers can pick the chat engine per message; the server ignores it for everyone else
+  if (engine) {
+    params.append('engine', engine);
   }
   
   // Add auth token - EventSource API cannot send custom headers

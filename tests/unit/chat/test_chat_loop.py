@@ -307,6 +307,15 @@ class TestEngineSwitch:
         monkeypatch.delenv("CHAT_ENGINE", raising=False)
         assert workflow.chat_engine_for(state, deps) == "fsm"
 
+    def test_only_superusers_may_choose_an_engine_per_request(self):
+        state, deps, _ = _turn(None)
+        user, admin = state.user, state.user.model_copy(update={"is_superuser": True})
+        assert workflow.requested_engine("loop", user) is None  # ignored: the configured engine applies
+        assert workflow.requested_engine("loop", admin) == "loop"
+        assert workflow.requested_engine("fsm", admin) == "fsm"
+        assert workflow.requested_engine("anything-else", admin) is None
+        assert workflow.requested_engine(None, admin) is None
+
     async def test_answered_turn_reuses_the_fsm_finalize_step(self, monkeypatch):
         finalized: list[str] = []
 

@@ -34,6 +34,9 @@ class AgentDependencies:
     temperature: float = 0.7
     max_tokens: int = 4096
 
+    # Per-request engine choice ("fsm" or "loop"); None uses the CHAT_ENGINE setting
+    chat_engine: str | None = None
+
     # Optional wrestler persona key (see llm/personas.py); changes voice only
     persona: str | None = None
     

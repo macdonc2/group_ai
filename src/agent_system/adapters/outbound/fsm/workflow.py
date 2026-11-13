@@ -153,7 +153,7 @@ async def _run_fsm_engine(
 
 
 def chat_engine_for(state: WorkflowState, deps: AgentDependencies) -> str:
-    """Which engine runs this turn. `deps.chat_engine` (evals, tests) overrides the setting."""
+    """Which engine runs this turn. `deps.chat_engine` (a superuser's choice, evals, tests) overrides the setting."""
     if state.group_context:  # group turns stay on the FSM until they have their own tool profile
         return "fsm"
     engine = getattr(deps, "chat_engine", None)
@@ -162,6 +162,17 @@ def chat_engine_for(state: WorkflowState, deps: AgentDependencies) -> str:
 
         engine = get_settings().chat_engine
     return "loop" if engine == "loop" else "fsm"
+
+
+def requested_engine(engine: str | None, user: object) -> str | None:
+    """The engine a request may choose for itself, or None to use the configured one.
+
+    The chat UI's FSM/Loop button sends its choice with each message. Only superusers may
+    choose, so the loop can be tried on the live app without changing anyone else's chats.
+    """
+    if engine in ("fsm", "loop") and getattr(user, "is_superuser", False):
+        return engine
+    return None
 
 
 async def _run_loop_engine(

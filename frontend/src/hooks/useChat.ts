@@ -1,5 +1,6 @@
 import { useCallback, useRef, useEffect } from 'react';
 import { useChatStore } from '../stores/chatStore';
+import { useAuthStore } from '../stores/authStore';
 import { createSSEConnection } from '../lib/sse';
 import { api } from '../lib/api';
 import { useThemeStore, setWrestlerChangeListener } from '../stores/themeStore';
@@ -106,6 +107,7 @@ export function useChat() {
     
     // Create SSE connection (in the active wrestler's voice, if any)
     const persona = useThemeStore.getState().wrestler;
+    const engine = useAuthStore.getState().user?.is_superuser ? useThemeStore.getState().chatEngine : null;
     abortRef.current = createSSEConnection(content, currentConversationId, {
       onEvent: (event) => {
         handleStreamEvent(event);
@@ -136,7 +138,7 @@ export function useChat() {
         // Refresh conversations list
         api.listConversations().then(setConversations).catch(console.error);
       },
-    }, persona);
+    }, persona, engine);
   }, [
     addMessage,
     clearTraceNodes,

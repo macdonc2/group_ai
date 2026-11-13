@@ -5,11 +5,15 @@ import { applyWrestler, type WrestlerChoice } from '../lib/wrestlers';
 type Theme = 'light' | 'dark' | 'system';
 /** 'auto' scales the reading column with the viewport; 'full' uses every pixel. */
 export type Layout = 'auto' | 'full';
+/** Which chat engine answers 1:1 messages: the node workflow or the single tool loop (superusers only). */
+export type ChatEngine = 'fsm' | 'loop';
 
 interface ThemeState {
   theme: Theme;
   wrestler: WrestlerChoice;
   layout: Layout;
+  chatEngine: ChatEngine;
+  setChatEngine: (chatEngine: ChatEngine) => void;
   setTheme: (theme: Theme) => void;
   setWrestler: (wrestler: WrestlerChoice) => void;
   setLayout: (layout: Layout) => void;
@@ -27,6 +31,8 @@ export const useThemeStore = create<ThemeState>()(
       theme: 'system',
       wrestler: 'none',
       layout: 'auto',
+      chatEngine: 'fsm',
+      setChatEngine: (chatEngine) => set({ chatEngine }),
       setTheme: (theme) => set({ theme }),
       setLayout: (layout) => set({ layout }),
       setWrestler: (wrestler) => {

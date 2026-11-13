@@ -43,6 +43,7 @@ const NODE_LABELS: Record<string, string> = {
   EvaluateResult: 'Evaluate Result',
   GenerateResponse: 'Generate Response',
   FinalizeKnowledge: 'Finalize',
+  ChatLoop: 'Tool Loop',
 };
 
 export function TraceNode({ node, isLast }: TraceNodeProps) {

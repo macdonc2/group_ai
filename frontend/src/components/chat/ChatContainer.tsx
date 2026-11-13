@@ -14,7 +14,7 @@ export function ChatContainer({ onSendMessage }: ChatContainerProps) {
     <div className="flex-1 flex flex-col min-h-0">
       <MessageList />
       <SuggestionChips onSelect={onSendMessage} />
-      <ChatInput onSend={onSendMessage} disabled={isStreaming} />
+      <ChatInput onSend={onSendMessage} disabled={isStreaming} showEngineToggle />
     </div>
   );
 }

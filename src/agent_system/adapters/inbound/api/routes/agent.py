@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 
 from agent_system.adapters.inbound.api.auth import authenticate_token
+from agent_system.adapters.outbound.fsm.workflow import requested_engine
 from agent_system.adapters.outbound.llm.personas import is_valid_persona
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
@@ -258,6 +259,7 @@ async def chat_with_agent_stream(
     conversation_id: str | None = Query(None, description="Conversation ID"),
     token: str | None = Query(None, description="Auth token for SSE (EventSource can't send headers)"),
     persona: str | None = Query(None, description="Optional wrestler persona key"),
+    engine: str | None = Query(None, description='Chat engine for this message, "fsm" or "loop" (superusers only)'),
     session: SessionDep = None,
 ) -> StreamingResponse:
     """Stream agent responses with real-time FSM trace events.
@@ -415,6 +417,7 @@ async def chat_with_agent_stream(
                 max_tokens=settings.max_tokens,
                 event_callback=event_callback,
                 persona=persona if is_valid_persona(persona) else None,
+                chat_engine=requested_engine(engine, user),
             )
             
             # Run workflow
