@@ -44,6 +44,11 @@ Just chat naturally. The agent handles casual conversation, jokes, stories, opin
 - "Any meetings this week?" -- Looks at upcoming events
 - "What happened last week?" -- Recalls past events
 
+### About Your Journal
+
+- "What did I write in my journal about the move?" -- Recalls saved journal entries from memory
+- For reading a specific day or week of entries, use the conversation panel in the **Journal** tab
+
 ### About Houston Events
 
 - "What's happening in Houston this weekend?" -- Searches the Houston events database

@@ -47,6 +47,7 @@ Authentication answers *who is calling*. Authorization answers *may they touch t
 | `/agent/chat` would continue any conversation ID | Same ownership check before the turn starts |
 | Five `/tools` routes needed no login, including a web search | Every `/tools` route requires a signed-in user |
 | Calendar sync accepted any event ID | Caller must be a member of the event's group |
+| (new) Journal entries, suggestions and the per-day conversation | Built owner-scoped from the start: every repository query filters on the caller's user id; another user's entry is 404 |
 
 Decisions:
 
@@ -54,7 +55,9 @@ Decisions:
 - **WebSocket auth by subprotocol.** Browsers cannot set an `Authorization` header on a WebSocket. The common workaround, a token in the query string, puts it in access logs and browser history. Instead the client offers two subprotocols, `bearer` and the token (`new WebSocket(url, ['bearer', token])`), and the server echoes `bearer`.
 - **Check close to the data.** Ownership is enforced in the dependency every conversation and plan route already calls, so a new route gets it by default.
 
-Tests: `tests/e2e/api/test_access_control.py` uses two unrelated users and asks, for each route, whether the second can reach what belongs to the first.
+Tests: `tests/e2e/api/test_access_control.py` uses two unrelated users and asks, for each route, whether the second can reach what belongs to the first. `tests/e2e/api/test_journal_api.py` does the same for the journal, and `tests/integration/adapters/test_journal_memory_isolation.py` checks in a real Neo4j that one user's journal memory is never recalled, searched or deleted by another.
+
+The journal and the agent's trust boundary: journal text is the user's own writing and is allowed to feed memory. The journal's agent has no web tools, so text from the internet cannot enter a journal turn, and the calendar is changed only by a click on a suggestion or a request typed in the journal conversation. The journal conversation streams over a `POST` with the token in the `Authorization` header, so it does not add to the "tokens in URLs" gap below. Details: [journal.md](journal.md).
 
 ## Authentication: tokens, logins, keys
 
@@ -152,9 +155,9 @@ Each of these is a deliberate deferral, not an oversight.
 ## Verifying
 
 ```bash
-# two-user access control, auth hardening, headers/CORS, SSRF guard
+# two-user access control, auth hardening, headers/CORS, SSRF guard, journal ownership
 .venv/bin/python -m pytest tests/e2e/api/test_access_control.py tests/e2e/api/test_auth_hardening.py \
-  tests/e2e/api/test_platform_hardening.py tests/unit/tools/test_url_guard.py
+  tests/e2e/api/test_platform_hardening.py tests/unit/tools/test_url_guard.py tests/e2e/api/test_journal_api.py
 
 # what another website gets from the API (expect no access-control-* headers)
 curl -s -D - -o /dev/null -H 'Origin: https://evil.example' https://agent.macdonml.com/api/v1/auth/me | grep -i access-control

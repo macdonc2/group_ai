@@ -142,6 +142,7 @@ Created by `link_entities()` when the LLM extracts relationships between entitie
 
 **Where**: 
 - Individual: After each message in the agent API (background task)
+- Journal: After each saved or edited journal entry (background task), one node per ~1500 characters
 - Group: After each group WebSocket message (background task)
 
 **Flow**:
@@ -152,6 +153,8 @@ Created by `link_entities()` when the LLM extracts relationships between entitie
 4. If a user node exists: `(User)-[:DISCUSSED]->(MessageEmbedding)`
 
 **Properties stored**: `id`, `user_id`, `conversation_id`, `message_id`, `content`, `role`, `embedding`, `metadata_json`, `created_at`
+
+For journal entries `conversation_id` is `journal:<entry id>`, `role` is `user`, `content` starts with `[Journal entry, <day>]`, and `metadata_json` holds `source: "journal"`, `entry_id`, `entry_date` and `chunk`. `delete_conversation_memory(user_id, conversation_id)` removes these nodes and the entry's summary (`interaction`) node when an entry is edited or deleted; it matches on `user_id` as well as the id.
 
 ### 3. Entity Extraction (Group and Individual)
 
@@ -194,6 +197,15 @@ Created by `link_entities()` when the LLM extracts relationships between entitie
    - Embed content via `embedding_port.embed(content)`
    - Call `knowledge_graph_port.store_message_embedding(user_id, conversation_id, message_id, content, role, embedding)`
 4. Neo4j creates `MessageEmbedding` node and `(User)-[:DISCUSSED]->(MessageEmbedding)` if user exists
+
+### Journal
+
+1. User saves or edits an entry in the Journal tab; the row is committed to PostgreSQL (`journal_entries`)
+2. Background task (`process_entry` → `journal_memory.remember_entry`):
+   - Delete the entry's previous embeddings and summary node
+   - Split the text into chunks, embed each, and call `store_message_embedding(...)` with `conversation_id = journal:<entry id>`
+   - `record_interaction(...)` with the entry's topics, then store extracted people, pets, places, preferences and links
+3. Deleting an entry removes the embeddings and summary node; merged entities and topics remain
 
 ### Group Chat
 

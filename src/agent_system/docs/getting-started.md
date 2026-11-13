@@ -15,6 +15,7 @@ Unlike a basic chatbot, this assistant:
 - **Finds events** happening near you (Houston area)
 - **Syncs with Google Calendar** so nothing falls through the cracks
 - **Supports group chats** where multiple people can collaborate with AI help
+- **Keeps a journal** with a calendar of your entries, which the assistant also remembers
 
 ---
 
@@ -134,6 +135,17 @@ taken from the most-cited papers.
   button appears.
 - **It keeps going.** A run survives reloading the page or switching tabs. Come back
   later and it re-attaches and replays the progress.
+
+---
+
+## Journal
+
+The **Journal** tab is a private, dated journal. Write an entry for today (or pick a past day
+on the calendar in the sidebar), and come back to any day by clicking it; days with entries
+are marked with a dot. Saved entries are added to the assistant's memory, so normal chat can
+recall what you wrote. The panel on the right lets you talk a day over: ask for a writing
+prompt, look back at earlier entries, check your calendar, or have an event added to it.
+See the Journal guide for details.
 
 ---
 

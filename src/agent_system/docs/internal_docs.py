@@ -10,6 +10,7 @@ DOC_FILES = [
     "chat-and-conversations.md",
     "groups-and-collaboration.md",
     "events-and-calendar.md",
+    "journal.md",
     "memory-and-knowledge.md",
     "tools-and-capabilities.md",
     "settings-and-account.md",

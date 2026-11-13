@@ -133,6 +133,14 @@ Things worth knowing:
 - **Missing dates.** In a list, an event with no date becomes an all-day placeholder on the coming Saturday. Ask for a single event with no date and the agent asks you for one rather than guessing.
 - **Not connected yet.** If your Google Calendar isn't connected, the agent says so and points you at the user menu.
 
+### From the Journal
+
+When a journal entry mentions a definite future plan ("dinner with Sam on Friday at 7"), a suggestion
+appears under the entry with an **Add to calendar** button. Nothing is added until you press it, and
+you can dismiss a suggestion with the x. Suggestions only appear when Google Calendar is connected and
+the entry is for today or yesterday. You can also ask in the Journal tab's conversation panel, for
+example "add the vet appointment on Friday at 3pm" or "what's on my calendar today?"
+
 ---
 
 ## Event Extraction Details

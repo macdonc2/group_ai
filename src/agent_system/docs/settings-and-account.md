@@ -52,6 +52,7 @@ Your timezone affects:
 - How the agent interprets time references ("tonight", "tomorrow", "this weekend")
 - How event times are displayed
 - The output of "what time is it?" queries
+- Which day a journal entry is filed under. The day is fixed when you write; changing your timezone later does not move old entries
 
 ### Setting Your Timezone
 

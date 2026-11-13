@@ -12,6 +12,8 @@ The agent doesn't just answer your current message and forget. It builds a persi
 
 Every message you send is stored and can be recalled later. The agent uses **semantic search** (meaning-based matching, not just keyword matching) to find relevant past conversations when answering new questions. So if you talked about your dog Zane three weeks ago, and you mention "my dog" today, the agent connects the dots.
 
+Journal entries count too. What you save in the **Journal** tab is stored in the same memory, labelled with the day it was written, so you can ask in chat "what did I write about Dana's move?" The assistant's replies in the journal's conversation panel are not memorised; only your saved entries are.
+
 ### 2. Knowledge Extraction
 
 After each conversation, the agent automatically extracts and saves:
@@ -147,3 +149,4 @@ The Ask panel only reads your graph. It cannot change or delete anything, it onl
 - In groups, the agent builds a separate group knowledge base. Your personal graph stays separate.
 - You can toggle **sharing_enabled** in group settings to control whether your messages contribute to group AI analysis.
 - You can clear your knowledge graph at any time.
+- Your journal is private to you as well. Deleting a journal entry removes its text from memory; facts already learned from it (a person, a pet, a preference) stay until you remove them in the Knowledge Graph window.

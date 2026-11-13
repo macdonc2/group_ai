@@ -232,6 +232,19 @@ Requires Google Calendar to be connected (user menu > Google Calendar).
 - "Add all of those to my calendar"
 - "Put the Saturday ride on my calendar"
 
+### Read Journal
+
+Available in the **Journal** tab's conversation panel. Reads your own journal entries from one
+day, from the last few days, or by searching for words.
+
+**When it's used:**
+- "What did I write last week?"
+- "When did I last mention Sam?"
+- "Read me my entry from November 3"
+
+The journal conversation can also recall memory, list people, pets, places and preferences,
+read your schedule, and add to your calendar when you ask. It cannot search the web.
+
 ---
 
 ## Profile and Settings Tools

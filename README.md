@@ -8,6 +8,7 @@ Agent System is an intelligent conversational platform that combines:
 - **Multi-Agent Architecture**: Specialized AI agents for intent analysis, planning, and response generation
 - **Real-Time Collaboration**: Group chat with WebSocket support and AI assistance
 - **Knowledge Management**: Neo4j-backed knowledge graph for context and memory
+- **Journal**: Private dated entries on a calendar, feeding the same memory, with their own tool-using agent
 - **Modern Frontend**: React TypeScript UI with dark mode and real-time updates
 
 ## Architecture
@@ -33,7 +34,7 @@ src/agent_system/
 │   ├── inbound/api/           # FastAPI REST + WebSocket endpoints
 │   └── outbound/
 │       ├── persistence/       # SQLAlchemy repositories
-│       ├── llm/               # PydanticAI agents + tools
+│       ├── llm/               # PydanticAI agents + tools (chat, graph explorer, journal agent and journal memory)
 │       ├── graph/             # Neo4j knowledge graph adapter
 │       ├── embedding/         # OpenAI embeddings adapter
 │       ├── telemetry/         # Per-turn traces: spans, predicates, retrievals, LLM usage/cost
@@ -47,6 +48,7 @@ frontend/
 │   │   ├── auth/              # Login, registration
 │   │   ├── chat/              # Chat interface
 │   │   ├── groups/            # Group collaboration
+│   │   ├── journal/           # Journal tab: month calendar, day entries, side conversation
 │   │   ├── knowledge/         # Knowledge graph explorer: canvas, filters, node panel, ask panel
 │   │   ├── evals/             # Evals tab: runs, scorecards, predicate-tree viewer
 │   │   ├── settings/          # User settings, API keys
@@ -293,9 +295,19 @@ Endpoints: `POST /api/v1/research`, `GET /api/v1/research`, `GET /api/v1/researc
 
 Settings: `DEFAULT_MODEL` (lanes, synthesis, writing), `FALLBACK_MODEL` (query planning), `TTS_MODEL`, `TTS_VOICE`, and optional `SEMANTIC_SCHOLAR_API_KEY` / `GITHUB_TOKEN` for higher rate limits. All agents use the OpenAI Responses API, which the GPT-5.6 and GPT-6 models require for tool use.
 
+### Journal
+
+The **Journal** tab is a private, dated journal. Entries are rows in Postgres (`journal_entries`), filed under a day decided once in the user's timezone, and browsed through a month calendar that marks the days with writing. A day can hold several entries; each can be edited or deleted.
+
+- **Memory.** After a save, a background task turns the entry into the same memory chat uses: one embedding per few paragraphs (stored with a `[Journal entry, <day>]` label so recall can say where it came from), a summary node linked to topics, and the people, pets, places and preferences it mentions. An edit rebuilds the entry's embeddings and summary; a delete removes them, while merged facts stay. Journal text is the user's own words, so it is trusted for memory in the way web text is not.
+- **Side conversation.** Each day has a conversation with a separate tool-loop agent (`llm/journal_agent.py`) that is given the day's entries and can call `read_journal`, `recall_about_topic`, `list_entities`, `get_upcoming_events` and `add_to_calendar`. It has no web tools, so untrusted text cannot enter a journal turn. Its replies are never treated as journal text.
+- **Calendar.** Definite future plans found in an entry are stored as suggestions and shown with an "Add to calendar" button. Nothing reaches Google Calendar without that click or an explicit request in the side conversation.
+
+Every route is scoped to the signed-in user and returns 404 for another user's entry. Endpoints: `GET /api/v1/journal/days`, `GET|POST /api/v1/journal/entries`, `PUT|DELETE /api/v1/journal/entries/{id}`, `POST /api/v1/journal/entries/{id}/remember`, `POST /api/v1/journal/entries/{id}/suggestions/{sid}/accept|dismiss`, `GET|POST|DELETE /api/v1/journal/chat`. Design and trade-offs: [docs/journal.md](docs/journal.md).
+
 ### Calendar
 
-Google Calendar is connected per user from the user menu, and drives two different paths.
+Google Calendar is connected per user from the user menu, and drives three different paths (the third is the journal's click-to-add suggestions, above).
 
 - **Sync.** Events the agent extracts from group chats are pushed to the user's calendar. Each member syncs independently, with a master toggle, a calendar selector, and a confirmed-only option. Events carry a sync status, and a failed one can be retried by hand.
 - **The `add_to_calendar` tool.** The agent creates events directly on request, one or many in a single message. `status="tentative"` creates them unconfirmed. A title matching the Houston events database picks up that event's real date, venue and link; otherwise `when` is parsed in the user's timezone. In a multi-event list an undated item becomes an all-day placeholder on the coming Saturday, while a single undated event gets a question instead of a guess.
@@ -380,6 +392,8 @@ PostgreSQL (or SQLite for local development) serves as the **primary database** 
 | `plans` | Multi-step task plans | goal_description, steps, status |
 | `groups` | Collaboration groups | name, description, owner_id |
 | `group_conversations` | Group chat sessions | group_id, title |
+| `journal_entries` | Journal entries, the source of truth for journal text | user_id, entry_date, body, suggestions, memory_status |
+| `journal_messages` | The journal's per-day side conversation | user_id, entry_date, role, content |
 | `group_messages` | Messages in groups | conversation_id, user_id, content |
 | `extracted_events` | Events from group chats | group_id, title, event_datetime, confidence |
 
@@ -1049,6 +1063,7 @@ Two sets of docs ship with this repository:
 
 - **This README** is the engineering account: architecture, the agent roster, the FSM, memory, API reference and setup.
 - **[docs/graph-explorer.md](docs/graph-explorer.md)** covers the graph explorer and its agent: architecture, tools, design decisions, evals and API.
+- **[docs/journal.md](docs/journal.md)** covers the journal: storage, how entries reach memory, the journal agent, calendar suggestions, access control and known limits.
 - **[docs/evals.md](docs/evals.md)** is the reference for the eval harness and turn tracing: suites, scorers, rubrics, judges, the Evals tab and the predicate tree, configuration and API.
 - **`src/agent_system/docs/`** is written for people using the app, and it is also loaded into the agent itself. `search_internal_docs` serves it, and the response agents route questions like "what tools do you have" or "how do I connect my calendar" to that tool, so the agent answers from these files. Anything shipped but missing there is a feature the agent will not know it has.
 

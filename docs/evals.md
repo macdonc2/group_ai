@@ -65,7 +65,7 @@ Contents:
 
 ## Turn tracing
 
-Every agent turn records a `TurnTrace`, whether it comes from a chat, a group chat or an eval. `run_agent_workflow` drives the graph with `agent_workflow.iter(...)`. That lets it open a timed span for each node visit and bind the trace and the current node to context variables.
+Every agent turn records a `TurnTrace`, whether it comes from a chat, a group chat, the journal's side conversation or an eval. `run_agent_workflow` drives the graph with `agent_workflow.iter(...)`. That lets it open a timed span for each node visit and bind the trace and the current node to context variables.
 
 | Field | What it holds |
 |---|---|
@@ -98,6 +98,7 @@ Every agent turn records a `TurnTrace`, whether it comes from a chat, a group ch
 
 **Where traces are stored.**
 - **Chat turns:** written to `turn_traces` inside the same transaction as the turn's messages.
+- **Journal turns:** written to `turn_traces` with `source = "journal"` and `conversation_id = "journal:<day>"`. There is no journal eval suite yet.
 - **Group chat turns:** written in a short session of their own.
 - **Deep Research:** stores a per-stage rollup (`lane:*`, `synthesis`, `writer`, …) in `research_jobs.progress.usage`.
 - **Messages:** `messages.token_count` is now filled in.
