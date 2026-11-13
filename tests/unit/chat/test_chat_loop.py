@@ -5,12 +5,13 @@ implementations, so nothing here touches a model, a database or the network.
 """
 
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_graph import End
 
 from agent_system.adapters.outbound.fsm import workflow
@@ -36,16 +37,29 @@ def scripted(*steps):
     seen_results: list[str] = []
     seen_instructions: list[str] = []
 
-    def run(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    def next_step(messages: list[ModelMessage], info: AgentInfo):
         seen_instructions.append(info.instructions or "")
         returns = [p for m in messages if isinstance(m, ModelRequest) for p in m.parts if isinstance(p, ToolReturnPart)]
         seen_results[:] = [str(p.content) for p in returns]
-        step = steps[min(len(returns), len(steps) - 1)]
+        return steps[min(len(returns), len(steps) - 1)]
+
+    def run(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = next_step(messages, info)
         if isinstance(step, tuple):
             return ModelResponse(parts=[ToolCallPart(step[0], step[1])])
         return ModelResponse(parts=[TextPart(step)])
 
-    return FunctionModel(run), seen_results, seen_instructions
+    async def stream_words(messages: list[ModelMessage], info: AgentInfo):
+        """The same script, streamed: tool calls as deltas, the final text word by word."""
+        step = next_step(messages, info)
+        if isinstance(step, tuple):
+            yield {0: DeltaToolCall(name=step[0], json_args=json.dumps(step[1]))}
+            return
+        words = step.split(" ")
+        for i, word in enumerate(words):
+            yield word if i == 0 else " " + word
+
+    return FunctionModel(run, stream_function=stream_words), seen_results, seen_instructions
 
 
 class Fakes:
@@ -119,6 +133,30 @@ class TestLoop:
 
         await run_chat_loop("hi", deps=Fakes().deps(), model=FunctionModel(run))
         assert offered == sorted(TOOL_NAMES) and len(offered) == 10
+
+    async def test_reply_is_streamed_as_it_is_written(self):
+        fakes = Fakes(calculate=ToolResult(success=True, data={"expression": "2+2", "result": 4}, message="ok"))
+        model, _, _ = scripted(("calculate", {"expression": "2+2"}), "Two plus two is four.")
+        chunks: list[str] = []
+        other: list[str] = []
+
+        async def emit(event_type, node, message, data):
+            (chunks if event_type == "response_chunk" else other).append(message)
+
+        out = await run_chat_loop("what is 2+2?", deps=fakes.deps(emit=emit), model=model)
+        assert out.stopped == "answered" and out.streamed
+        assert len(chunks) == 5 and "".join(chunks) == out.response == "Two plus two is four."
+        assert other == ["Tool completed: calculate"]  # tool calls are not streamed as reply text
+
+    async def test_streaming_can_be_switched_off(self):
+        model, _, _ = scripted("Hello there.")
+        chunks: list[str] = []
+
+        async def emit(event_type, node, message, data):
+            chunks.append(event_type)
+
+        out = await run_chat_loop("hi", deps=Fakes().deps(emit=emit), model=model, stream_reply=False)
+        assert out.response == "Hello there." and not out.streamed and chunks == []
 
     async def test_no_tool_when_none_is_needed(self):
         fakes = Fakes()
@@ -291,7 +329,8 @@ class TestEngineSwitch:
         assert finalized == ["2 + 2 = 4"]
         assert [s.node for s in deps.trace.spans] == ["ChatLoop", "FinalizeKnowledge"]
         assert deps.trace.tool_calls[0]["tool"] == "calculate"
-        assert ("response_chunk", "ChatLoop") in events
+        chunks = [e for e in events if e == ("response_chunk", "ChatLoop")]
+        assert len(chunks) == 5  # "2 + 2 = 4" arrived word by word, not as one block at the end
 
     async def test_failed_turn_skips_memory_and_reports_the_stop(self, monkeypatch):
         async def must_not_run(self, ctx):
@@ -302,7 +341,11 @@ class TestEngineSwitch:
         def boom(messages, info):
             raise RuntimeError("provider exploded")
 
-        state, deps, events = _turn(FunctionModel(boom))
+        async def boom_stream(messages, info):
+            raise RuntimeError("provider exploded")
+            yield ""  # pragma: no cover - makes this an async generator
+
+        state, deps, events = _turn(FunctionModel(boom, stream_function=boom_stream))
         result = await workflow.run_agent_workflow("hello", state, deps)
 
         assert result.error == "error" and "RuntimeError" in result.response

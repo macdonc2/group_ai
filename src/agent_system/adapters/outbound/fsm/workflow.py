@@ -217,8 +217,9 @@ async def _run_loop_engine(
             state.response = outcome.response
             state.tool_name = outcome.tools_used[0] if outcome.tools_used else None
             state.tool_result = outcome.steps[-1]["summary"] if outcome.steps else None
-            await deps.emit_event("response_chunk", "ChatLoop", outcome.response,
-                                  {"accumulated_length": len(outcome.response)})
+            if not outcome.streamed:  # limit and error messages, or a model that could not stream
+                await deps.emit_event("response_chunk", "ChatLoop", outcome.response,
+                                      {"accumulated_length": len(outcome.response)})
             await deps.emit_event("node_complete", "ChatLoop", f"Loop finished: {outcome.stopped}",
                                   {"stopped": outcome.stopped, "tools_used": outcome.tools_used})
 

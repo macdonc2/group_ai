@@ -33,7 +33,16 @@ from zoneinfo import ZoneInfo
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+    UserPromptPart,
+)
 from pydantic_ai.usage import UsageLimits
 
 from agent_system.adapters.outbound.llm.personas import persona_suffix
@@ -103,6 +112,7 @@ class ChatDeps:
     session_factory: Callable[[], AbstractAsyncContextManager[Any]] = _default_session
     steps: list[dict[str, Any]] = field(default_factory=list)
     untrusted_seen: bool = False                     # set once web content enters the turn
+    streamed_chars: int = 0                          # reply text already sent to `emit` as it was written
 
 
 @dataclass
@@ -114,6 +124,7 @@ class ChatLoopOutcome:
     input_tokens: int = 0
     output_tokens: int = 0
     duration_ms: float = 0.0
+    streamed: bool = False  # the reply was already sent chunk by chunk through `deps.emit`
 
     @property
     def tools_used(self) -> list[str]:
@@ -461,6 +472,24 @@ def build_history(messages: list[Any], current_input: str) -> list[ModelMessage]
     return history
 
 
+async def _stream_reply(ctx: RunContext[ChatDeps], events: Any) -> None:
+    """Send reply text to the UI as the model writes it.
+
+    Text almost always arrives only in the final response. If the model writes a few words
+    before a tool call, they are streamed too; the final `response` event carries the full,
+    correct reply, so the UI ends up right either way.
+    """
+    async for event in events:
+        text = None
+        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+            text = event.part.content
+        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+            text = event.delta.content_delta
+        if text and ctx.deps.emit is not None:
+            ctx.deps.streamed_chars += len(text)
+            await ctx.deps.emit("response_chunk", "ChatLoop", text, {"accumulated_length": ctx.deps.streamed_chars})
+
+
 async def run_chat_loop(
     user_input: str,
     *,
@@ -469,19 +498,26 @@ async def run_chat_loop(
     history: list[ModelMessage] | None = None,
     max_requests: int = 8,
     timeout_s: float = 120.0,
+    stream_reply: bool = True,
 ) -> ChatLoopOutcome:
-    """Run one chat turn to completion. Never raises for model/limit failures; see `stopped`."""
+    """Run one chat turn to completion. Never raises for model/limit failures; see `stopped`.
+
+    When `deps.emit` is set, the reply is streamed through it as `response_chunk` events.
+    """
     started = time.perf_counter()
 
     def partial(stopped: StopReason, message: str) -> ChatLoopOutcome:
         return ChatLoopOutcome(response=message, stopped=stopped, steps=deps.steps,
                                duration_ms=(time.perf_counter() - started) * 1000)
 
+    stream = deps.emit is not None and stream_reply
+
     try:
         result = await asyncio.wait_for(
             chat_agent.run(
                 user_input, message_history=history or None, deps=deps, model=model,
                 usage_limits=UsageLimits(request_limit=max_requests),
+                event_stream_handler=_stream_reply if stream else None,
             ),
             timeout=timeout_s,
         )
@@ -501,5 +537,5 @@ async def run_chat_loop(
     return ChatLoopOutcome(
         response=str(result.output).strip(), stopped="answered", steps=deps.steps, requests=usage.requests,
         input_tokens=usage.input_tokens or 0, output_tokens=usage.output_tokens or 0,
-        duration_ms=(time.perf_counter() - started) * 1000,
+        duration_ms=(time.perf_counter() - started) * 1000, streamed=deps.streamed_chars > 0,
     )
