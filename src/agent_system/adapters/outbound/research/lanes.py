@@ -33,6 +33,7 @@ class LaneDeps:
     max_sources: int = 10
     max_pages: int = 6
     depth: int = 1      # rounds per lane; rounds >1 re-plan from the gaps in what's known
+    lane_timeout_s: float | None = None  # wall-clock limit per lane; None = no limit
 
 
 def _sources_block(sources: list[Source], with_snippets: bool = True) -> str:
@@ -263,11 +264,25 @@ async def run_lane(lane: Lane, question: str, deps: LaneDeps, emit: Emit) -> Lan
         return result
 
 
+async def run_lane_bounded(lane: Lane, question: str, deps: LaneDeps, emit: Emit, timeout_s: float | None) -> LaneResult:
+    """`run_lane` with a wall-clock limit. A lane that runs out of time fails alone; the others carry on."""
+    if not timeout_s:
+        return await run_lane(lane, question, deps, emit)
+    try:
+        return await asyncio.wait_for(run_lane(lane, question, deps, emit), timeout=timeout_s)
+    except TimeoutError:
+        error = f"timed out after {int(timeout_s)} s"
+        logger.warning("%s lane %s", lane, error)
+        await emit("lane_error", lane, f"{lane.title()} lane {error}", {"error": error})
+        return LaneResult(lane=lane, error=error)
+
+
 async def run_all_lanes(question: str, deps: LaneDeps, emit: Emit) -> dict[Lane, LaneResult]:
+    lane_timeout_s = getattr(deps, "lane_timeout_s", None)
     results = await asyncio.gather(
-        run_lane("academic", question, deps, emit),
-        run_lane("practical", question, deps, emit),
-        run_lane("empirical", question, deps, emit),
+        run_lane_bounded("academic", question, deps, emit, lane_timeout_s),
+        run_lane_bounded("practical", question, deps, emit, lane_timeout_s),
+        run_lane_bounded("empirical", question, deps, emit, lane_timeout_s),
     )
     return {r.lane: r for r in results}
 

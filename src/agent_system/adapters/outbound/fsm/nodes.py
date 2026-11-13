@@ -899,7 +899,14 @@ Focus ONLY on this specific step - not the entire question."""
                 
                 ctx.state.current_step_index += 1
             
-            # All steps completed - go to synthesis
+            # All steps completed - go to synthesis. The plan is finished, so it must stop being the
+            # conversation's active plan; otherwise later turns are routed by its leftover steps.
+            if ctx.state.conversation.active_plan_id:
+                ctx.state.conversation = ctx.state.conversation.clear_active_plan()
+                try:
+                    await ctx.deps.conversation_repository.update(ctx.state.conversation)
+                except Exception as e:
+                    logger.warning(f"Could not clear the finished plan: {type(e).__name__}: {e}")
             await ctx.deps.emit_event("node_complete", "ExecutePlan", f"All {total_steps} steps completed, synthesizing response")
             await ctx.deps.emit_event("node_skipped", "SelectTool", "ReAct mode - tools handled in steps")
             await ctx.deps.emit_event("node_skipped", "ExecuteTool", "ReAct mode - tools handled in steps")

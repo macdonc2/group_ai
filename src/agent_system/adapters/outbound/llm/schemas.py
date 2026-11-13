@@ -93,7 +93,7 @@ class ResponseGeneration(BaseModel):
     response: Annotated[
         str, 
         Field(
-            min_length=300,
+            min_length=1,  # length is the prompt's job; a hard minimum rejected short factual answers and forced a retry
             description="""A THOROUGH, COMPREHENSIVE response. MINIMUM 4-6 paragraphs or 300+ words.
 
 Structure your response to include:
@@ -205,7 +205,7 @@ class StepSynthesis(BaseModel):
     synthesized_response: Annotated[
         str,
         Field(
-            min_length=400,
+            min_length=1,  # see ResponseGeneration.response
             description="""A comprehensive response that weaves together all the reasoning steps.
             
             Structure:

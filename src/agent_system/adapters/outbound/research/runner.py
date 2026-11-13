@@ -46,6 +46,10 @@ class ResearchSettings:
     semantic_scholar_key: str | None = None
     github_token: str | None = None
     narrate: bool = True  # evals turn TTS off
+    # Limits; None means "use the value from application settings"
+    lane_timeout_s: float | None = None
+    job_timeout_s: float | None = None
+    max_concurrent_jobs: int | None = None
 
 
 @dataclass
@@ -61,6 +65,13 @@ class ResearchRunner:
         self._db = database
         self._settings = settings
         self._jobs: dict[str, _LiveJob] = {}
+        from agent_system.composition_root.config import get_settings
+
+        app = get_settings()
+        self._lane_timeout_s = settings.lane_timeout_s or app.research_lane_timeout_s
+        self._job_timeout_s = settings.job_timeout_s or app.research_job_timeout_s
+        # Jobs beyond the cap wait here (still "queued") instead of all hitting the model at once
+        self._slots = asyncio.Semaphore(max(1, settings.max_concurrent_jobs or app.research_max_concurrent_jobs))
 
     # ---- subscriptions ----------------------------------------------------
 
@@ -129,8 +140,20 @@ class ResearchRunner:
 
         install_llm_capture()
         trace = TurnTrace()
-        with bind_trace(trace):
-            await self._run_pipeline(job_id, api_key, live, trace)
+        try:
+            async with self._slots:
+                with bind_trace(trace):
+                    # The pipeline handles its own cancellation: on timeout it marks the job failed,
+                    # emits job_failed and re-raises, which wait_for turns into TimeoutError here.
+                    await asyncio.wait_for(self._run_pipeline(job_id, api_key, live, trace), timeout=self._job_timeout_s)
+        except TimeoutError:
+            logger.warning("research job %s stopped after %s s", job_id, int(self._job_timeout_s))
+            await self._update(job_id, error=f"Stopped after {int(self._job_timeout_s)} seconds (job time limit)")
+        except asyncio.CancelledError:
+            if not live.done:  # cancelled while still waiting for a slot: the pipeline never started
+                await self._update(job_id, status=ResearchStatus.FAILED, error="Cancelled")
+                await self._emit(job_id, live, "job_failed", None, "Cancelled", None)
+            raise
 
     async def _run_pipeline(self, job_id: str, api_key: str, live: _LiveJob, trace: Any) -> None:
         from agent_system.adapters.outbound.telemetry import set_current_node
@@ -185,7 +208,7 @@ class ResearchRunner:
             deps = LaneDeps(
                 api_key=api_key, strong_model=s.strong_model, fast_model=s.fast_model,
                 semantic_scholar_key=s.semantic_scholar_key, github_token=s.github_token,
-                depth=depth,
+                depth=depth, lane_timeout_s=self._lane_timeout_s,
             )
 
             # 1. three lanes in parallel

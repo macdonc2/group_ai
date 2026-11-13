@@ -97,6 +97,15 @@ class Settings(BaseSettings):
     chat_loop_max_requests: int = Field(default=8, description="Hard cap on model calls per chat turn (loop engine)")
     chat_loop_timeout_s: float = Field(default=120, description="Wall-clock limit for one chat turn (loop engine)")
 
+    # Hard limits on any chat or group turn, whichever engine runs it (including post-reply memory work)
+    chat_turn_timeout_s: float = Field(default=240, description="Wall-clock limit for one whole turn")
+    chat_turn_max_llm_calls: int = Field(default=30, description="Model calls allowed in one turn (FSM: checked between nodes)")
+
+    # Deep Research limits
+    research_lane_timeout_s: float = Field(default=900, description="Wall-clock limit for one research lane")
+    research_job_timeout_s: float = Field(default=2700, description="Wall-clock limit for a whole research job")
+    research_max_concurrent_jobs: int = Field(default=2, description="Research jobs running at once; others wait their turn")
+
     # Graph explorer agent (Knowledge Graph > Ask)
     graph_agent_model: str | None = Field(default=None, description="Model for the graph explorer agent (defaults to default_model)")
     graph_agent_max_requests: int = Field(default=8, description="Hard cap on model calls per graph question")

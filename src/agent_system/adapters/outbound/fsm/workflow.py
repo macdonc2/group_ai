@@ -1,5 +1,7 @@
 """Agent workflow graph definition."""
 
+import asyncio
+
 from pydantic_graph import End, Graph
 
 from agent_system.adapters.outbound.fsm.nodes import (
@@ -70,9 +72,61 @@ async def run_agent_workflow(
     trace.user_input = user_input
     deps.trace = trace
 
-    if chat_engine_for(state, deps) == "loop":
-        return await _run_loop_engine(user_input, state, deps, trace)
+    timeout_s, max_llm_calls = _turn_limits(deps)
+    engine = _run_loop_engine if chat_engine_for(state, deps) == "loop" else _run_fsm_engine
+    try:
+        return await asyncio.wait_for(engine(user_input, state, deps, trace, max_llm_calls), timeout=timeout_s)
+    except TimeoutError:
+        return await _stopped_turn(state, deps, trace, "timeout",
+                                   f"That took longer than {int(timeout_s)} seconds, so I stopped. Please try again "
+                                   "or ask for one part at a time.")
+    except TurnLimitExceeded:
+        return await _stopped_turn(state, deps, trace, "step_limit",
+                                   f"I stopped after {max_llm_calls} model calls without finishing. Could you ask for "
+                                   "one part of that at a time?")
 
+
+class TurnLimitExceeded(Exception):
+    """A turn made more model calls than `chat_turn_max_llm_calls` allows."""
+
+
+def _turn_limits(deps: AgentDependencies) -> tuple[float, int]:
+    """(wall-clock seconds, model calls) allowed for one turn. `deps` attributes override the settings."""
+    from agent_system.composition_root.config import get_settings
+
+    settings = get_settings()
+    return (
+        float(getattr(deps, "turn_timeout_s", None) or settings.chat_turn_timeout_s),
+        int(getattr(deps, "turn_max_llm_calls", None) or settings.chat_turn_max_llm_calls),
+    )
+
+
+async def _stopped_turn(state: WorkflowState, deps: AgentDependencies, trace: TurnTrace, reason: str,
+                        message: str) -> WorkflowResult:
+    """A turn that hit a limit still ends cleanly: a reply, a final event, a finished trace.
+
+    If the reply was already written (the limit hit during post-reply memory work), the user
+    gets that reply; only the memory step was cut short.
+    """
+    had_reply = bool(state.response and state.response.strip())
+    if not had_reply:
+        state.response = message
+        state.error = reason
+    deps.decide("Workflow", f"turn limit: {reason}", True, "End", had_reply=had_reply)
+    await deps.emit_event("response", "Workflow", "Workflow complete", {
+        "response": state.response, "suggestions": [], "tools_used": [state.tool_name] if state.tool_name else [],
+    })
+    trace.finish(response=state.response, error=reason)
+    return WorkflowResult.from_state(state)
+
+
+async def _run_fsm_engine(
+    user_input: str,
+    state: WorkflowState,
+    deps: AgentDependencies,
+    trace: TurnTrace,
+    max_llm_calls: int,
+) -> WorkflowResult:
     with bind_trace(trace):
         node_token = set_current_node(None)
         try:
@@ -80,10 +134,14 @@ async def run_agent_workflow(
                 async for node in run:
                     if isinstance(node, End):
                         break
+                    if len(trace.llm_calls) > max_llm_calls:  # checked between nodes; a node finishes its own calls
+                        raise TurnLimitExceeded
                     name = type(node).__name__
                     trace.enter_node(name)
                     set_current_node(name)
             output = run.result.output
+        except TurnLimitExceeded:
+            raise
         except Exception as exc:
             trace.finish(error=f"{type(exc).__name__}: {exc}")
             raise
@@ -111,6 +169,7 @@ async def _run_loop_engine(
     state: WorkflowState,
     deps: AgentDependencies,
     trace: TurnTrace,
+    max_llm_calls: int = 30,
 ) -> WorkflowResult:
     """One turn through the single tool loop, then the FSM's own post-reply step.
 

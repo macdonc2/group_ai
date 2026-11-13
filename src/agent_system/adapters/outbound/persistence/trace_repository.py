@@ -20,6 +20,13 @@ def trace_token_count(trace: Any) -> int:
     return int(usage["input_tokens"] + usage["output_tokens"])
 
 
+def turn_outcome(error: str | None) -> str:
+    """Metric label for a finished turn: ok, timeout, step_limit, or error for anything else."""
+    if not error:
+        return "ok"
+    return error if error in ("timeout", "step_limit") else "error"
+
+
 async def save_turn_trace(
     trace: Any,
     *,
@@ -45,7 +52,7 @@ async def save_turn_trace(
         try:
             from agent_system.adapters.outbound.telemetry.otel import record_turn
 
-            record_turn(source, "error" if data.get("error") else "ok")
+            record_turn(source, turn_outcome(data.get("error")))
         except Exception:  # noqa: BLE001 - a metric must never cost a turn
             pass
         row = TurnTraceModel(
