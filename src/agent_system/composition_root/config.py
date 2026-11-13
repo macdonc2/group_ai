@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     research_request_timeout_s: float = Field(default=600, description="Per-request timeout for Deep Research LLM calls")
     llm_max_retries: int = Field(default=1, description="Retries after a failed/timed-out LLM request")
 
+    # Chat engine: "fsm" is the node workflow in adapters/outbound/fsm; "loop" is the single
+    # tool loop in adapters/outbound/llm/chat_agent.py. Group chats always use the FSM.
+    chat_engine: str = Field(default="fsm", description='Chat engine for 1:1 chats: "fsm" or "loop"')
+    chat_loop_max_requests: int = Field(default=8, description="Hard cap on model calls per chat turn (loop engine)")
+    chat_loop_timeout_s: float = Field(default=120, description="Wall-clock limit for one chat turn (loop engine)")
+
     # Graph explorer agent (Knowledge Graph > Ask)
     graph_agent_model: str | None = Field(default=None, description="Model for the graph explorer agent (defaults to default_model)")
     graph_agent_max_requests: int = Field(default=8, description="Hard cap on model calls per graph question")
