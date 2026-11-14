@@ -19,6 +19,20 @@ from agent_system.domain.value_objects import EventId, UserId
 logger = logging.getLogger(__name__)
 
 
+def _to_naive_utc(value: str) -> datetime:
+    """A Google `dateTime` as naive UTC, which is what the rest of the app stores and assumes.
+
+    Google returns times in the calendar's own zone ("2026-11-14T18:00:00-06:00"), not in
+    UTC. The offset must be applied before it is dropped: dropping it alone leaves the local
+    wall-clock time labelled as UTC, and every reader then shifts it a second time (a 6 PM
+    Central event was shown at noon).
+    """
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
 class GoogleCalendarAdapter(GoogleCalendarPort):
     """Adapter for Google Calendar API using httpx for async HTTP calls."""
 
@@ -302,16 +316,9 @@ class GoogleCalendarAdapter(GoogleCalendarPort):
                 start_dt = datetime.fromisoformat(start["date"])
                 end_dt = datetime.fromisoformat(end["date"]) if end.get("date") else None
             else:
-                start_str = start.get("dateTime", "")
-                start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                start_dt = start_dt.replace(tzinfo=None)  # Store as naive UTC
-
+                start_dt = _to_naive_utc(start.get("dateTime", ""))
                 end_str = end.get("dateTime", "")
-                if end_str:
-                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                    end_dt = end_dt.replace(tzinfo=None)
-                else:
-                    end_dt = None
+                end_dt = _to_naive_utc(end_str) if end_str else None
 
             return CalendarEvent(
                 id=EventId.generate(),

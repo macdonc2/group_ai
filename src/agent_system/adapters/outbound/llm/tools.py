@@ -1475,14 +1475,8 @@ async def get_upcoming_events(
         membership_result = await session.execute(membership_query)
         user_group_ids = [str(row[0]) for row in membership_result.fetchall()]
         
-        if not user_group_ids:
-            return ToolResult(
-                success=True,
-                data=[],
-                message=f"You're not a member of any groups yet, so no events to show.",
-            )
-        
-        # Filter by specific group if provided
+        # Filter by specific group if provided. Someone in no groups has no group-chat
+        # events (the IN () below matches nothing) but may still have a Google Calendar.
         if group_id and group_id in user_group_ids:
             search_group_ids = [group_id]
         else:
@@ -1595,7 +1589,14 @@ async def get_upcoming_events(
                         }
                         
                         start_dt = ge.get("start_datetime")
-                        if start_dt:
+                        if ge.get("is_all_day") and start_dt:
+                            # An all-day event is a date, not an instant: no timezone shift,
+                            # or it lands on the evening before for anyone west of UTC.
+                            if isinstance(start_dt, str):
+                                start_dt = datetime.fromisoformat(start_dt)
+                            ev_info["datetime"] = start_dt.strftime("%A, %B %d") + " (all day)"
+                            ev_info["sort_dt"] = start_dt.replace(tzinfo=None)
+                        elif start_dt:
                             try:
                                 if isinstance(start_dt, str):
                                     start_dt = datetime.fromisoformat(start_dt)
