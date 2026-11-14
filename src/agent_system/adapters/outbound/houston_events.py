@@ -31,6 +31,10 @@ class HoustonEvent(BaseModel):
     end_time: datetime | None = None
     categories: list[str] = []
     source: str | None = None
+    # Optional extras from the events service: genre, performers, address,
+    # ticket status, price; and what its research agents found for the event.
+    details: dict[str, Any] = {}
+    research: dict[str, Any] | None = None
 
 
 class HoustonEventsAdapter:
@@ -272,6 +276,10 @@ def merge_duplicates(events: list[HoustonEvent]) -> list[HoustonEvent]:
             merged.append(event.model_copy(update={"description": _real_description(event)}))
             continue
         update: dict[str, Any] = {"categories": list(dict.fromkeys([*twin.categories, *event.categories]))}
+        if event.details:
+            update["details"] = {**event.details, **twin.details}
+        if not twin.research and event.research:
+            update["research"] = event.research
         if not twin.description and _real_description(event):
             update["description"] = _real_description(event)
         if not _has_time(twin) and _has_time(event):
@@ -360,8 +368,58 @@ def format_houston_events_for_display(events: list[HoustonEvent], total: int | N
         if event.categories:
             facts.append(", ".join(event.categories))
         lines.append(f"- **{title}** — {' · '.join(facts)}" if facts else f"- **{title}**")
+        full = len(events) <= _FULL_DETAIL_EVENTS   # one event asked about, not a day's listing
+        lines.extend(_detail_lines(event, full))
         description = _real_description(event)
         if description:
             description = " ".join(description.split())
-            lines.append(f"  {description[:400] + '...' if len(description) > 400 else description}")
+            cap = 1500 if full else 400
+            lines.append(f"  {description[:cap] + '...' if len(description) > cap else description}")
+        if full:
+            lines.extend(_research_lines(event))
     return "\n".join(lines)
+
+
+_FULL_DETAIL_EVENTS = 3
+_STATUS_WORDS = {"onsale": "on sale", "offsale": "not on sale", "cancelled": "cancelled",
+                 "postponed": "postponed", "rescheduled": "rescheduled"}
+
+
+def _detail_lines(event: HoustonEvent, full: bool) -> list[str]:
+    """Genre and performers always; address, price and ticket status when one event is in focus."""
+    details = event.details or {}
+    parts = []
+    if details.get("performers"):
+        parts.append("With: " + ", ".join(str(p) for p in details["performers"][:8]))
+    if details.get("genre"):
+        parts.append(f"Genre: {details['genre']}")
+    if details.get("price"):
+        parts.append(f"Tickets: {details['price']}")
+    if details.get("age_restricted"):
+        parts.append("Age restricted")
+    if full:
+        if details.get("address"):
+            parts.append(f"Address: {details['address']}")
+        status = _STATUS_WORDS.get(str(details.get("ticket_status") or "").lower())
+        if status:
+            parts.append(f"Status: {status}")
+    lines = [f"  {' · '.join(parts)}"] if parts else []
+    if full and details.get("note"):
+        lines.append(f"  Note: {' '.join(str(details['note']).split())[:600]}")
+    return lines
+
+
+def _research_lines(event: HoustonEvent) -> list[str]:
+    """What the events service's research agents found, labelled as research, with its sources."""
+    research = event.research or {}
+    facts = [str(f) for f in research.get("facts") or [] if f]
+    if not facts and not research.get("summary"):
+        return []
+    lines = ["  **From the event research** (gathered from the web when the listing was built):"]
+    if research.get("summary"):
+        lines.append(f"  {' '.join(str(research['summary']).split())[:900]}")
+    lines.extend(f"  - {' '.join(f.split())[:300]}" for f in facts[:8])
+    links = [str(u) for u in research.get("sources") or [] if str(u).startswith("http")][:4]
+    if links:
+        lines.append("  Sources: " + ", ".join(links))
+    return lines

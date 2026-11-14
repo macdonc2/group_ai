@@ -107,3 +107,37 @@ def test_a_long_day_says_how_much_was_left_out():
     shown, total = select_events(events, when="today", now=NOW, limit=40)
     assert (len(shown), total) == (40, 50)
     assert "_Showing 40 of 50;" in format_houston_events_for_display(shown, total)
+
+
+def test_one_event_in_focus_shows_everything_known_including_research():
+    aoki = event("Steve Aoki with JOYRYDE", at(14, 21), venue="DUCTWORK - Houston, Houston")
+    aoki = aoki.model_copy(update={
+        "details": {"performers": ["Steve Aoki", "JOYRYDE"], "genre": "Music / Dance/Electronic",
+                    "address": "813 St Emanuel St, Houston, 77003", "ticket_status": "onsale"},
+        "research": {"summary": "A big-room house night.", "facts": ["JOYRYDE opens the show."],
+                     "sources": ["https://example.com/aoki", "not-a-link"]},
+    })
+    shown, total = select_events([aoki], query="aoki", now=NOW)
+    text = format_houston_events_for_display(shown, total)
+    assert "With: Steve Aoki, JOYRYDE · Genre: Music / Dance/Electronic · Address: 813 St Emanuel St, Houston, 77003 · Status: on sale" in text
+    assert "**From the event research**" in text and "A big-room house night." in text
+    assert "  - JOYRYDE opens the show." in text
+    assert "Sources: https://example.com/aoki" in text and "not-a-link" not in text
+
+
+def test_a_days_listing_stays_compact():
+    events = [event(f"Show {i}", at(14, 19, i), venue=f"Venue {i}").model_copy(update={
+        "details": {"performers": ["Someone"], "address": "1 Main St"},
+        "research": {"summary": "Long research.", "facts": ["A fact."]}}) for i in range(5)]
+    shown, total = select_events(events, when="today", now=NOW)
+    text = format_houston_events_for_display(shown, total)
+    assert text.count("With: Someone") == 5                     # the line-up is worth a line
+    assert "Address:" not in text and "From the event research" not in text
+
+
+def test_a_merged_event_keeps_details_and_research_from_either_copy():
+    ticketed = event("Breakaway Music Festival", at(14, 12)).model_copy(update={"details": {"genre": "Fairs & Festivals"}})
+    google = event("Breakaway Houston 2026", at(14, 15), **GOOGLE).model_copy(update={
+        "research": {"summary": "EDM festival.", "facts": ["Two stages."]}})
+    (merged,) = merge_duplicates([google, ticketed])
+    assert merged.details == {"genre": "Fairs & Festivals"} and merged.research["facts"] == ["Two stages."]
