@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 StopReason = Literal["answered", "step_limit", "timeout", "error"]
 
 MAX_TOOL_CHARS = 6000       # default cap on one tool result
+_EVENTS_CHARS = 10000       # a full day of listings is about 40 events
 MAX_PAGE_CHARS = 8000       # cap on a fetched web page
 _HISTORY_MESSAGES = 12
 _HISTORY_USER_CHARS = 1500
@@ -364,7 +365,7 @@ async def get_upcoming_events(
 
 @chat_agent.tool
 async def get_houston_events(ctx: RunContext[ChatDeps], query: str | None = None,
-                             category: str | None = None) -> str:
+                             category: str | None = None, when: str | None = None) -> str:
     """Public events in the Houston area from a curated, daily-updated listing: concerts, cycling,
     sports, arts, food, festivals, comedy, theater. Also the first place to look for more detail
     on one event: pass its name as `query`. Some events come with a description; include it when
@@ -372,13 +373,18 @@ async def get_houston_events(ctx: RunContext[ChatDeps], query: str | None = None
 
     Args:
         query: Optional text to match a title, venue or neighbourhood ("White Oak", "Montrose",
-            "Breakaway"). Leave empty for "what's on"; do not pass time words like "tonight".
+            "Breakaway"). Leave empty for "what's on"; time words go in `when`, never here.
         category: Optional category, e.g. "music", "cycling", "comedy".
+        when: "today", "tonight", "tomorrow", "weekend", "week", "next_week" or a YYYY-MM-DD date.
+            Leave empty for the next seven days, or when looking up one event by name.
+
+    The result is already de-duplicated and in time order. For "what's on" questions, cover the
+    whole result grouped as it is given, not only the first few, and keep each event's note.
     """
     started = time.perf_counter()
-    ok, text = _text(await _call(ctx, "get_houston_events", query=query, category=category, limit=15))
-    return await _record(ctx, "get_houston_events", {"query": query, "category": category}, ok,
-                         _clip(text, hint="add a query or category"), started)
+    ok, text = _text(await _call(ctx, "get_houston_events", query=query, category=category, when=when, limit=40))
+    return await _record(ctx, "get_houston_events", {"query": query, "category": category, "when": when}, ok,
+                         _clip(text, limit=_EVENTS_CHARS, hint="add a query, a category or a narrower `when`"), started)
 
 
 class CalendarEvent(BaseModel):

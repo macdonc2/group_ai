@@ -127,7 +127,7 @@ async def test_requires_session():
 def test_houston_listing_shows_local_time():
     ev = HoustonEvent(title="Astros vs Royals", location="Daikin Park", start_time=datetime(2026, 9, 17, 23, 15))
     text = format_houston_events_for_display([ev])
-    assert "06:15 PM CDT" in text and "11:15 PM" not in text
+    assert "6:15 PM" in text and "11:15 PM" not in text and "Times are Houston local" in text
 
 
 @pytest.mark.unit

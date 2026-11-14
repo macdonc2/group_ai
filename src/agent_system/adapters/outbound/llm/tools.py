@@ -1679,59 +1679,78 @@ async def get_upcoming_events(
 
 # ============ Houston Events Tool ============
 
+def _upcoming(everything: list, query: str | None, category: str | None, limit: int) -> tuple[list, int]:
+    """Any future date, for a named event that is more than a week out."""
+    from agent_system.adapters.outbound.houston_events import houston_now, merge_duplicates, _houston_local
+
+    today = houston_now().date()
+    q = (query or "").lower()
+    hits = [
+        e for e in everything
+        if e.start_time and _houston_local(e.start_time).date() >= today
+        and (not q or any(q in (f or "").lower() for f in (e.title, e.description, e.location)))
+        and (not category or any(category.lower() in c.lower() for c in e.categories))
+    ]
+    hits = sorted(merge_duplicates(hits), key=lambda e: e.start_time)
+    return hits[:limit], len(hits)
+
+
 async def get_houston_events(
     query: str | None = None,
     category: str | None = None,
-    limit: int = 30,
+    limit: int = 40,
+    when: str | None = None,
     **kwargs,
 ) -> ToolResult:
     """Get Houston area events from the htown_mania event discovery system.
-    
-    This searches events discovered by an AI-powered event aggregator that
-    monitors Houston event sources daily (concerts, cycling, sports, arts, etc.).
-    
+
+    The whole listing is fetched and narrowed here: the service returns records
+    newest-first by insertion, not by date, so asking it for a handful shows an
+    arbitrary slice of one day.
+
     Args:
         query: Optional search text (searches title, description, location)
         category: Optional category filter (music, cycling, sports, arts, etc.)
-        limit: Maximum events to return (default 15)
-        
+        limit: Maximum events to return
+        when: "today", "tonight", "tomorrow", "weekend", "week", "next_week" or
+            a YYYY-MM-DD date. Empty means the next seven days.
+
     Returns:
         ToolResult with list of Houston events
     """
     try:
         from agent_system.adapters.outbound.houston_events import (
+            FETCH_LIMIT,
             HoustonEventsAdapter,
             format_houston_events_for_display,
+            select_events,
         )
-        
+
         adapter = HoustonEventsAdapter()
         try:
             note = ""
-            if query or category:
-                events = await adapter.search_events(
-                    query=query,
-                    category=category,
-                    limit=limit,
-                )
-                if not events:
-                    # A phrase like "this weekend" is not a title to match on.
-                    # Better to show what's on than to claim nothing is.
-                    events = await adapter.get_latest_events(limit=limit)
-                    if events:
-                        note = f"_No listings matched \"{query or category}\" by name, so here is what's on:_\n\n"
-            else:
-                events = await adapter.get_latest_events(limit=limit)
-            
+            everything = await adapter.get_latest_events(limit=FETCH_LIMIT)
+            events, total = select_events(everything, when=when, query=query, category=category, limit=limit)
+            if not events and query and not when:
+                # A named event may be further out than the default week.
+                events, total = _upcoming(everything, query, category, limit)
+            if not events and (query or category):
+                # A phrase like "this weekend" is not a title to match on.
+                # Better to show what's on than to claim nothing is.
+                events, total = select_events(everything, when=when, limit=limit)
+                if events:
+                    note = f"_No listings matched \"{query or category}\" by name, so here is what's on:_\n\n"
+
             if not events:
                 return ToolResult(
                     success=True,
                     data=[],
                     message="No Houston events found matching your criteria.",
                 )
-            
+
             # Format for display
-            formatted = note + format_houston_events_for_display(events)
-            
+            formatted = note + format_houston_events_for_display(events, total)
+
             # Also return structured data
             events_data = [
                 {

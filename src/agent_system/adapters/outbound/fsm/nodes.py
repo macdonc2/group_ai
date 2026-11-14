@@ -1289,12 +1289,18 @@ class SelectTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     if non_temporal_words:
                         query = tool_input
             
+            from agent_system.adapters.outbound.houston_events import infer_when
+
+            # The time window comes from the user's own words ("tonight", "this weekend");
+            # a named event is looked up without one.
+            when = infer_when(ctx.state.user_input) or infer_when(tool_input)
             ctx.state.tool_arguments = {
                 "query": query,
                 "category": category,
-                "limit": 30,
+                "when": when,
+                "limit": 40,
             }
-            logger.debug(f"Houston events args: query={query}, category={category}")
+            logger.debug(f"Houston events args: query={query}, category={category}, when={when}")
         
         elif tool_name == "list_pets":
             # List pets with optional species filter
