@@ -1731,8 +1731,7 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                     # Detect structured event listings (Houston events, etc.)
                     if '## Houston Events' in observation or '### 1. [' in observation:
                         logger.info("Detected structured event data - bypassing synthesis to preserve links")
-                        lead = await _persona_lead_in(ctx, observation)
-                        ctx.state.response = f"{lead}\n\n{observation}"
+                        ctx.state.response = await _present_listing(ctx, observation)
                         
                         await ctx.deps.emit_event("react_synthesis_complete", "GenerateResponse", "Structured data returned directly", {
                             "bypassed_synthesis": True,
@@ -1933,8 +1932,7 @@ For conversational responses:
             if '## Houston Events' in tool_result or ('### 1. [' in tool_result and 'https://' in tool_result):
                 logger.info(f"Detected structured event data in tool_result - bypassing LLM synthesis ({len(tool_result)} chars)")
                 ctx.deps.decide("GenerateResponse", "event listing in tool_result → bypass LLM", True, "FinalizeKnowledge", tool=ctx.state.tool_name)
-                lead = await _persona_lead_in(ctx, tool_result)
-                ctx.state.response = f"{lead}\n\n{tool_result}"
+                ctx.state.response = await _present_listing(ctx, tool_result)
                 
                 await ctx.deps.emit_event("node_complete", "GenerateResponse", "Structured event data returned directly", {
                     "response_length": len(ctx.state.response),
@@ -2718,13 +2716,33 @@ class FinalizeKnowledge(BaseNode[WorkflowState, AgentDependencies, WorkflowResul
         return End(result)
 
 
-async def _persona_lead_in(ctx, listing: str) -> str:
-    """The structured-listing bypass skips the LLM, which also skipped the
-    wrestler. When a persona is on, get a short in-character lead-in (with two
-    or three picks) and keep the listing verbatim underneath."""
+_LISTING_SECTION = re.compile(r"^\*\*(Morning|Afternoon|Evening|Time not listed)\*\*$", re.MULTILINE)
+_SIGN_OFF = re.compile(r"^\s*SIGN-OFF:\s*", re.MULTILINE)
+
+
+def _dress_listing(persona: str, listing: str) -> str:
+    """Put an in-character line beside each time-of-day header. Events are left untouched."""
+    from agent_system.adapters.outbound.llm.personas import event_tagline
+
+    def dressed(match: re.Match) -> str:
+        line = event_tagline(persona, match.group(1))
+        return f"{match.group(0)} · _{line}_" if line else match.group(0)
+
+    return _LISTING_SECTION.sub(dressed, listing)
+
+
+async def _present_listing(ctx, listing: str) -> str:
+    """The reply for an events listing that bypasses the LLM.
+
+    The bypass keeps titles, times and links exact, but it also skips the wrestler. With a
+    persona on, the listing is framed by an opening promo (naming three picks) and a
+    sign-off, both written by the model, and each time-of-day header gets a line from the
+    voice bank. The events themselves are shown exactly as the tool returned them.
+    """
     persona = getattr(ctx.deps, "persona", None)
     if not persona:
-        return "Here's what I found:"
+        return f"Here's what I found:\n\n{listing}"
+    lead, sign_off = "Here's what I found:", ""
     try:
         from agent_system.adapters.outbound.llm.agents import _get_model
         from agent_system.adapters.outbound.llm.personas import persona_suffix
@@ -2734,17 +2752,24 @@ async def _persona_lead_in(ctx, listing: str) -> str:
             _get_model(ctx.deps.fallback_model, ctx.deps.openai_api_key),
             output_type=str,
             system_prompt=(
-                "Write a SHORT in-character lead-in (3-5 sentences, plain text, no markdown, no list) "
-                "for an event listing that will be shown verbatim right after your words. Name two or "
-                "three picks from the listing by their exact titles and say why, in character. Do not "
-                "repeat the listing, do not invent events, do not include links."
+                "You write the words around an event listing. The listing itself is shown verbatim "
+                "between your opening and your sign-off."
                 + persona_suffix(persona)
+                + "\n\nTHIS TASK (its lengths and format replace the ones above):\n"
+                "- First the opening promo: plain text, no markdown, no list, no links. Two or three "
+                "short paragraphs, 100 to 160 words, built like a promo: a hook, a build, a finish. "
+                "Call out three picks from the listing by their exact titles and say why, in character.\n"
+                "- Then a last line that starts with 'SIGN-OFF:' followed by one or two in-character "
+                "sentences to close the show after the listing, different from how the opening ended.\n"
+                "- Do not repeat the listing, and do not invent events or details that are not in it."
             ),
         )
-        prompt = f"User asked: {ctx.state.user_input}\n\nListing (shown to the user after your lead-in):\n{listing[:4000]}"
+        prompt = f"User asked: {ctx.state.user_input}\n\nListing (shown to the user after your opening):\n{listing[:4000]}"
         result = await agent.run(prompt)
-        text = (result.output or "").strip()
-        return text or "Here's what I found:"
+        parts = _SIGN_OFF.split((result.output or "").strip(), maxsplit=1)
+        lead = parts[0].strip() or lead
+        sign_off = parts[1].strip() if len(parts) > 1 else ""
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"persona lead-in failed: {exc}")
-        return "Here's what I found:"
+    reply = f"{lead}\n\n{_dress_listing(persona, listing)}"
+    return f"{reply}\n\n{sign_off}" if sign_off else reply
