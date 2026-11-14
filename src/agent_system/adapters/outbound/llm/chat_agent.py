@@ -148,6 +148,14 @@ and never take a name or fact from these instructions as something the person to
 - Resolve "it", "that", "there" and "the ones you suggested" from the conversation before calling a tool, \
 and pass tools concrete names, not pronouns.
 - You can search the web. Never say you lack internet access.
+- Earlier replies of yours may end with a bracketed note such as "[Built from: get_houston_events]". \
+It records which tools that reply's facts came from. Use it to judge where a detail came from; never \
+write such a note yourself.
+- get_houston_events is a curated listing and is the source of record for the events it returns: \
+title, time, venue and link. When asked for more about an event you listed, call get_houston_events \
+with the event's name first, and give everything the listing has for it. Look on the web only for what \
+the listing lacks. If the web lookup fails, say what the listing gives and that you could not find \
+more; do not withdraw or cast doubt on details that came from the listing.
 
 Writing the reply:
 - Be warm and substantive, like a knowledgeable friend. Match length to the question: a few paragraphs \
@@ -358,11 +366,13 @@ async def get_upcoming_events(
 async def get_houston_events(ctx: RunContext[ChatDeps], query: str | None = None,
                              category: str | None = None) -> str:
     """Public events in the Houston area from a curated, daily-updated listing: concerts, cycling,
-    sports, arts, food, festivals, comedy, theater.
+    sports, arts, food, festivals, comedy, theater. Also the first place to look for more detail
+    on one event: pass its name as `query`. Some events come with a description; include it when
+    the person asks about that event.
 
     Args:
-        query: Optional text to match a title, venue or neighbourhood ("White Oak", "Montrose").
-            Leave empty for "what's on"; do not pass time words like "tonight".
+        query: Optional text to match a title, venue or neighbourhood ("White Oak", "Montrose",
+            "Breakaway"). Leave empty for "what's on"; do not pass time words like "tonight".
         category: Optional category, e.g. "music", "cycling", "comedy".
     """
     started = time.perf_counter()
@@ -466,7 +476,16 @@ def build_history(messages: list[Any], current_input: str) -> list[ModelMessage]
         if message.role.value == "user":
             history.append(ModelRequest(parts=[UserPromptPart(content=_clip(text, _HISTORY_USER_CHARS, "clipped"))]))
         elif message.role.value == "assistant":
-            history.append(ModelResponse(parts=[TextPart(content=_clip(text, _HISTORY_ASSISTANT_CHARS, "clipped"))]))
+            text = _clip(text, _HISTORY_ASSISTANT_CHARS, "clipped")
+            # Only the reply's text is kept between turns, so without this the model cannot tell
+            # a fact it read from a tool from one it made up, and may disown a correct answer.
+            tools = list(dict.fromkeys(
+                name for call in (getattr(message, "tool_calls", None) or [])
+                if (name := getattr(call, "tool_name", None))
+            ))
+            if tools:
+                text += f"\n[Built from: {', '.join(tools)}]"
+            history.append(ModelResponse(parts=[TextPart(content=text)]))
     while history and isinstance(history[0], ModelResponse):  # a history must open with a user turn
         history.pop(0)
     return history

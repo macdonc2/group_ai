@@ -169,3 +169,14 @@ def test_telemetry_export_is_off_without_an_endpoint():
     otel.annotate_current_span(**{"app.request_id": "x"})
     otel.instrument_database(object())
     otel.shutdown_telemetry()
+
+
+def test_outbound_clients_do_not_log_urls_at_info():
+    """httpx and the web-search library's client log full URLs, search query included."""
+    import logging
+
+    from agent_system.adapters.inbound.api.observability import configure_logging
+
+    configure_logging(as_json=True)
+    for name in ("httpx", "httpx2", "httpcore", "primp", "ddgs"):
+        assert not logging.getLogger(name).isEnabledFor(logging.INFO), name

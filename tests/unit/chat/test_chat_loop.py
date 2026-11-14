@@ -272,6 +272,22 @@ class TestHistory:
         assert [type(m) for m in history] == [ModelRequest, ModelResponse]
         assert history[0].parts[0].content == "hi" and history[1].parts[0].content == "hello"
 
+    def test_an_earlier_reply_says_which_tools_it_was_built_from(self):
+        # Only reply text survives between turns. Without the note, a follow-up about a listed
+        # event gave the model no reason to trust its own listing, and it retracted a correct one.
+        listing = _msg("assistant", "Breakaway Music Festival, noon, Shell Energy Stadium.")
+        listing.tool_calls = [SimpleNamespace(tool_name="get_houston_events"),
+                              SimpleNamespace(tool_name="get_houston_events")]
+        history = build_history([_msg("user", "what's on today?"), listing, _msg("user", "hi"),
+                                 _msg("assistant", "hello")], "more on Breakaway?")
+        assert history[1].parts[0].content.endswith("\n[Built from: get_houston_events]")
+        assert "Built from" not in history[3].parts[0].content  # no tools, no note
+
+    def test_the_prompt_sends_event_follow_ups_back_to_the_listing(self):
+        from agent_system.adapters.outbound.llm.chat_agent import INSTRUCTIONS
+
+        assert "source of record" in INSTRUCTIONS and "do not withdraw" in INSTRUCTIONS
+
     def test_clipped_bounded_and_opens_with_a_user_turn(self):
         many = [_msg("assistant", "orphan")] + [_msg("user" if i % 2 else "assistant", "y" * 9000) for i in range(30)]
         history = build_history(many, "new question")

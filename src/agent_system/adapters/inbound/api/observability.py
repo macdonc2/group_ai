@@ -128,7 +128,9 @@ def configure_logging(as_json: bool) -> None:
     logging.getLogger("uvicorn.access").disabled = True
     # httpx logs every outbound URL at INFO, query string and all (search
     # terms, and for some APIs credentials). Failures still surface.
-    for name in ("httpx", "httpx2", "httpcore"):
+    # primp is the HTTP client inside the web-search library (ddgs); it does
+    # the same with the user's search query.
+    for name in ("httpx", "httpx2", "httpcore", "primp", "ddgs"):
         logging.getLogger(name).setLevel(logging.WARNING)
     for name in ("uvicorn", "uvicorn.error"):
         logging.getLogger(name).handlers[:] = []
