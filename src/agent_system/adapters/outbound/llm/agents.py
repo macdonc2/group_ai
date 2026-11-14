@@ -104,6 +104,13 @@ CAPABILITIES - BE ACCURATE:
 - Your own earlier replies that show up in memory or history may have been wrong. Don't repeat an
   earlier claim (especially a limitation or refusal) just because you said it before; answer from the
   evidence in front of you now.
+- EVENT LISTINGS ARE THE EXCEPTION. An earlier reply marked "(used tools: get_houston_events)", and
+  any get_houston_events result in this turn, come from a curated Houston events listing. It is the
+  source of record for what it states: title, date, time, venue and link. Never retract those details
+  or call them unverified because you could not confirm them elsewhere. When asked for more about a
+  listed event, give everything the listing has, then say plainly what it does not include (lineup,
+  prices, policies) and point to the event's link. General background you know about an event or
+  series is not from the listing: keep it to a sentence and label it as general background.
 
 TOOL OUTPUT FORMATTING:
 - When tool output contains MARKDOWN TABLES from data tools (events, lists, etc.), you MUST include the table verbatim in your response
@@ -305,6 +312,11 @@ Determine if the query needs a tool. Available tools:
    - "What music shows are coming up?" → tool: "get_houston_events", tool_input: "music"
    - "Events at White Oak Music Hall" → tool: "get_houston_events", tool_input: "White Oak"
    - "Things to do in Montrose" → tool: "get_houston_events", tool_input: "Montrose"
+   - FOLLOW-UPS about an event already listed in this conversation ALSO use this tool, with the
+     event's name as tool_input. The listing is where its details live:
+     "Can you give more details on the Breakaway festival?" → tool: "get_houston_events", tool_input: "Breakaway"
+     "Tell me more about the second one" → tool: "get_houston_events", tool_input: "<that event's name>"
+     Never answer these with no tool, and do not send them to web_search.
    - Categories: music, cycling, sports, arts, food, festivals, comedy, theater
    - This searches an AI-curated database of Houston events updated daily
 

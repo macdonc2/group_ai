@@ -376,3 +376,21 @@ class TestEngineSwitch:
         assert result.error == "error" and "RuntimeError" in result.response
         assert deps.trace.error == "error"
         assert ("response", "ChatLoop") in events
+
+
+class TestFsmEventFollowUps:
+    """The FSM answered "more details on <listed event>" with no tool, padded it from general
+    knowledge and called its own listing unverified. These pin the two prompt rules that fixed it;
+    the behaviour itself was checked by replaying the turn against the real model."""
+
+    def test_router_sends_follow_ups_about_a_listed_event_to_the_listing(self):
+        from agent_system.adapters.outbound.llm.agents import INTENT_SYSTEM_PROMPT
+
+        assert "FOLLOW-UPS about an event already listed" in INTENT_SYSTEM_PROMPT
+        assert 'tool_input: "Breakaway"' in INTENT_SYSTEM_PROMPT
+
+    def test_writer_treats_the_listing_as_the_source_of_record(self):
+        from agent_system.adapters.outbound.llm.agents import COORDINATOR_SYSTEM_PROMPT
+
+        assert "EVENT LISTINGS ARE THE EXCEPTION" in COORDINATOR_SYSTEM_PROMPT
+        assert "Never retract those details" in COORDINATOR_SYSTEM_PROMPT
