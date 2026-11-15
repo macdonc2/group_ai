@@ -14,6 +14,9 @@ def _print_summary(run_id: str, summary: dict) -> None:
     ci = summary.get("pass_rate_interval")
     band = f"  95% interval {ci['low']} to {ci['high']} over {ci['cases']} cases" if ci else ""
     print(f"  pass rate: {summary.get('passed')}/{summary.get('cases')} ({summary.get('pass_rate')}){band}")
+    stopped = summary.get("stopped")
+    if stopped:
+        print(f"  RUN STOPPED: {stopped['reason']} ({stopped['skipped']} attempts not run or not counted)")
     gate = summary.get("gate")
     if gate:
         print("  HARD GATE: " + ("passed, every case passed" if gate["passed"]
@@ -71,6 +74,7 @@ async def _run(args: argparse.Namespace) -> int:
             run_id = await run_suite(
                 suite, judge=args.judge, repeats=args.repeats, concurrency=args.concurrency,
                 case_ids=args.case or None, progress=progress, analyze_failures=not args.no_analysis,
+                max_cost_usd=args.max_cost, preflight=not args.no_preflight,
             )
             container = await get_container()
             async with container.database.session() as session:
@@ -237,6 +241,10 @@ def main() -> None:
     run.add_argument("--no-analysis", action="store_true", help="Skip the LLM failure write-up")
     run.add_argument("--show-analysis", action="store_true", help="Print the failure analysis markdown")
     run.add_argument("--fail-under", type=float, help="Exit 1 when pass rate is below this (CI gate)")
+    run.add_argument("--max-cost", type=float,
+                     help="Stop the run when it has spent this many USD (default: EVAL_MAX_COST_USD, 5.00; 0 = no cap)")
+    run.add_argument("--no-preflight", action="store_true",
+                     help="Skip the one small model call that checks the key and credits before the run")
     run.add_argument("--baseline", help="Run id to compare against, paired by case")
     run.add_argument("--fail-on-regression", action="store_true",
                      help="With --baseline or --baseline-file: exit 1 when the run is clearly worse "

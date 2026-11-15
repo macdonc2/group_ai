@@ -441,6 +441,8 @@ python -m agent_system.evals run --suite routing --fail-under 0.8         # exit
 | `--concurrency` | Parallel cases (default 2; forced to 1 on SQLite) |
 | `--no-analysis` / `--show-analysis` | Skip, or print, the failure write-up |
 | `--fail-under` | Pass-rate threshold for the exit code |
+| `--max-cost` | Stop the run once it has spent this many USD, system and judge together. Default `EVAL_MAX_COST_USD` (5.00); `0` removes the cap |
+| `--no-preflight` | Skip the one small model call that checks the key and credits before the run |
 | `--baseline` | A run id to compare against, paired by case |
 | `--fail-on-regression` | With `--baseline` or `--baseline-file`: exit 1 when the run is clearly worse |
 | `--export` | Write each suite's pass/fail per case to a JSON file |
@@ -505,7 +507,8 @@ kubectl exec -n agent-system deploy/agent-system-backend -- \
 - **Cost.** `price_usd(model, input, output, cached)` prices each call:
   1. `MODEL_PRICING_JSON` is used first. It's how unreleased or private models get a price.
   2. Otherwise `genai-prices` is used.
-  3. A model neither knows is counted as **unpriced**, and every total that includes one is labelled a **lower bound**.
+  3. Otherwise the built-in list prices in `telemetry/trace.py` (`BUILTIN_PRICES`, currently `gpt-6-astra`).
+  4. A model none of them knows is counted as **unpriced**, and every total that includes one is labelled a **lower bound**.
 
 ```json
 {"gpt-6-astra": {"input": 0.0, "cached_input": 0.0, "output": 0.0},
@@ -513,6 +516,32 @@ kubectl exec -n agent-system deploy/agent-system-backend -- \
 ```
 
 Prices are USD per 1M tokens; fill in the real rates. Prefix matching applies, so `"gpt-6"` covers every `gpt-6-*` model.
+
+### What a run costs
+
+Measured on 2026-11-15 from 315 recorded attempts, at list prices, default model `gpt-6-astra` ($10 input, $1 cached input, $50 output per 1M tokens):
+
+| Suite | State machine, per case | Loop, per case |
+|---|---|---|
+| `incidents` | $0.03 | $0.04 |
+| `resilience` | $0.04 | $0.03 |
+| `tool_selection` | $0.05 | not measured |
+| `injection` | $0.08 | $0.03 |
+| `routing` | $0.10 | not measured |
+| `e2e_tasks` | $0.20 | not measured |
+
+One pass of all six on the state machine is about $5.50 with no judge. A judge adds its own calls on the same model. Repeats multiply the bill, and a before-and-after comparison doubles it.
+
+Where the money goes on the state machine: the ReAct step agent 22%, the reply (coordinator) 21%, intent analysis 17%, synthesis 11%, the memory step 10%. Intent analysis is 58% of input tokens (about 6,400 per call) but most of that is the cached prompt, which is billed at a tenth of the price. The loop engine is cheaper per case because it makes fewer calls.
+
+### Guards on a run
+
+Two things stop a run early (`RunGuard` in `evals/runner.py`). Both mark the run `failed` with the reason in `error`, and the CLI exits 1.
+
+- **Spend cap.** When the run's cost reaches the cap, no further case starts. The cap is `--max-cost`, or `EVAL_MAX_COST_USD` (default 5.00). Cases already running finish, so a run can end slightly over.
+- **A dead model.** With no credits or a bad key the app does not crash: every model call fails, the engines fall back, and each case comes back as an ordinary failure with zero tokens. Scored, that looks like a terrible agent. So a case that used no input tokens is discarded, and after two in a row the run stops. A **preflight** call (one small request to the model under test) catches the common case before any case runs.
+
+Neither guard protects the app itself. Evals and the app share one OpenAI account unless `EVAL_OPENAI_API_KEY` is a key from a separate project with its own budget, which is the only thing that stops an eval run from exhausting the credits production needs.
 
 ---
 
@@ -526,6 +555,7 @@ Prices are USD per 1M tokens; fill in the real rates. Prefix matching applies, s
 | `JEV_MODEL` | `jev` | Model id served there |
 | `JEV_API_KEY` | unset | Key for that endpoint, if it needs one |
 | `MODEL_PRICING_JSON` | `{}` | Per-model prices, as above |
+| `EVAL_MAX_COST_USD` | `5.0` | Spend cap for one eval run; `0` removes it |
 | `LLM_REQUEST_TIMEOUT_S` | `120` | Per-request timeout for chat-path LLM calls |
 | `RESEARCH_REQUEST_TIMEOUT_S` | `600` | Per-request timeout for Deep Research LLM calls |
 | `LLM_MAX_RETRIES` | `1` | Retries after a failed or timed-out LLM request |

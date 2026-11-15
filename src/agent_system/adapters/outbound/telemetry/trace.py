@@ -68,15 +68,34 @@ def _bare_model(model: str) -> str:
     return model.split(":", 1)[1] if ":" in model else model
 
 
+# List prices for models genai-prices does not know yet, USD per 1M tokens (standard tier, read
+# from OpenAI's pricing page on 2026-11-15). A last resort so cost is never silently missing:
+# MODEL_PRICING_JSON and genai-prices both take precedence. Update or delete entries as they age.
+BUILTIN_PRICES: dict[str, dict[str, float]] = {
+    "gpt-6-astra": {"input": 10.0, "cached_input": 1.0, "output": 50.0},
+}
+
+
+def _rates_for(name: str, table: dict[str, dict[str, float]]) -> dict[str, float] | None:
+    return table.get(name) or next((v for k, v in table.items() if name.startswith(k)), None)
+
+
+def _from_rates(rates: dict[str, float], input_tokens: int, output_tokens: int, cached_tokens: int) -> float:
+    uncached = max(input_tokens - cached_tokens, 0)
+    cached_rate = rates.get("cached_input", rates.get("input", 0.0))
+    return (uncached * rates.get("input", 0.0) + cached_tokens * cached_rate
+            + output_tokens * rates.get("output", 0.0)) / 1_000_000
+
+
 def price_usd(model: str, input_tokens: int, output_tokens: int, cached_tokens: int = 0) -> float | None:
     """USD cost of one call, or None when the model has no known price.
 
-    MODEL_PRICING_JSON wins (it is how unreleased/private models get priced);
-    otherwise genai-prices is consulted.
+    MODEL_PRICING_JSON wins (it is how unreleased/private models get priced), then genai-prices,
+    then the built-in list prices above.
     """
     name = _bare_model(model)
     table = _configured_prices()
-    rates = table.get(name) or next((v for k, v in table.items() if name.startswith(k)), None)
+    rates = _rates_for(name, table)
     if rates:
         uncached = max(input_tokens - cached_tokens, 0)
         cached_rate = rates.get("cached_input", rates.get("input", 0.0))
@@ -95,7 +114,8 @@ def price_usd(model: str, input_tokens: int, output_tokens: int, cached_tokens: 
         )
         return float(calc.total_price)
     except Exception:  # noqa: BLE001 - unknown model is the common case
-        return None
+        builtin = _rates_for(name, BUILTIN_PRICES)
+        return _from_rates(builtin, input_tokens, output_tokens, cached_tokens) if builtin else None
 
 
 # ---------------------------------------------------------------------------

@@ -479,6 +479,68 @@ def summarize(suite: Suite, results: list[dict[str, Any]], judge_names: list[str
     }
 
 
+def _input_tokens(result: dict[str, Any]) -> int:
+    total = 0
+    for turn in result.get("turns") or []:
+        usage = (turn.get("trace") or {}).get("usage") or (turn.get("research") or {}).get("usage") or {}
+        total += usage.get("input_tokens") or 0
+    return total
+
+
+@dataclass
+class RunGuard:
+    """Stops a run that is wasting money or producing meaningless results.
+
+    Two conditions, both learned the hard way:
+
+    - Spend: live suites cost real money (about 12,000 input tokens per state machine case on
+      the default model). When the run's cost reaches `max_cost_usd` no further case starts.
+    - A dead model: with no credits the app does not crash. Every model call fails, the engines
+      fall back, and each case comes back as an ordinary failure with zero tokens. Scored, that
+      reads as a terrible agent. A case that used no input tokens is therefore not counted, and
+      after `DEAD_LIMIT` in a row the run stops.
+    """
+
+    max_cost_usd: float = 0.0
+    spent_usd: float = 0.0
+    dead_in_a_row: int = 0
+    skipped: int = 0
+    stop: str | None = None
+
+    DEAD_LIMIT = 2
+
+    def observe(self, result: dict[str, Any]) -> bool:
+        """Record one finished case. Returns True when the case must be discarded (a dead model)."""
+        self.spent_usd += (result.get("cost_usd") or 0.0) + (result.get("judge_cost_usd") or 0.0)
+        dead = bool(result.get("turns")) and _input_tokens(result) == 0
+        self.dead_in_a_row = self.dead_in_a_row + 1 if dead else 0
+        if self.dead_in_a_row >= self.DEAD_LIMIT and not self.stop:
+            self.stop = ("model calls are failing: cases are coming back with zero tokens. Check the API key "
+                         "and the account's credits.")
+        if self.max_cost_usd and self.spent_usd >= self.max_cost_usd and not self.stop:
+            self.stop = (f"the spend cap of ${self.max_cost_usd:.2f} was reached (${self.spent_usd:.2f} spent). "
+                         "Raise it with --max-cost or EVAL_MAX_COST_USD.")
+        return dead
+
+
+async def model_preflight(env: EvalEnv) -> str | None:
+    """One tiny call to the model under test before any case runs. Returns why the run cannot
+    start, or None. Costs a few tokens and saves a whole run of zero-token failures."""
+    from pydantic_ai import Agent
+
+    from agent_system.adapters.outbound.llm.agents import _get_model
+
+    try:
+        await asyncio.wait_for(
+            Agent(_get_model(env.settings.default_model, env.api_key)).run("Reply with the single word OK."), timeout=60)
+    except Exception as exc:  # noqa: BLE001 - any failure here means the run would be meaningless
+        detail = f"{type(exc).__name__}: {exc}"[:300]
+        hint = (" The account has no credits left." if "insufficient_quota" in detail or "credits" in detail.lower()
+                else " The API key was rejected." if "401" in detail or "invalid_api_key" in detail else "")
+        return f"the model under test ({env.settings.default_model}) could not be called.{hint} ({detail})"
+    return None
+
+
 @dataclass
 class WorkItem:
     case_id: str
@@ -490,6 +552,7 @@ class WorkItem:
 async def _execute(
     env: EvalEnv, suite: Suite, judge: str, judges: list[Any], run_id: str, work: list[WorkItem],
     config: dict[str, Any], concurrency: int, progress: ProgressCb | None, analyze_failures: bool,
+    max_cost_usd: float | None = None, preflight: bool = False,
 ) -> str:
     """Shared run loop: upsert the run row, run items with bounded concurrency, persist
     each result as it lands, then summarise and write the failure analysis."""
@@ -512,10 +575,16 @@ async def _execute(
     sem = asyncio.Semaphore(max(1, concurrency))
     results: list[dict[str, Any]] = []
     done = 0
+    guard = RunGuard(max_cost_usd if max_cost_usd is not None else env.settings.eval_max_cost_usd)
+    if preflight and work:
+        guard.stop = await model_preflight(env)
 
     async def one(item: WorkItem) -> None:
         nonlocal done
         async with sem:
+            if guard.stop:  # the run was stopped: do not spend on, or record, the remaining cases
+                guard.skipped += 1
+                return
             try:
                 res = await item.run()
             except Exception as exc:  # noqa: BLE001
@@ -524,6 +593,9 @@ async def _execute(
                        "turns": [], "total_ms": None, "cost_usd": None, "judge_cost_usd": None,
                        "error": f"{type(exc).__name__}: {exc}"}
             res["case_id"], res["repeat"] = item.case_id, item.repeat
+            if guard.observe(res):  # produced by a dead model: not a result, do not score it
+                guard.skipped += 1
+                return
             results.append(res)
             async with env.database.session() as session:
                 session.add(EvalCaseResultModel(
@@ -545,10 +617,14 @@ async def _execute(
         await asyncio.gather(*(one(w) for w in work))
     except Exception as exc:  # noqa: BLE001
         status, error = "failed", f"{type(exc).__name__}: {exc}"
+    if guard.stop:
+        status, error = "failed", f"Run stopped: {guard.stop} {guard.skipped} of {len(work)} attempts were not run or not counted."
 
     summary = summarize(suite, results, [j.name for j in judges])
+    summary["stopped"] = {"reason": guard.stop, "skipped": guard.skipped} if guard.stop else None
+    summary["cost"]["cap_usd"] = guard.max_cost_usd or None
     analysis = None
-    if analyze_failures and any(not r["passed"] for r in results):
+    if analyze_failures and not guard.stop and any(not r["passed"] for r in results):
         try:
             analysis = await write_failure_analysis(suite, results, env.api_key)
         except Exception as exc:  # noqa: BLE001
@@ -575,6 +651,8 @@ async def run_suite(
     progress: ProgressCb | None = None,
     analyze_failures: bool = True,
     origin: str = "cli",
+    max_cost_usd: float | None = None,
+    preflight: bool = False,
 ) -> str:
     install_llm_capture()
     suite = load_suite(suite_name)
@@ -593,7 +671,8 @@ async def run_suite(
     config = {"repeats": repeats, "concurrency": concurrency, "case_ids": case_ids, "origin": origin,
               "chat_engine": env.settings.chat_engine,
               "model": env.settings.default_model, "fallback_model": env.settings.fallback_model}
-    return await _execute(env, suite, judge, judges, run_id, work, config, concurrency, progress, analyze_failures)
+    return await _execute(env, suite, judge, judges, run_id, work, config, concurrency, progress, analyze_failures,
+                          max_cost_usd=max_cost_usd, preflight=preflight)
 
 
 # ---------------------------------------------------------------------------
