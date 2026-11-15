@@ -1,0 +1,111 @@
+name: incidents
+description: Real production failures, each kept as a case so it cannot come back unnoticed. Events and calendar data are frozen fixtures dated relative to today; nothing is fetched.
+rubrics: []            # deterministic checks only, so the gate does not depend on a judge
+pass_threshold: 3.5
+must_pass_all: true    # a hard gate: one failure fails the run
+
+# How to add a case: when something goes wrong in production, write down what the user asked,
+# freeze the data the tools would have returned, and assert the thing that was wrong. Name the
+# incident and the fixing commit in `incident`. Keep the assertion narrow: it should fail on
+# the old behaviour and pass on any correct answer, not just on the one the fix produced.
+
+# What the events service held for Houston on the day of the first two incidents: one festival
+# listed four times by three sources at three different times, a full day of other events, and
+# records for the day before and after. Titles are trimmed from live data.
+x-busy-saturday: &busy_saturday
+  - {title: "Yesterday's Rodeo Kickoff", day: -1, time: "20:00", venue: "NRG Arena, Houston", categories: [community]}
+  - {title: "Breakaway Houston 2026", time: "15:00", venue: "Shell Energy Stadium", source: "Google Events (SerpAPI)",
+     url: "https://www.google.com/search?q=breakaway", description: "Shell Energy Stadium", categories: [community]}
+  - {title: "2026 Breakaway Music Festival Houston: Saturday", time: "16:00", venue: "Shell Energy Stadium",
+     source: "Google Events (SerpAPI)", url: "https://www.google.com/search?q=breakaway+saturday",
+     description: "Shell Energy Stadium", categories: [music]}
+  - {title: "Breakaway Music Festival", venue: "Shell Energy Stadium", source: "Google Events (SerpAPI)",
+     url: "https://www.google.com/search?q=breakaway+festival", description: "Shell Energy Stadium", categories: [music]}
+  - {title: "Breakaway Music Festival", time: "12:00", venue: "Shell Energy Stadium, Houston",
+     url: "https://www.ticketmaster.com/event/breakaway", categories: [music],
+     details: {genre: "Miscellaneous / Fairs & Festivals", address: "South Rice Avenue & Westpark Drive, 77002", ticket_status: onsale},
+     research: {summary: "A two-day electronic music festival on the stadium grounds.",
+                facts: ["Two stages run from noon until 11 PM.", "The festival is 18 and over."],
+                sources: ["https://example.com/breakaway-guide"]}}
+  - {title: "Heights Morning Market", time: "09:00", venue: "POST Houston", categories: [community],
+     url: "https://www.ticketmaster.com/event/market"}
+  - {title: "Leanne Morgan", time: "19:00", venue: "Toyota Center - TX, Houston", categories: [comedy],
+     url: "https://www.ticketmaster.com/event/leanne"}
+  - {title: "Steve Aoki with JOYRYDE", time: "21:00", venue: "DUCTWORK - Houston, Houston", categories: [music],
+     url: "https://www.ticketmaster.com/event/aoki",
+     details: {performers: ["Steve Aoki", "JOYRYDE"], genre: "Music / Dance/Electronic",
+               address: "813 St Emanuel St, Houston, 77003", ticket_status: onsale},
+     research: {summary: "A big-room house night in EaDo.",
+                facts: ["JOYRYDE opens the show.", "Doors are at 9 PM and the venue is 18 and over."],
+                sources: ["https://example.com/aoki-preview"]}}
+  - {title: "Tomorrow's Bayou Brunch Ride", day: 1, time: "10:00", venue: "Buffalo Bayou Park", categories: [cycling]}
+
+cases:
+  - id: today_means_today_in_houston
+    incident: >
+      2026-11-14: "What's going on in h-town now?" returned the newest records in the events
+      database, which were mostly other days, and a handful of events from a full day. Fixed in 9526ce9.
+    seed: {timezone: America/Chicago}
+    events_fixture: *busy_saturday
+    turns: ["What's going on in h-town now?"]
+    expect:
+      tool: get_houston_events
+      must_mention: ["Heights Morning Market", "Leanne Morgan", "Steve Aoki", "Breakaway Music Festival"]
+      must_not_mention: ["Rodeo Kickoff", "Bayou Brunch Ride"]
+
+  - id: one_festival_is_listed_once
+    incident: >
+      2026-11-14: the same festival appeared several times under different titles and start
+      times, because each source listed it separately. Fixed in 9526ce9.
+    seed: {timezone: America/Chicago}
+    events_fixture: *busy_saturday
+    turns: ["What's happening in Houston today?"]
+    expect:
+      tool: get_houston_events
+      must_mention: ["Breakaway Music Festival"]
+      # the two Google-only titles for the same festival must be merged away
+      must_not_mention: ["Breakaway Houston 2026", "Houston: Saturday"]
+
+  - id: follow_up_about_a_listed_event_uses_the_listing
+    incident: >
+      2026-11-14: after listing the festival, the assistant was asked for more detail. It did not
+      go back to the events listing: it searched the web, was rate-limited, and then cast doubt on
+      the details it had just given. Fixed in 0b1bddf (loop) and e35d0f4 (state machine).
+    seed: {timezone: America/Chicago}
+    events_fixture: *busy_saturday
+    turns:
+      - "What's happening in Houston today?"
+      - "Can you give me more details on the Breakaway festival?"
+    expect:
+      tool: get_houston_events
+      forbid_tools: [web_search, read_webpage]
+      must_mention: ["Shell Energy Stadium"]
+      must_mention_any: ["12:00 PM", "12 PM", "noon"]     # the ticketing source's time, not a Google guess
+
+  - id: one_event_in_focus_shows_what_is_known
+    incident: >
+      2026-11-14: "Still not detailed." Asked about one show, the assistant gave a title, a time
+      and a venue, although the events app's daily research held the line-up and more. Fixed in
+      f05ea88, with the events app storing that research from 87f1682.
+    seed: {timezone: America/Chicago}
+    events_fixture: *busy_saturday
+    turns: ["Tell me about the Steve Aoki show tonight."]
+    expect:
+      tool: get_houston_events
+      must_mention: ["JOYRYDE", "DUCTWORK"]
+      must_mention_any: ["813 St Emanuel", "18 and over", "18+", "opens the show", "opening"]
+
+  - id: calendar_event_is_read_back_at_its_local_hour
+    incident: >
+      2026-11-14: a 6 to 8 PM Central event was written to Google Calendar correctly but read
+      back as noon. Google returns the time with a UTC offset and the adapter dropped the offset
+      without applying it. Fixed in 99b1f14.
+    seed: {timezone: America/Chicago}
+    calendar_fixture:
+      - {summary: "Hangout with Ben Luis", day: 1, start: "18:00", end: "20:00"}
+      - {summary: "Dana's birthday", day: 1}
+    turns: ["What time is my hangout with Ben tomorrow?"]
+    expect:
+      tool: get_upcoming_events
+      must_mention_any: ["6:00 PM", "6 PM", "6:00 p.m.", "6 p.m.", "6pm", "18:00"]
+      must_not_mention: ["12:00 PM", "12 PM", "noon", "midnight"]

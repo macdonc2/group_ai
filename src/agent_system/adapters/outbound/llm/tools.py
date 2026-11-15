@@ -1355,6 +1355,36 @@ async def search_internal_docs_tool(query: str, max_sections: int = 5) -> ToolRe
 
 # ============ Event Lookup Tool ============
 
+async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime) -> list[dict]:
+    """The user's Google Calendar events that start between two naive-UTC instants.
+
+    Returns nothing when no calendar is configured, connected or enabled. Kept as its own
+    function so evals can put a fixed calendar here (`evals/world_fixture.py`).
+    """
+    from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
+    from agent_system.composition_root.container import get_container
+    from agent_system.domain.value_objects import UserId
+
+    container = await get_container()
+    logger.info(f"Google Calendar adapter available: {container.google_calendar_adapter is not None}")
+    if not container.google_calendar_adapter:
+        return []
+    user = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
+    has_gcal = user.has_google_calendar_connected() if user else False
+    gcal_enabled = user.preferences.google_calendar_enabled if user else False
+    logger.info(f"User gcal connected: {has_gcal}, enabled: {gcal_enabled}")
+    if not (user and has_gcal and gcal_enabled):
+        return []
+    from agent_system.application.services import CalendarSyncService
+
+    logger.info(f"Pulling Google Calendar events: {time_min} to {time_max} UTC")
+    raw = await CalendarSyncService(container.google_calendar_adapter).pull_events_from_google(
+        user, time_min=time_min, time_max=time_max, max_results=50,
+    )
+    logger.info(f"Google Calendar returned {len(raw)} events")
+    return raw
+
+
 async def get_upcoming_events(
     user_id: str,
     timeframe: str = "week",
@@ -1547,76 +1577,55 @@ async def get_upcoming_events(
         # Also pull events from Google Calendar if connected
         gcal_events: list[dict] = []
         try:
-            from agent_system.composition_root.container import get_container
-            from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
-            from agent_system.domain.value_objects import UserId
-            
-            container = await get_container()
-            logger.info(f"Google Calendar adapter available: {container.google_calendar_adapter is not None}")
-            if container.google_calendar_adapter:
-                user_repo = SQLAlchemyUserRepository(session)
-                user = await user_repo.get(UserId.from_string(user_id))
-                has_gcal = user.has_google_calendar_connected() if user else False
-                gcal_enabled = user.preferences.google_calendar_enabled if user else False
-                logger.info(f"User gcal connected: {has_gcal}, enabled: {gcal_enabled}")
-                if user and has_gcal and gcal_enabled:
-                    from agent_system.application.services import CalendarSyncService
-                    sync_service = CalendarSyncService(container.google_calendar_adapter)
-                    
-                    # start_date/end_date are naive in user's local tz;
-                    # pull_events_from_google / Google API expects naive UTC
-                    gcal_time_min = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
-                    gcal_time_max = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
-                    logger.info(f"Pulling Google Calendar events: {gcal_time_min} to {gcal_time_max} UTC")
-                    
-                    raw_gcal = await sync_service.pull_events_from_google(
-                        user, time_min=gcal_time_min, time_max=gcal_time_max, max_results=50,
-                    )
-                    logger.info(f"Google Calendar returned {len(raw_gcal)} events")
-                    
-                    for ge in raw_gcal:
-                        title = ge.get("title", "Untitled")
-                        if search_query and search_query.lower() not in title.lower() and search_query.lower() not in (ge.get("description") or "").lower():
-                            continue
-                        
-                        ev_info: dict = {
-                            "title": title,
-                            "type": "calendar",
-                            "description": ge.get("description"),
-                            "location": ge.get("location"),
-                            "confirmed": True,
-                            "source": "google_calendar",
-                        }
-                        
-                        start_dt = ge.get("start_datetime")
-                        if ge.get("is_all_day") and start_dt:
-                            # An all-day event is a date, not an instant: no timezone shift,
-                            # or it lands on the evening before for anyone west of UTC.
-                            if isinstance(start_dt, str):
-                                start_dt = datetime.fromisoformat(start_dt)
-                            ev_info["datetime"] = start_dt.strftime("%A, %B %d") + " (all day)"
-                            ev_info["sort_dt"] = start_dt.replace(tzinfo=None)
-                        elif start_dt:
-                            try:
-                                if isinstance(start_dt, str):
-                                    start_dt = datetime.fromisoformat(start_dt)
-                                # CalendarEvent stores naive UTC; convert to user's tz
-                                if start_dt.tzinfo is None:
-                                    start_dt = start_dt.replace(tzinfo=dt_timezone.utc)
-                                local_dt = start_dt.astimezone(user_tz)
-                                ev_info["datetime"] = local_dt.strftime("%A, %B %d at %I:%M %p %Z")
-                                ev_info["sort_dt"] = local_dt
-                            except Exception:
-                                ev_info["datetime"] = str(start_dt)
-                                ev_info["sort_dt"] = datetime.min
-                        elif ge.get("is_all_day"):
-                            ev_info["datetime"] = "All day"
-                            ev_info["sort_dt"] = datetime.min
-                        else:
-                            ev_info["datetime"] = "Time not specified"
-                            ev_info["sort_dt"] = datetime.min
-                        
-                        gcal_events.append(ev_info)
+            # start_date/end_date are naive in user's local tz;
+            # pull_google_events / Google API expects naive UTC
+            gcal_time_min = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+            gcal_time_max = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
+            raw_gcal = await pull_google_events(session, user_id, gcal_time_min, gcal_time_max)
+
+            for ge in raw_gcal:
+                title = ge.get("title", "Untitled")
+                if search_query and search_query.lower() not in title.lower() and search_query.lower() not in (ge.get("description") or "").lower():
+                    continue
+                
+                ev_info: dict = {
+                    "title": title,
+                    "type": "calendar",
+                    "description": ge.get("description"),
+                    "location": ge.get("location"),
+                    "confirmed": True,
+                    "source": "google_calendar",
+                }
+                
+                start_dt = ge.get("start_datetime")
+                if ge.get("is_all_day") and start_dt:
+                    # An all-day event is a date, not an instant: no timezone shift,
+                    # or it lands on the evening before for anyone west of UTC.
+                    if isinstance(start_dt, str):
+                        start_dt = datetime.fromisoformat(start_dt)
+                    ev_info["datetime"] = start_dt.strftime("%A, %B %d") + " (all day)"
+                    ev_info["sort_dt"] = start_dt.replace(tzinfo=None)
+                elif start_dt:
+                    try:
+                        if isinstance(start_dt, str):
+                            start_dt = datetime.fromisoformat(start_dt)
+                        # CalendarEvent stores naive UTC; convert to user's tz
+                        if start_dt.tzinfo is None:
+                            start_dt = start_dt.replace(tzinfo=dt_timezone.utc)
+                        local_dt = start_dt.astimezone(user_tz)
+                        ev_info["datetime"] = local_dt.strftime("%A, %B %d at %I:%M %p %Z")
+                        ev_info["sort_dt"] = local_dt
+                    except Exception:
+                        ev_info["datetime"] = str(start_dt)
+                        ev_info["sort_dt"] = datetime.min
+                elif ge.get("is_all_day"):
+                    ev_info["datetime"] = "All day"
+                    ev_info["sort_dt"] = datetime.min
+                else:
+                    ev_info["datetime"] = "Time not specified"
+                    ev_info["sort_dt"] = datetime.min
+                
+                gcal_events.append(ev_info)
         except Exception as e:
             logger.error(f"Google Calendar pull failed: {e}", exc_info=True)
         

@@ -33,6 +33,8 @@ async def seed_user(case: EvalCase, run_id: str, database: Any, kg: Any, embedde
 
     user = User.create(email=f"eval-{run_id[:8]}-{uuid.uuid4().hex[:8]}@{EVAL_EMAIL_DOMAIN}", hashed_password="!")
     user = user.update_preferences(auto_plan=case.seed.auto_plan)
+    if case.seed.timezone:
+        user = user.set_timezone(case.seed.timezone)
     async with database.session() as session:
         await SQLAlchemyUserRepository(session).save(user)
         await session.commit()

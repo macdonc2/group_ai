@@ -158,6 +158,8 @@ export interface EvalSummary {
   distinct_cases?: number;
   pass_rate_interval?: RateInterval | null;
   consistency?: EvalConsistency | null;
+  /** Set for a hard-gate suite (every case must pass); null otherwise. */
+  gate?: { rule: string; passed: boolean; failed_cases: string[] } | null;
   deterministic: Record<string, number>;
   judge: Record<string, Record<string, number>>;
   agreement: { judges: string[]; n: number; exact: number | null; within_1: number | null; weighted_kappa: number | null } | null;

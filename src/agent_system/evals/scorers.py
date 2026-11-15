@@ -181,6 +181,10 @@ def score_mentions(case: EvalCase, response: str) -> list[Score]:
         n = len(case.expect.must_mention)
         out.append(Score("mentions", round(1 - len(missing) / n, 3), not missing, "incomplete_answer",
                          {"missing": missing}))
+    if case.expect.must_mention_any:
+        found = [m for m in case.expect.must_mention_any if _norm(m) in r]
+        out.append(Score("mentions_any", 1.0 if found else 0.0, bool(found), "incomplete_answer",
+                         {"need_one_of": case.expect.must_mention_any, "found": found}))
     if case.expect.must_not_mention:
         leaked = [m for m in case.expect.must_not_mention if _norm(m) in r]
         out.append(Score("no_hallucination", 0.0 if leaked else 1.0, not leaked, "hallucinated_memory",

@@ -14,6 +14,7 @@ Contents:
 - [How it fits together](#how-it-fits-together)
 - [Turn tracing](#turn-tracing)
 - [Suites and cases](#suites-and-cases)
+- [Incident regressions and frozen data](#incident-regressions-and-frozen-data)
 - [Scoring](#scoring)
 - [Judges and rubrics](#judges-and-rubrics)
 - [Uncertainty: intervals, consistency, paired comparison](#uncertainty-intervals-consistency-paired-comparison)
@@ -120,6 +121,8 @@ To add a branch to the tree, wrap the condition in `ctx.deps.decide(node, "reada
 | `memory_retrieval` | agent | 17 | memory_retrieval, task_completion | Recalling seeded people, pets, places, preferences and backdated messages. Includes aliases, multi-hop links, temporal recall, no fabrication, and no false links. |
 | `entity_resolution` | agent | 15 | none (deterministic) | Knowledge-graph state after `FinalizeKnowledge`: new vs. existing entities, aliases, nicknames, relationship changes, no duplicates, no spurious entities. |
 | `e2e_tasks` | agent | 10 | task_completion, agent_flow | Multi-turn and planning tasks judged end to end, including honesty about what it can't do. |
+| `incidents` | agent | 5 | none (deterministic) | Real production failures, replayed against frozen events and calendar data. A hard gate: every case must pass. |
+| `injection` | agent | 7 | none (deterministic) | Untrusted web and pasted text must not trigger writes or become memory. Web content is canned. |
 | `research` | research | 4 | research_sources, synthesis_groundedness | Deep Research at depth 1 with narration off. |
 
 **Case schema** (`evals/schema.py`). Every `expect` field is optional; only what a case asserts is scored.
@@ -145,6 +148,7 @@ To add a branch to the tree, wrap the condition in `ctx.deps.decide(node, "reada
     tool_args: {query: shellfish}        # case-insensitive substring per argument
     must_recall: [shellfish]             # must appear in context the model actually saw
     must_mention: [shellfish]            # must appear in the reply
+    must_mention_any: ["6 PM", "6:00 PM"] # at least one must appear (for facts with several spellings)
     must_not_mention: ["Zane loves shrimp"]
     entities: [{type: person, name: Zane, aliases: [], relationship_type: friend}]
     forbid_entities: [Pixel]
@@ -165,6 +169,58 @@ Research cases take `question`, `depth`, `min_sources`, `expect_lanes` and `answ
 
 ---
 
+## Incident regressions and frozen data
+
+The `incidents` suite holds real production failures, one case each. It answers a different question from the other suites. They estimate how good the agent is, with a pass rate and an interval. This one asks whether a bug that already reached a user has come back, and the answer has to be no.
+
+**A hard gate.** The suite sets `must_pass_all: true`. Every attempt at every case must pass; the run summary carries `gate` with the failing case ids, the CLI exits 1 on a failed gate whatever `--fail-under` says, and the Evals tab shows a banner. A pass rate would hide one regression among several passes, so none is used. The suite has no rubrics, so the gate never depends on a judge.
+
+**Frozen data** (`evals/world_fixture.py`). A case about events or the calendar cannot be repeated if it reads what the events service holds today or a real connected calendar. A case can set:
+
+| Field | Replaces | What still runs for real |
+|---|---|---|
+| `events_fixture` | The HTTP fetch from the events service | Time-window selection, merging of duplicate listings, formatting, both engines' handling of the result |
+| `calendar_fixture` | The Google Calendar API call | The Google event parser, the timezone conversion, the tool's filtering and formatting |
+| `web_fixture` | Web search and page fetches | Untrusted-text wrapping and the write block |
+
+Two design choices:
+
+- **Dates are relative.** A fixture record says `day: 0` (today in Houston) or `day: 1`, with a local `time`, never a calendar date. "What's on today" then means something on any day the suite runs, and no clock has to be pinned across the many places the app reads the time. The cost is that cases cannot depend on a weekday ("this weekend").
+- **The substitution is at the edge, below the code under test.** Calendar entries are built in the JSON shape Google sends, a local time with a UTC offset, and pass through the real parser, because that parser is where the timezone bug was. A fixture placed any higher would have passed with the bug present.
+
+```yaml
+- id: calendar_event_is_read_back_at_its_local_hour
+  incident: >
+    2026-11-14: a 6 to 8 PM Central event was read back as noon ... Fixed in 99b1f14.
+  seed: {timezone: America/Chicago}
+  calendar_fixture:
+    - {summary: "Hangout with Ben Luis", day: 1, start: "18:00", end: "20:00"}
+  turns: ["What time is my hangout with Ben tomorrow?"]
+  expect:
+    tool: get_upcoming_events
+    must_mention_any: ["6:00 PM", "6 PM"]
+    must_not_mention: ["12:00 PM", "noon"]
+```
+
+**Adding a case when something breaks in production.**
+
+1. Write down what the user asked, as `turns`.
+2. Freeze what the tools would have returned, as a fixture. Trim real data; keep the detail that triggered the bug.
+3. Assert the thing that was wrong, narrowly. The check should fail on the old behaviour and pass on any correct answer, not only on the wording the fix happens to produce.
+4. Name the incident and the fixing commit in `incident`.
+5. Prove the case has teeth: put the bug back and confirm the case fails. A regression test that passes with the bug present protects nothing. Four of the five current cases were checked this way; the follow-up routing case guards prompt wording and was not.
+
+**Running it.** `incidents` is first in `make eval`. To check both engines:
+
+```bash
+CHAT_ENGINE=fsm  python -m agent_system.evals run --suite incidents --judge none --no-analysis
+CHAT_ENGINE=loop python -m agent_system.evals run --suite incidents --judge none --no-analysis --repeats 2
+```
+
+A full pass makes about 20 model calls and takes one to two minutes.
+
+---
+
 ## Scoring
 
 **Deterministic scorers** (`evals/scorers.py`). Each score is between 0 and 1 and carries a failure tag.
@@ -177,6 +233,7 @@ Research cases take `question`, `depth`, `min_sources`, `expect_lanes` and `answ
 | `tool_args` | Each expected argument substring is present | `bad_args` |
 | `recall` | Every `must_recall` fact reached the model's context. Also reports `recall@5` and MRR. | `missed_retrieval` |
 | `mentions` | The reply contains every `must_mention` | `incomplete_answer` |
+| `mentions_any` | The reply contains at least one `must_mention_any` | `incomplete_answer` |
 | `no_hallucination` | The reply contains no `must_not_mention` | `hallucinated_memory` |
 | `entity_resolution` | Each expected entity exists with its aliases linked and the right relationship or species | `entity_miss` |
 | `entity_dedup` | No expected entity is split across several nodes | `entity_dup` |

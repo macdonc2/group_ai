@@ -264,6 +264,15 @@ export function EvalRunView({ onOpenCase }: { onOpenCase: (id: string) => void }
               />
               <Headline label="Tokens" value={fmtTokens(s.cost.tokens.input + s.cost.tokens.output)} sub={`${fmtTokens(s.cost.tokens.input)} in · ${fmtTokens(s.cost.tokens.output)} out`} />
             </div>
+            {s.gate && (
+              <p className={cn('text-sm flex items-center gap-1.5 rounded border px-3 py-2',
+                s.gate.passed ? 'border-emerald-300 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400' : 'border-red-300 dark:border-red-800 text-red-700 dark:text-red-400')}>
+                {s.gate.passed ? <CheckCircle2 size={15} /> : <XCircle size={15} />}
+                {s.gate.passed
+                  ? 'Hard gate passed: every case passed every attempt.'
+                  : <>Hard gate failed. These must all pass before a release: <span className="font-mono">{s.gate.failed_cases.join(', ')}</span></>}
+              </p>
+            )}
             {s.consistency && (
               <Card title={`Consistency over ${s.consistency.k} attempts per case`}>
                 <div className="grid grid-cols-3 gap-3">

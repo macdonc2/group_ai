@@ -14,6 +14,10 @@ def _print_summary(run_id: str, summary: dict) -> None:
     ci = summary.get("pass_rate_interval")
     band = f"  95% interval {ci['low']} to {ci['high']} over {ci['cases']} cases" if ci else ""
     print(f"  pass rate: {summary.get('passed')}/{summary.get('cases')} ({summary.get('pass_rate')}){band}")
+    gate = summary.get("gate")
+    if gate:
+        print("  HARD GATE: " + ("passed, every case passed" if gate["passed"]
+                                 else f"FAILED on {', '.join(gate['failed_cases']) or 'no cases run'}"))
     con = summary.get("consistency")
     if con:
         print(f"  consistency over {con['k']} attempts: passed every time {con['pass_all_k']}, "
@@ -74,6 +78,8 @@ async def _run(args: argparse.Namespace) -> int:
                 if run.failure_analysis_md and args.show_analysis:
                     print("\n" + run.failure_analysis_md)
                 if run.status != "complete" or (args.fail_under is not None and (run.summary.get("pass_rate") or 0) < args.fail_under):
+                    code = 1
+                if (run.summary.get("gate") or {}).get("passed") is False:
                     code = 1
                 if args.baseline:
                     code = max(code, await _compare_with(session, args.baseline, run_id, args.fail_on_regression))

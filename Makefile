@@ -40,7 +40,7 @@ test:
 # Needs EVAL_OPENAI_API_KEY (or OPENAI_API_KEY), Neo4j and the database from .env.
 #   make eval                                  all agent suites, OpenAI judge
 #   make eval-suite SUITE=memory_retrieval JUDGE=both REPEATS=3
-EVAL_SUITES ?= routing tool_selection memory_retrieval entity_resolution e2e_tasks
+EVAL_SUITES ?= incidents routing tool_selection memory_retrieval entity_resolution e2e_tasks
 JUDGE ?= openai
 REPEATS ?= 1
 eval:

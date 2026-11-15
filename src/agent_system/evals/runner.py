@@ -140,6 +140,9 @@ class EvalEnv:
         from agent_system.evals.web_fixture import install_web_fixture_hook
 
         install_web_fixture_hook()
+        from agent_system.evals.world_fixture import install_world_fixture_hook
+
+        install_world_fixture_hook()
         embedder = OpenAIEmbeddingAdapter(api_key=api_key)
         kg = container.knowledge_graph_adapter
         if kg is not None:
@@ -258,10 +261,14 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
         seeded = await seed_user(case, run_id, env.database, env.kg, env.embedder)
         from agent_system.evals.web_fixture import reset_web_fixture, set_web_fixture
 
+        from agent_system.evals.world_fixture import reset_world, set_world
+
         token = set_web_fixture(case.web_fixture)
+        world = set_world(case.events_fixture, case.calendar_fixture, seeded.user.timezone)
         try:
             turns = await play_turns(case, seeded, env)
         finally:
+            reset_world(world)
             reset_web_fixture(token)
         wants_kg = case.expect.entities or case.expect.forbid_entities or case.expect.forbid_memory
         snapshot = await snapshot_entities(env.kg, seeded.user.id) if wants_kg else None
@@ -437,6 +444,10 @@ def summarize(suite: Suite, results: list[dict[str, Any]], judge_names: list[str
         "distinct_cases": len(per_case),
         "pass_rate_interval": stats.pass_rate_interval(per_case),
         "consistency": stats.consistency(per_case),
+        # a hard gate (suite.must_pass_all): one failed attempt fails the run, whatever the pass rate
+        "gate": ({"rule": "every case must pass", "passed": passed == n and n > 0,
+                  "failed_cases": sorted(c for c, v in per_case.items() if not all(v))}
+                 if suite.must_pass_all else None),
         "deterministic": {k: round(sum(v) / len(v), 3) for k, v in sorted(det.items())},
         "judge": judge_means,
         "agreement": agreement,

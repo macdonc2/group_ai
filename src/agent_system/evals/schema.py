@@ -14,6 +14,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from agent_system.evals.world_fixture import FixtureCalendarEntry, FixtureEvent
+
 DATASETS_DIR = Path(__file__).parent / "datasets"
 
 
@@ -70,6 +72,7 @@ class Seed(BaseModel):
     messages: list[SeedMessage] = Field(default_factory=list)
     links: list[SeedLink] = Field(default_factory=list)
     auto_plan: bool = True
+    timezone: str | None = None  # the user's timezone; defaults to the app default (UTC)
 
 
 class ExpectedEntity(BaseModel):
@@ -91,6 +94,7 @@ class Expect(BaseModel):
     tool_args: dict[str, Any] = Field(default_factory=dict)  # substring match per key (case-insensitive)
     must_recall: list[str] = Field(default_factory=list)  # facts that must appear in retrieved context
     must_mention: list[str] = Field(default_factory=list)  # substrings the response must contain (any case)
+    must_mention_any: list[str] = Field(default_factory=list)  # at least one of these must appear (e.g. "6 PM" or "6:00")
     must_not_mention: list[str] = Field(default_factory=list)  # hallucination / leakage guards
     entities: list[ExpectedEntity] = Field(default_factory=list)
     forbid_entities: list[str] = Field(default_factory=list)  # names that must NOT exist afterwards
@@ -110,6 +114,9 @@ class EvalCase(BaseModel):
     seed: Seed = Field(default_factory=Seed)
     turns: list[str]  # user messages, played in one conversation
     web_fixture: str | None = None  # canned text returned by web_search / read_webpage (no live web)
+    events_fixture: list[FixtureEvent] | None = None  # what the Houston events service holds (no network)
+    calendar_fixture: list[FixtureCalendarEntry] | None = None  # the user's Google Calendar (no network)
+    incident: str | None = None  # the production failure this case guards against, and the commit that fixed it
     expect: Expect = Field(default_factory=Expect)  # applies to the LAST turn (entities: final KG state)
     rubrics: list[str] | None = None  # override the suite's rubrics
 
@@ -130,6 +137,9 @@ class Suite(BaseModel):
     rubrics: list[str] = Field(default_factory=list)
     pass_threshold: float = 3.5  # mean judge score (1-5) needed to pass, when judged
     max_llm_calls: int | None = None  # per-turn model-call budget for every case that sets none
+    # A hard gate: every attempt at every case must pass. For suites built from real failures, where
+    # one regression is a release blocker and a pass rate would hide it.
+    must_pass_all: bool = False
     cases: list[EvalCase] = Field(default_factory=list)
     research_cases: list[ResearchCase] = Field(default_factory=list)
 
