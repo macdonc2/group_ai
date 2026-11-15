@@ -12,9 +12,12 @@ run on any change. It does not deploy; deploys stay manual.
 | Backend (lint, unit, e2e) | `uv sync --locked`, ruff (new findings only), eval suites load, `tests/unit` and `tests/e2e` | 2 min |
 | Backend (integration, Neo4j) | `tests/integration` against a real Neo4j, including the eval harness end to end with a mocked model | 2 min |
 | Frontend (types, lint, build) | `npm ci`, `tsc -b`, ESLint (new findings only), `vite build` | 1 min |
-| Docker images | Both Dockerfiles build; unit and e2e tests run again inside the backend image | 3 to 10 min |
+| Docker images (build only) | Both Dockerfiles build. Nothing is pushed | 2 to 8 min |
+| Backend tests inside the image (advisory) | Unit and e2e tests again, inside the built backend image | 2 min |
 
-The four jobs run in parallel. A pull request is ready when all four are green.
+The first four run in parallel and a pull request is ready when all four are
+green. The fifth is advisory: it shows its own result but does not fail the
+workflow (see below).
 
 ## Running the same checks locally
 
@@ -86,8 +89,15 @@ drifted far apart, so the images job runs the unit and e2e tests again inside
 the built image: that is the code and libraries that would ship. Because the
 image floats, this job can turn red from an upstream release with no change in
 the repo. That is a true signal (the next deploy would pick up the same
-release) but it is not the pull request's fault, so do not make it a required
-check until the image installs from the lockfile.
+release) but it is not the pull request's fault, so the job is marked
+`continue-on-error` and should not be a required check until the image installs
+from the lockfile.
+
+It is red today, for exactly this reason:
+`tests/unit/tools/test_react_tool_input.py::test_providers_have_bounded_timeouts`
+passes against the lockfile (pydantic-ai 1.56) and fails in the image
+(pydantic-ai 1.107), where `cached_async_http_client` is deprecated and pytest
+turns deprecation warnings into errors.
 
 **No path filters.** Every job runs on every change, even a docs-only one.
 Skipping jobs by path saves a few minutes but a skipped job that is also a
@@ -108,6 +118,7 @@ fails in minutes instead of holding a runner for six hours.
 ## Known gaps
 
 - `tests/e2e/api/test_api.py` is deselected: 7 tests fail against the current API.
+- The in-image job is advisory and currently failing (above).
 - No coverage threshold, no `mypy`, no format check.
 - No dependency or image vulnerability scan.
 - Branch protection is not configured by the workflow; required checks are set

@@ -4,7 +4,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main, 'claude/github-cicd-33da76'] # TEMPORARY: branch trigger until the PR exists
+    branches: [main]
   workflow_dispatch:
 
 # A new push to a pull request cancels the run for the push before it.
