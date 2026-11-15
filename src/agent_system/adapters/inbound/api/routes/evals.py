@@ -135,7 +135,7 @@ async def start_run(payload: RunCreate, token: RequireSuperuser) -> dict[str, An
             else:
                 await run_suite(payload.suite, judge=payload.judge, repeats=payload.repeats,
                                 concurrency=payload.concurrency, case_ids=payload.case_ids, run_id=run_id,
-                                origin="api")
+                                origin="api", preflight=True)
         except Exception as exc:  # noqa: BLE001 - surfaced on the run row
             logger.exception("eval run %s failed", run_id)
             async with get_database().session() as s:

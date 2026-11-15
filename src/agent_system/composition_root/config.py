@@ -116,13 +116,17 @@ class Settings(BaseSettings):
     web_js_render: bool = Field(default=True, description="Render JavaScript pages in headless Chromium when Playwright is installed")
 
     # Cost accounting: JSON map of model name -> USD per 1M tokens, e.g.
-    # {"gpt-6-astra": {"input": 1.25, "cached_input": 0.125, "output": 10}}.
-    # Used when genai-prices doesn't know a model; unpriced calls report cost as null.
+    # {"gpt-6-astra": {"input": 10, "cached_input": 1, "output": 50}}.
+    # Wins over genai-prices and over the built-in list prices in telemetry/trace.py; a model
+    # none of the three knows reports cost as null.
     model_pricing_json: str = Field(default="{}", description="Per-model token prices (USD / 1M tokens)")
 
     # Evals
     eval_openai_api_key: str | None = Field(default=None, description="OpenAI key used by eval runs (system under test + OpenAI judge)")
     eval_judge_model: str = Field(default="openai:gpt-6-astra", description="Model for the OpenAI judge")
+    eval_max_cost_usd: float = Field(
+        default=5.0, description="Spend cap for one eval run (system + judge), in USD; the run stops when it is reached. 0 = no cap",
+    )
     jev_base_url: str | None = Field(default=None, description="OpenAI-compatible base URL for the Jev judge")
     jev_api_key: str | None = Field(default=None, description="API key for the Jev judge endpoint")
     jev_model: str = Field(default="jev", description="Model id served at jev_base_url")
