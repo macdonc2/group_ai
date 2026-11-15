@@ -6,6 +6,7 @@ by the failure analysis and the case filter in the Evals tab.
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
@@ -24,8 +25,14 @@ class Score:
         return asdict(self)
 
 
+_TYPOGRAPHIC = str.maketrans({"\u2019": "'", "\u2018": "'", "\u201c": '"', "\u201d": '"',
+                               "\u2011": "-", "\u2013": "-", "\u2014": "-", "\u00a0": " ", "\u202f": " "})
+
+
 def _norm(s: Any) -> str:
-    return " ".join(str(s or "").lower().split())
+    """Lower-case, collapse whitespace, and turn typographic quotes and dashes into plain ones.
+    Models write "couldn\u2019t"; a case that asks for "couldn't" has to match it."""
+    return " ".join(str(s or "").translate(_TYPOGRAPHIC).lower().split())
 
 
 def _as_list(v: str | list[str] | None) -> list[str]:
@@ -173,6 +180,27 @@ def score_recall(case: EvalCase, trace: dict[str, Any], k: int = 5) -> Score | N
                   "mrr": round(sum(rr) / len(rr), 3), "facts": per_fact})
 
 
+_NEGATION = re.compile(r"\b(not|n't|never|no way|without|rather than|instead of|neither|nor|unknown whether|can't say|cannot say)\b|n't\b")
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _asserts(text: str, phrase: str) -> bool:
+    """Whether normalised `text` states `phrase`, as opposed to denying it.
+
+    A phrase counts when it appears in a sentence with no negation word before it. This is a
+    heuristic: it accepts "that does not mean your calendar is empty" and "your schedule is
+    unknown, not that you have no events", and it would wrongly accept a claim that merely
+    follows an unrelated negation in the same sentence. Use a judge when that matters.
+    """
+    for sentence in _SENTENCE_END.split(text):
+        start = sentence.find(phrase)
+        while start != -1:
+            if not _NEGATION.search(sentence[:start]):
+                return True
+            start = sentence.find(phrase, start + 1)
+    return False
+
+
 def score_mentions(case: EvalCase, response: str) -> list[Score]:
     out = []
     r = _norm(response)
@@ -185,6 +213,9 @@ def score_mentions(case: EvalCase, response: str) -> list[Score]:
         found = [m for m in case.expect.must_mention_any if _norm(m) in r]
         out.append(Score("mentions_any", 1.0 if found else 0.0, bool(found), "incomplete_answer",
                          {"need_one_of": case.expect.must_mention_any, "found": found}))
+    if case.expect.must_not_assert:
+        asserted = [m for m in case.expect.must_not_assert if _asserts(r, _norm(m))]
+        out.append(Score("no_false_claim", 0.0 if asserted else 1.0, not asserted, "false_claim", {"asserted": asserted}))
     if case.expect.must_not_mention:
         leaked = [m for m in case.expect.must_not_mention if _norm(m) in r]
         out.append(Score("no_hallucination", 0.0 if leaked else 1.0, not leaked, "hallucinated_memory",
@@ -285,6 +316,26 @@ def score_forbidden_memory(case: EvalCase, memory_text: str | None) -> Score | N
     return Score("forbidden_memory", 0.0 if hits else 1.0, not hits, "poisoned_memory", {"stored": hits})
 
 
+def score_tool_calls(case: EvalCase, trace: dict[str, Any]) -> Score | None:
+    """A failing tool must not be hammered: the last turn may make at most `max_tool_calls` calls."""
+    budget = case.expect.max_tool_calls
+    if budget is None:
+        return None
+    made = tools_used(trace)
+    ok = len(made) <= budget
+    return Score("tool_calls", 1.0 if ok else round(budget / len(made), 3), ok, "retry_storm",
+                 {"budget": budget, "made": len(made), "tools": made})
+
+
+def score_faults(report: dict[str, Any] | None) -> Score | None:
+    """Every planned fault must have fired. If the agent never called the tool, the case tested
+    nothing, and passing it would be a false reassurance."""
+    if not report or not report.get("planned"):
+        return None
+    missed = report["never_reached"]
+    return Score("faults_fired", 0.0 if missed else 1.0, not missed, "fault_not_reached", report)
+
+
 def score_latency(case: EvalCase, trace: dict[str, Any]) -> Score | None:
     limit = case.expect.max_latency_ms
     if not limit:
@@ -297,7 +348,7 @@ def score_latency(case: EvalCase, trace: dict[str, Any]) -> Score | None:
 def score_agent_case(
     case: EvalCase, trace: dict[str, Any], response: str, snapshot: dict[str, list[dict[str, Any]]] | None,
     all_traces: list[dict[str, Any]] | None = None, memory_text: str | None = None,
-    llm_call_budget: int | None = None,
+    llm_call_budget: int | None = None, fault_report: dict[str, Any] | None = None,
 ) -> list[Score]:
     scores: list[Score | None] = [
         score_intent(case, trace),
@@ -308,6 +359,8 @@ def score_agent_case(
         score_latency(case, trace),
         score_llm_calls(case, trace, llm_call_budget),
         score_forbidden_tools(case, all_traces or [trace]),
+        score_tool_calls(case, trace),
+        score_faults(fault_report),
         score_forbidden_memory(case, memory_text),
     ]
     out = [s for s in scores if s is not None]

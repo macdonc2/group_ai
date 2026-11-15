@@ -49,19 +49,27 @@ def react_tool_input(tool: str | None, proposed: str | None, user_input: str, st
     return step_description
 
 
-def needs_react_plan(auto_plan: bool, requires_planning: bool, is_task: bool, has_suggested_tool: bool) -> bool:
+# Tools whose single call is the whole of what was asked. A `task` that names one is run, not
+# planned (see needs_react_plan). Add a tool here only with an eval case showing planning broke it.
+DIRECT_ANSWER_TOOLS = frozenset({"read_webpage"})
+
+
+def needs_react_plan(auto_plan: bool, requires_planning: bool, is_task: bool, has_direct_tool: bool) -> bool:
     """Whether a turn enters ReAct planning (CreatePlan) or goes straight on.
 
-    A task with no tool to run is planned. A task for which intent analysis
-    already picked a tool is not: planning discards that pick and leaves the
-    planner to rediscover it, which it does only some of the time ("Summarize
-    this page: <url>" was planned around a `web_fetch` tool that does not exist
-    and answered that the page could not be opened). The intent prompt already
-    says tools and reasoning mode are mutually exclusive; this makes routing
-    agree. An explicit `requires_planning` still wins, and `auto_plan` off
-    still disables planning entirely.
+    A task is planned unless the tool intent analysis picked is the whole job. Reading the page
+    the user handed over is: "Summarize this page: <url>" (task, `read_webpage`) used to be
+    planned, the plan discarded that pick, and the page was often never opened.
+
+    Only tools in `DIRECT_ANSWER_TOOLS` count. Intent analysis also names an information tool
+    for genuine planning tasks ("plan a 3-day road trip" comes back with `web_search`, "plan a
+    birthday dinner" with `recall_about_topic`), and there the plan is what the user wants. A
+    first version skipped planning for any picked tool; the routing and end-to-end eval suites
+    rejected it because exactly those tasks stopped being planned.
+
+    An explicit `requires_planning` still wins, and `auto_plan` off still disables planning.
     """
-    return bool(auto_plan and (requires_planning or (is_task and not has_suggested_tool)))
+    return bool(auto_plan and (requires_planning or (is_task and not has_direct_tool)))
 
 
 async def _intent_memory_hints(ctx, limit: int = 5, min_score: float = 0.7) -> list[str]:
@@ -477,14 +485,15 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         auto_plan = getattr(ctx.state.user.preferences, "auto_plan", True)
         is_task = bool(ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK)
         has_tool = bool(ctx.state.requires_tool and ctx.state.tool_name)
-        needs_plan = needs_react_plan(auto_plan, bool(ctx.state.plan_needed), is_task, has_tool)
+        direct_tool = has_tool and ctx.state.tool_name in DIRECT_ANSWER_TOOLS
+        needs_plan = needs_react_plan(auto_plan, bool(ctx.state.plan_needed), is_task, direct_tool)
 
         # Determine if a new plan is needed based on intent analysis
         if ctx.deps.decide(
-            "CheckPlan", "auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))", needs_plan,
+            "CheckPlan", "auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬direct_tool))", needs_plan,
             "CreatePlan" if needs_plan else "ExecutePlan",
             auto_plan=auto_plan, requires_planning=ctx.state.plan_needed, intent_is_task=is_task,
-            suggested_tool=ctx.state.tool_name if has_tool else None,
+            suggested_tool=ctx.state.tool_name if has_tool else None, direct_tool=direct_tool,
         ):
             # Enable ReAct mode for task intents - will use step-by-step reasoning
             ctx.state.react_mode = True
@@ -495,7 +504,7 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
 
         # No plan needed, go directly to response
         reason = ("Auto-plan is off" if not auto_plan
-                  else "Intent analysis already picked a tool" if is_task else "Not a task intent")
+                  else "The picked tool is the whole task" if is_task else "Not a task intent")
         await ctx.deps.emit_event("node_complete", "CheckPlan", "No plan needed")
         # Skip CreatePlan
         await ctx.deps.emit_event("node_skipped", "CreatePlan", reason)
@@ -1378,7 +1387,7 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         ctx: GraphRunContext[WorkflowState, AgentDependencies],
     ) -> "EvaluateResult":
         """Execute the tool and capture the result."""
-        from agent_system.adapters.outbound.llm.tools import AVAILABLE_TOOLS
+        from agent_system.adapters.outbound.llm.tools import AVAILABLE_TOOLS, run_tool
         
         await ctx.deps.emit_event("node_start", "ExecuteTool", f"Executing {ctx.state.tool_name}...")
         
@@ -1444,10 +1453,10 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     if "user_id" in tool_func.__code__.co_varnames and "user_id" not in tool_args:
                         tool_args["user_id"] = str(ctx.state.user.id)
                     logger.info(f"Executing tool {tool_name} with args: {list(tool_args.keys())}")
-                    result = await tool_func(**tool_args)
+                    result = await run_tool(tool_name, tool_func, **tool_args)
                     logger.info(f"Tool {tool_name} result: success={result.success}, message={result.message[:100] if result.message else 'None'}")
             else:
-                result = await tool_func(**tool_args)
+                result = await run_tool(tool_name, tool_func, **tool_args)
             
             tool_ok = bool(result.success)
             if ctx.deps.trace is not None and tool_name in ("recall_about_topic", "recall_from_period"):

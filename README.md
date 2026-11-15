@@ -102,7 +102,7 @@ For complex questions and tasks, the system uses **ReAct (Reasoning + Acting)** 
 
 **What triggers it:** `AnalyzeIntent` sets `requires_planning` for open-ended how-to,
 troubleshooting, design, and decision-making questions — anything whose answer has several
-phases that build on each other. `CheckPlan` then enters ReAct mode (task intents always do).
+phases that build on each other. `CheckPlan` then enters ReAct mode (task intents do too, unless the chosen tool is the whole task, such as reading a page the user gave).
 Simple lookups, clarifications, and chit-chat skip it, and so does anything a tool can answer:
 reasoning mode bypasses the tool `AnalyzeIntent` picked, so the two are mutually exclusive.
 Run `uv run scripts/test_planning_trigger.py` to check the trigger after changing the prompt.
@@ -364,7 +364,7 @@ Every agent turn is traced, and an eval harness measures the agent's behaviour a
 
 - **Turn tracing.** Each turn records:
   - every FSM node visit, with its latency;
-  - the named predicate behind each branch, with its inputs (e.g. `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))`);
+  - the named predicate behind each branch, with its inputs (e.g. `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬direct_tool))`);
   - memory retrieval hits with scores, and whether they reached the prompt;
   - tool inputs and outputs;
   - tokens and cost per LLM call, attributed to the node that made it.

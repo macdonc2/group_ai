@@ -143,6 +143,9 @@ class EvalEnv:
         from agent_system.evals.world_fixture import install_world_fixture_hook
 
         install_world_fixture_hook()
+        from agent_system.evals.tool_faults import install_tool_fault_hook
+
+        install_tool_fault_hook()
         embedder = OpenAIEmbeddingAdapter(api_key=api_key)
         kg = container.knowledge_graph_adapter
         if kg is not None:
@@ -264,10 +267,14 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
         from agent_system.evals.world_fixture import reset_world, set_world
 
         token = set_web_fixture(case.web_fixture)
+        from agent_system.evals.tool_faults import reset_faults, set_faults
+
         world = set_world(case.events_fixture, case.calendar_fixture, seeded.user.timezone)
+        fault_plan, fault_token = set_faults(case.tool_faults)
         try:
             turns = await play_turns(case, seeded, env)
         finally:
+            reset_faults(fault_token)
             reset_world(world)
             reset_web_fixture(token)
         wants_kg = case.expect.entities or case.expect.forbid_entities or case.expect.forbid_memory
@@ -278,7 +285,8 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
             memory_text = json.dumps({"patterns": last.get("learned_patterns", []), "graph": snapshot}, default=str)
         scores = score_agent_case(case, last["trace"], last["response"], snapshot,
                                   all_traces=[t["trace"] for t in turns], memory_text=memory_text,
-                                  llm_call_budget=suite.max_llm_calls)
+                                  llm_call_budget=suite.max_llm_calls,
+                                  fault_report=fault_plan.report() if fault_plan else None)
         judgements, judge_trace = await judge_agent_case(case, suite, turns, judges) if judges else ({}, None)
     finally:
         if seeded is not None:

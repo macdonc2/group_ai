@@ -14,6 +14,9 @@ from agent_system.evals.schema import Suite
 
 # Where each failure category usually originates in this codebase.
 SUSPECTS: dict[str, str] = {
+    "false_claim": "the reply stated something the tool result does not support; response prompts in llm/agents.py and llm/chat_agent.py",
+    "retry_storm": "how a failed tool result is handled: `EvaluateResult` in fsm/nodes.py, the loop's INSTRUCTIONS in llm/chat_agent.py",
+    "fault_not_reached": "the case itself: the agent never called the tool the fault was planned for, so nothing was tested",
     "wrong_intent": "`AnalyzeIntent` / `INTENT_SYSTEM_PROMPT` in adapters/outbound/llm/agents.py",
     "wrong_route": "branch predicates in adapters/outbound/fsm/nodes.py (`CheckPlan`, `ExecutePlan`, `EvaluateResult`)",
     "wrong_tool": "`suggested_tool` from the intent agent; tool descriptions in `get_tools_description()` (llm/tools.py)",

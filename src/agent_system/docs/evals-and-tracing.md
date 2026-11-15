@@ -87,7 +87,7 @@ Click any case to open its predicate tree, its scores with the judges' reasoning
 The predicate tree draws one response as a path through the assistant's workflow:
 **ReceiveInput → AnalyzeIntent → UpdateKnowledge → CheckPlan → (CreatePlan) → ExecutePlan → (SelectTool → ExecuteTool → EvaluateResult) → GenerateResponse → FinalizeKnowledge**.
 
-- **Solid boxes** are the steps that ran, in order. Each shows how long it took, how many model calls it made, and the checks it evaluated, with ✓ or ✗ (for example `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))`).
+- **Solid boxes** are the steps that ran, in order. Each shows how long it took, how many model calls it made, and the checks it evaluated, with ✓ or ✗ (for example `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬direct_tool))`).
 - **Edge labels** show which check decided the next step.
 - **Grey dashed boxes** are paths the workflow could have taken but didn't.
 - **Red dashed boxes** are steps a test expected that never happened.

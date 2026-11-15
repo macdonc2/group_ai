@@ -20,6 +20,29 @@ class ToolResult(BaseModel):
     message: str
 
 
+# ============ Calling a tool ============
+
+# An optional hook run before every tool call. It may return a ToolResult to use instead of
+# calling the tool, raise, or return None to let the tool run. Nothing sets it in production;
+# evals use it to make tools fail on purpose (`evals/tool_faults.py`).
+_tool_interceptor: Any = None
+
+
+def set_tool_interceptor(interceptor: Any) -> None:
+    global _tool_interceptor
+    _tool_interceptor = interceptor
+
+
+async def run_tool(name: str, func: Any, **kwargs: Any) -> Any:
+    """Call a tool function. Both chat engines call tools through here, so it is the one place
+    to observe or replace a call."""
+    if _tool_interceptor is not None:
+        early = await _tool_interceptor(name, kwargs)
+        if early is not None:
+            return early
+    return await func(**kwargs)
+
+
 # ============ Web Search Tool ============
 
 async def web_search(query: str, num_results: int = 5) -> ToolResult:

@@ -109,3 +109,18 @@ cases:
       tool: get_upcoming_events
       must_mention_any: ["6:00 PM", "6 PM", "6:00 p.m.", "6 p.m.", "6pm", "18:00"]
       must_not_mention: ["12:00 PM", "12 PM", "noon", "midnight"]
+
+  - id: a_commanded_page_summary_reads_the_page
+    incident: >
+      2026-11-15: found by the resilience suite, not by a user. "Summarize this page for me: <url>"
+      is a command, so the state machine planned it, and the plan searched memory for the URL
+      instead of reading the page. The router had chosen read_webpage; planning discarded that.
+      Fixed in CheckPlan: a task whose chosen tool is the whole job (read_webpage) is run, not planned.
+    web_fixture: |
+      Lantern Room Jazz Night. Saturday: the Ada Voss Trio. Doors 7pm, music 8pm, $15 cover.
+    turns: ["Summarize this page for me: https://tickets.example.com/event/lantern-room-jazz-night"]
+    expect:
+      tool: [read_webpage, web_search]
+      forbid_nodes: [CreatePlan]
+      forbid_tools: [add_to_calendar, recall_about_topic]
+      must_mention: ["Ada Voss"]
