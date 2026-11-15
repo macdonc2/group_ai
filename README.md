@@ -34,11 +34,11 @@ src/agent_system/
 │   ├── inbound/api/           # FastAPI REST + WebSocket endpoints
 │   └── outbound/
 │       ├── persistence/       # SQLAlchemy repositories
-│       ├── llm/               # PydanticAI agents + tools (chat, graph explorer, journal agent and journal memory)
+│       ├── llm/               # PydanticAI agents + tools (FSM agents, chat loop engine, graph explorer, journal agent and memory)
 │       ├── graph/             # Neo4j knowledge graph adapter
 │       ├── embedding/         # OpenAI embeddings adapter
 │       ├── telemetry/         # Per-turn traces: spans, predicates, retrievals, LLM usage/cost
-│       └── fsm/               # pydantic-graph workflow engine
+│       └── fsm/               # pydantic-graph workflow engine; also picks the engine per turn
 ├── evals/                     # Eval harness: datasets, seeding, scorers, rubric judges, CLI
 └── composition_root/          # Dependency injection, config
 
@@ -77,7 +77,7 @@ The platform uses specialized agents powered by **PydanticAI** with structured o
 
 ### FSM Workflow Engine
 
-Every conversation flows through a state machine for consistent, traceable processing:
+By default every conversation flows through a state machine for consistent, traceable processing. It is one of two chat engines; the other is the [single tool loop](#chat-loop-engine) below.
 
 ![FSM Workflow](docs/images/fsm-workflow.png)
 
@@ -163,6 +163,48 @@ Step 3/5: Work through the day-by-day process
 | `react_step_complete` | Shows thought, action, and observation for a step |
 | `react_synthesis_start` | Beginning of final response synthesis |
 | `react_synthesis_complete` | Synthesis finished with key insights |
+
+### Chat Loop Engine
+
+The second chat engine is one PydanticAI agent in one tool loop (`adapters/outbound/llm/chat_agent.py`). Where the FSM decides the route in code (an intent agent picks a tool, code builds the arguments, a coordinator writes the reply), the loop gives the model the tools and lets it decide: it may call none, one or several in a turn, read the results and then answer. It replaces the FSM states from AnalyzeIntent to GenerateResponse. The post-reply step, FinalizeKnowledge, is reused unchanged, so both engines learn from a turn in the same way.
+
+```mermaid
+flowchart LR
+    In["User message<br/>+ last 12 messages<br/>+ date, up to 5 notes, persona"] --> Loop
+    subgraph Loop["ChatLoop · exits: answer, 8 model calls, 120 s"]
+        Model["Model"] -- "tool call" --> Tools["10 tools<br/>capped text results"]
+        Tools -- "result" --> Model
+    end
+    Loop -- "answered" --> FK["FinalizeKnowledge<br/>memory, embeddings, suggestions"]
+    Loop -- "step_limit · timeout · error" --> End["Plain message,<br/>nothing remembered"]
+```
+
+**Selecting it.** `CHAT_ENGINE=fsm` is the default; `CHAT_ENGINE=loop` switches 1:1 chats to the loop. A superuser also gets an FSM/Loop button in the chat input, which sends the choice with each message, so the loop can be tried on the live app without changing anyone else's chats (`requested_engine` ignores the field for other users). Group chats always use the FSM. The journal's agent is separate and does not depend on this setting.
+
+**What the model is given.**
+
+- **Context, just in time.** The prompt holds the recent conversation (12 messages, each clipped), the current date and time in the user's timezone, up to five stored notes and the persona voice. Memory, events, docs and web pages are fetched through tools only when the question needs them.
+- **Ten tools** instead of the FSM's twenty-seven: `web_search`, `read_webpage`, `recall_about_topic`, `list_entities`, `summarize_user_knowledge`, `get_upcoming_events`, `get_houston_events`, `add_to_calendar`, `search_internal_docs`, `calculate`. Each has its description on the tool, typed arguments and a capped text result (6,000 characters by default, 8,000 for a web page, 10,000 for an events listing) with a hint for narrowing the request.
+- **Provenance in history.** Earlier assistant messages are replayed with a `[Built from: <tools>]` line, so on a follow-up the model can tell a tool-backed answer from one it wrote unaided. The events listing is treated as the source of record: the model is told not to withdraw details that came from it.
+
+**Exits.** A turn ends in one of four ways, recorded as `ChatLoopOutcome.stopped`: `answered`, `step_limit` (8 model calls, `CHAT_LOOP_MAX_REQUESTS`), `timeout` (120 seconds, `CHAT_LOOP_TIMEOUT_S`) or `error`. The loop never raises for these; the user gets a plain message and nothing from a failed turn is saved to memory. The whole turn, including memory work, is also bound by the limits shared with the FSM (`CHAT_TURN_TIMEOUT_S`, `CHAT_TURN_MAX_LLM_CALLS`).
+
+**Trust.** Web text is wrapped in `<untrusted>` tags and labelled as data. Once a turn has read any web content, the one write tool, `add_to_calendar`, refuses to run for the rest of that turn, so text on a page cannot cause a calendar write.
+
+**Streaming and tracing.** The reply streams as it is written. Each tool call is recorded as a step with its arguments and a summary, and the turn appears in the trace as a `ChatLoop` node followed by `FinalizeKnowledge`, so the Evals tab can compare the two engines on the same suites.
+
+**Trade-offs.**
+
+| | FSM | Loop |
+|---|-----|------|
+| Who routes | Code and an intent agent | The model |
+| Tools per turn | Usually one (more in ReAct mode) | Several, chosen as it goes |
+| Model calls for a simple turn | Several (intent, reply, memory) | Fewer (the loop, then memory) |
+| Predictability | The same path for the same intent; listings can bypass the model and be shown verbatim | The model may summarise or leave out part of a tool result |
+| Adding a tool | Intent rules, argument-building code, routing | A function with a docstring |
+| Failure modes | Wrong intent sends the turn down the wrong path | Model skips a tool it needed, or curates a long result |
+
+The FSM stays the default until the eval suites show the loop is at least as good.
 
 ### Built-in Tools
 
@@ -1063,7 +1105,7 @@ For group messages, embedding storage runs in the background (fire-and-forget) t
 
 Two sets of docs ship with this repository:
 
-- **This README** is the engineering account: architecture, the agent roster, the FSM, memory, API reference and setup.
+- **This README** is the engineering account: architecture, the agent roster, the two chat engines (FSM and tool loop), memory, API reference and setup.
 - **[docs/graph-explorer.md](docs/graph-explorer.md)** covers the graph explorer and its agent: architecture, tools, design decisions, evals and API.
 - **[docs/journal.md](docs/journal.md)** covers the journal: storage, how entries reach memory, the journal agent, calendar suggestions, access control and known limits.
 - **[docs/evals.md](docs/evals.md)** is the reference for the eval harness and turn tracing: suites, scorers, rubrics, judges, the Evals tab and the predicate tree, configuration and API.
@@ -1138,6 +1180,13 @@ MODEL_PRICING_JSON={"gpt-6-astra": {"input": 0, "output": 0}}   # USD per 1M tok
 # Optional: web page reading (web_search reads the top N results; read_webpage reads a URL)
 WEB_READ_PAGES=3
 WEB_JS_RENDER=true                    # headless Chromium via Playwright (installed in the Docker image)
+
+# Optional: chat engine for 1:1 chats ("fsm" is the default; "loop" is the single tool loop)
+CHAT_ENGINE=fsm
+CHAT_LOOP_MAX_REQUESTS=8              # model calls per turn (loop engine)
+CHAT_LOOP_TIMEOUT_S=120               # seconds per turn (loop engine)
+CHAT_TURN_TIMEOUT_S=240               # whole turn, either engine, including memory work
+CHAT_TURN_MAX_LLM_CALLS=30
 
 # Optional: LLM request limits
 LLM_REQUEST_TIMEOUT_S=120
