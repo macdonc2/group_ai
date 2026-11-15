@@ -22,6 +22,8 @@ import type {
   TracedConversation,
   ConversationTrace,
   RunComparison,
+  CalibrationReport,
+  HumanLabels,
 } from '../types';
 import type { JournalDays, JournalEntry, JournalMessage, JournalStreamEvent } from '../types/journal';
 import { useAuthStore } from '../stores/authStore';
@@ -503,6 +505,9 @@ export const api = {
     start: (body: { suite?: string; conversation_ids?: string[]; rubrics?: string[]; judge: string; repeats?: number; concurrency?: number; case_ids?: string[] }) =>
       fetchApi<{ id: string; status: string }>('/evals/runs', { method: 'POST', body: JSON.stringify(body) }),
     compare: (a: string, b: string) => fetchApi<RunComparison>(`/evals/compare?a=${a}&b=${b}`),
+    setLabel: (resultId: string, rubric: string, passed: boolean | null, note = '') =>
+      fetchApi<{ labels: HumanLabels }>(`/evals/cases/${resultId}/labels/${encodeURIComponent(rubric)}`, { method: 'PUT', body: JSON.stringify({ passed, note }) }),
+    calibration: () => fetchApi<CalibrationReport>('/evals/calibration'),
     graph: () => fetchApi<FsmTopology>('/evals/graph'),
     conversations: () => fetchApi<TracedConversation[]>('/evals/conversations'),
     conversationTraces: (id: string) => fetchApi<ConversationTrace[]>(`/evals/traces/conversation/${id}`),

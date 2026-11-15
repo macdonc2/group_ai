@@ -5,7 +5,7 @@ import { AlertTriangle, CheckCircle2, Loader2, XCircle, GitCompare } from 'lucid
 import { api } from '../../lib/api';
 import { cn } from '../../lib/utils';
 import { useEvalStore } from '../../stores/evalStore';
-import type { EvalSummary, RunComparison } from '../../types';
+import type { CalibrationReport, EvalSummary, RunComparison } from '../../types';
 import { fmtMs, fmtTokens, fmtUsd } from './treeModel';
 
 function Card({ title, children, className }: { title: string; children: React.ReactNode; className?: string }) {
@@ -88,6 +88,62 @@ function JudgeTable({ summary }: { summary: EvalSummary }) {
 
 const pct = (v: number | null | undefined) => (v == null ? '–' : `${Math.round(v * 100)}%`);
 
+const signedPct = (v: number | null | undefined) => (v == null ? '–' : `${v > 0 ? '+' : ''}${Math.round(v * 100)} pts`);
+
+const STATUS_TEXT = { needs_more_labels: 'needs more labels', trustworthy: 'agrees with you', unreliable: 'disagrees too often' } as const;
+
+function CalibrationCard({ onOpenCase }: { onOpenCase: (id: string) => void }) {
+  const [report, setReport] = useState<CalibrationReport | null>(null);
+  useEffect(() => { api.evals.calibration().then(setReport).catch(() => setReport(null)); }, []);
+  if (!report) return null;
+  return (
+    <Card title="Grader calibration against your labels">
+      {report.graders.length === 0 ? (
+        <p className="text-xs text-slate-500">
+          No labels yet. Open a case, go to Scores &amp; judges and mark it pass or fail. About {report.min_labels} labels per rubric,
+          with at least {report.min_per_class} passes and {report.min_per_class} fails, are needed before these numbers mean much.
+        </p>
+      ) : (
+        <>
+          <p className="text-xs text-slate-500 mb-2">{report.labels} labels on {report.labelled_results} case results, across all runs.</p>
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-left text-slate-500">
+                <th className="py-1 font-medium">grader</th><th className="font-medium">rubric</th><th className="text-right font-medium">labels</th>
+                <th className="text-right font-medium">agrees</th><th className="text-right font-medium">catches failures</th>
+                <th className="text-right font-medium">passes good</th><th className="text-right font-medium">kappa</th><th className="pl-3 font-medium">status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {report.graders.map((g) => (
+                <tr key={`${g.grader}:${g.rubric}`} className="border-t border-slate-100 dark:border-slate-700/60 align-top">
+                  <td className="py-1 font-mono text-[11px]">{g.grader}</td>
+                  <td className="font-mono text-[11px]">{g.rubric}</td>
+                  <td className="text-right font-mono">{g.n}</td>
+                  <td className="text-right font-mono">{pct(g.agreement)}</td>
+                  <td className="text-right font-mono">{pct(g.catches_failures)}</td>
+                  <td className="text-right font-mono">{pct(g.passes_good)}</td>
+                  <td className="text-right font-mono">{g.kappa ?? '–'}</td>
+                  <td className={cn('pl-3', g.status === 'trustworthy' && 'text-emerald-700 dark:text-emerald-400', g.status === 'unreliable' && 'text-red-700 dark:text-red-400')}>
+                    {STATUS_TEXT[g.status]}
+                    {g.disagreements.length > 0 && (
+                      <span className="text-slate-500"> · disagreed on{' '}
+                        {g.disagreements.slice(0, 6).map((x, i) => (
+                          <button key={x.result_id + i} onClick={() => onOpenCase(x.result_id)} className="font-mono text-blue-600 dark:text-blue-400 hover:underline mr-1">{x.case_id}</button>
+                        ))}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </>
+      )}
+    </Card>
+  );
+}
+
 function CompareCard({ runId }: { runId: string }) {
   const { runs, run, compareWith, setCompareWith } = useEvalStore();
   const [fetched, setFetched] = useState<{ key: string; data: RunComparison | null } | null>(null);
@@ -117,6 +173,17 @@ function CompareCard({ runId }: { runId: string }) {
       </select>
       {cmp && (
         <div className="mt-3 space-y-2">
+          {cmp.paired && cmp.paired.verdict !== 'no_shared_cases' && cmp.paired.interval && (
+            <div className="rounded border border-slate-200 dark:border-slate-700 p-2 text-xs">
+              <div className={cn('font-semibold', cmp.paired.verdict === 'better' && 'text-emerald-700 dark:text-emerald-400', cmp.paired.verdict === 'worse' && 'text-red-700 dark:text-red-400')}>
+                {cmp.paired.verdict === 'better' ? 'This run is better than the baseline' : cmp.paired.verdict === 'worse' ? 'This run is worse than the baseline' : 'No clear difference on this evidence'}
+              </div>
+              <div className="text-slate-600 dark:text-slate-300 mt-0.5">
+                Pass rate {pct(cmp.paired.pass_rate_a)} to {pct(cmp.paired.pass_rate_b)} on {cmp.paired.shared_cases} shared cases.
+                Difference {signedPct(cmp.paired.difference)}, 95% interval {signedPct(cmp.paired.interval.low)} to {signedPct(cmp.paired.interval.high)}, p = {cmp.paired.p_value}.
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap gap-3 text-xs">
             <span className="inline-flex items-center gap-1 text-red-600 dark:text-red-400"><XCircle size={13} /> Regressions: {cmp.regressions.join(', ') || 'none'}</span>
             <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400"><CheckCircle2 size={13} /> Fixed: {cmp.fixes.join(', ') || 'none'}</span>
@@ -182,7 +249,13 @@ export function EvalRunView({ onOpenCase }: { onOpenCase: (id: string) => void }
         {hasSummary && (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <Headline label="Pass rate" value={pct(s.pass_rate)} sub={`${s.passed} of ${s.cases} case runs`} />
+              <Headline
+                label="Pass rate"
+                value={pct(s.pass_rate)}
+                sub={s.pass_rate_interval
+                  ? `${s.passed} of ${s.cases} · 95% interval ${pct(s.pass_rate_interval.low)} to ${pct(s.pass_rate_interval.high)}`
+                  : `${s.passed} of ${s.cases} case runs`}
+              />
               <Headline label="Turn latency p50" value={fmtMs(s.latency.turn_p50_ms)} sub={`p95 ${fmtMs(s.latency.turn_p95_ms)}`} />
               <Headline
                 label={s.cost.unpriced_calls ? 'Cost / case (lower bound)' : 'Cost / case'}
@@ -191,6 +264,18 @@ export function EvalRunView({ onOpenCase }: { onOpenCase: (id: string) => void }
               />
               <Headline label="Tokens" value={fmtTokens(s.cost.tokens.input + s.cost.tokens.output)} sub={`${fmtTokens(s.cost.tokens.input)} in · ${fmtTokens(s.cost.tokens.output)} out`} />
             </div>
+            {s.consistency && (
+              <Card title={`Consistency over ${s.consistency.k} attempts per case`}>
+                <div className="grid grid-cols-3 gap-3">
+                  <Headline label="Passed every time" value={pct(s.consistency.pass_all_k)} sub="the reliable share" />
+                  <Headline label="Passed at least once" value={pct(s.consistency.pass_any)} sub="the best-case share" />
+                  <Headline label="Mixed results" value={pct(s.consistency.flaky_rate)} sub={`${s.consistency.flaky.length} cases`} />
+                </div>
+                {s.consistency.flaky.length > 0 && (
+                  <p className="mt-2 text-xs text-slate-600 dark:text-slate-300">Mixed: <span className="font-mono">{s.consistency.flaky.join(', ')}</span></p>
+                )}
+              </Card>
+            )}
             {(s.cost.unpriced_calls || s.cost.judge_unpriced_calls) ? (
               <p className="text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
                 <AlertTriangle size={13} /> {s.cost.unpriced_calls ?? 0} system and {s.cost.judge_unpriced_calls ?? 0} judge LLM calls used models
@@ -302,6 +387,7 @@ export function EvalRunView({ onOpenCase }: { onOpenCase: (id: string) => void }
         )}
 
         {run.status === 'complete' && <CompareCard runId={run.id} />}
+        <CalibrationCard onOpenCase={onOpenCase} />
         <p className="text-[11px] text-slate-400 flex items-center gap-1"><GitCompare size={11} /> Run config: {JSON.stringify(run.config)}</p>
       </div>
     </div>

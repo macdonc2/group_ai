@@ -3,6 +3,7 @@
 from agent_system.adapters.outbound.persistence.database import Base, Database
 from agent_system.adapters.outbound.persistence.eval_models import (
     EvalCaseResultModel,
+    EvalHumanLabelModel,
     EvalRunModel,
     TurnTraceModel,
 )
@@ -75,6 +76,7 @@ __all__ = [
     "ResearchFigureModel",
     "ResearchAudioModel",
     "TurnTraceModel",
+    "EvalHumanLabelModel",
     "EvalRunModel",
     "EvalCaseResultModel",
     "JournalEntryModel",

@@ -53,11 +53,55 @@ export function CaseDetail({ onBack }: { onBack: () => void }) {
   );
 }
 
+const BLIND_KEY = 'evals.blindLabelling';
+
+function LabelRow({ rubric, title }: { rubric: string; title: string }) {
+  const label = useEvalStore((s) => s.caseDetail?.labels?.[rubric]);
+  const setLabel = useEvalStore((s) => s.setLabel);
+  const [note, setNote] = useState(label?.note ?? '');
+  const choice = (passed: boolean) => setLabel(rubric, label?.passed === passed ? null : passed, note);
+  return (
+    <div className="flex flex-wrap items-center gap-2 py-1">
+      <span className="w-44 font-mono text-[11px]">{title}</span>
+      <button
+        onClick={() => choice(true)}
+        className={cn('px-2 py-0.5 rounded border', label?.passed === true ? 'bg-emerald-600 border-emerald-600 text-white' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300')}
+      >Pass</button>
+      <button
+        onClick={() => choice(false)}
+        className={cn('px-2 py-0.5 rounded border', label?.passed === false ? 'bg-red-600 border-red-600 text-white' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300')}
+      >Fail</button>
+      <input
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        onBlur={() => { if (label && note !== label.note) setLabel(rubric, label.passed, note); }}
+        placeholder="Why (optional)"
+        className="flex-1 min-w-40 rounded border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-2 py-0.5"
+      />
+    </div>
+  );
+}
+
 function Scores() {
   const d = useEvalStore((s) => s.caseDetail)!;
+  const [blind, setBlind] = useState(() => { try { return localStorage.getItem(BLIND_KEY) === '1'; } catch { return false; } });
+  const toggleBlind = () => setBlind((v) => { try { localStorage.setItem(BLIND_KEY, v ? '0' : '1'); } catch { /* storage unavailable */ } return !v; });
+  const rubrics = Array.from(new Set(Object.values(d.judgements).flatMap((r) => Object.keys(r))));
+  const hidden = (rubric: string) => blind && !d.labels?.[rubric];
   return (
     <div className="overflow-y-auto p-4 space-y-4 text-xs">
       {d.error && <p className="text-red-600 dark:text-red-400">{d.error}</p>}
+      <section className="rounded border border-slate-200 dark:border-slate-700 p-2">
+        <div className="flex flex-wrap items-center gap-3 mb-1">
+          <h4 className="font-semibold">Your verdict</h4>
+          <span className="text-slate-500">Used to check the judges. Read the turn first, then decide.</span>
+          <label className="ml-auto inline-flex items-center gap-1 text-slate-500">
+            <input type="checkbox" checked={blind} onChange={toggleBlind} /> Hide judge scores until I have labelled
+          </label>
+        </div>
+        <LabelRow key={`${d.id}:overall`} rubric="overall" title="overall (whole case)" />
+        {rubrics.map((r) => <LabelRow key={`${d.id}:${r}`} rubric={r} title={r} />)}
+      </section>
       <section>
         <h4 className="font-semibold mb-2">Deterministic checks</h4>
         <div className="space-y-2">
@@ -83,11 +127,12 @@ function Scores() {
               <div key={rname} className="rounded border border-slate-200 dark:border-slate-700 p-2">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="font-semibold">{rname}</span>
-                  <span className="font-mono text-slate-500">mean {r.mean?.toFixed(2) ?? '–'}</span>
+                  {!hidden(rname) && <span className="font-mono text-slate-500">mean {r.mean?.toFixed(2) ?? '–'}</span>}
                   {r.error && <span className="text-red-600">{r.error}</span>}
                 </div>
-                {r.summary && <p className="text-slate-600 dark:text-slate-300 mb-1">{r.summary}</p>}
-                <table className="w-full">
+                {hidden(rname) && <p className="text-slate-500">Hidden until you label this rubric above.</p>}
+                {!hidden(rname) && r.summary && <p className="text-slate-600 dark:text-slate-300 mb-1">{r.summary}</p>}
+                <table className={cn('w-full', hidden(rname) && 'hidden')}>
                   <tbody>
                     {Object.entries(r.dimensions ?? {}).map(([dim, v]) => (
                       <tr key={dim} className="border-t border-slate-100 dark:border-slate-700/60 align-top">

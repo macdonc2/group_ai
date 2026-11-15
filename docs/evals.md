@@ -16,6 +16,8 @@ Contents:
 - [Suites and cases](#suites-and-cases)
 - [Scoring](#scoring)
 - [Judges and rubrics](#judges-and-rubrics)
+- [Uncertainty: intervals, consistency, paired comparison](#uncertainty-intervals-consistency-paired-comparison)
+- [Checking the graders against a person](#checking-the-graders-against-a-person)
 - [Evaluating real conversations](#evaluating-real-conversations)
 - [Failure analysis](#failure-analysis)
 - [Running evals](#running-evals)
@@ -56,6 +58,8 @@ Contents:
 | Deterministic scorers | `evals/scorers.py` |
 | Judges and rubrics | `evals/judges.py`, `evals/rubrics/*.md` |
 | Failure analysis | `evals/failure_analysis.py` |
+| Intervals, consistency, paired comparison | `evals/stats.py` |
+| Human labels and grader calibration | `evals/calibration.py`, table `eval_human_labels` |
 | CLI | `evals/__main__.py` (`python -m agent_system.evals`) |
 | API | `adapters/inbound/api/routes/evals.py` (`/api/v1/evals`) |
 | Tables | `adapters/outbound/persistence/eval_models.py` |
@@ -214,6 +218,65 @@ Judge calls run under `llm_role("judge")`, so their tokens and cost are reported
 
 ---
 
+## Uncertainty: intervals, consistency, paired comparison
+
+A pass rate from a few dozen cases is an estimate, and the agent is not deterministic. `evals/stats.py` adds three things so a number is not read as more certain than it is. All of it is pure and seeded: the same results give the same numbers.
+
+**Interval on the pass rate.** Every run summary carries `pass_rate_interval`, a 95% interval.
+
+| Situation | Method | Why |
+|---|---|---|
+| One attempt per case | Wilson score interval | Stays inside 0 to 100% and is not zero-width at a clean sweep. 9 of 10 gives 60% to 98%. |
+| Several attempts per case | Bootstrap that resamples whole cases | Repeats of one case mostly agree with each other, so they are not independent evidence. Four cases tried five times is four cases, not twenty. |
+| Several attempts, every case identical | Wilson on the number of cases | The bootstrap has nothing to resample. |
+
+**Consistency.** With `--repeats 2` or more the summary carries `consistency`:
+
+- `pass_all_k`: the share of cases that passed every one of k attempts (pass^k in the τ-bench paper). This is the reliable share, and it is the number to quote for something a user depends on.
+- `pass_any`: the share that passed at least once.
+- `flaky`: the cases with mixed results, by name. These are where to look first: a case that passes two times in three is a real defect that a single run hides two times in three.
+
+**Paired comparison.** Two runs of one suite share their cases, so comparing them is a paired test: what matters is whether the per-case differences lean one way. `/compare` and the CLI report the mean difference in pass rate on the shared cases, a 95% interval on it (bootstrap over cases), and a p-value from a sign-flip permutation test (with one attempt per case this is the exact McNemar test). The verdict is `better` or `worse` only when the interval excludes zero and the p-value is below 0.05; otherwise it is `no_clear_difference`, whatever the raw rates look like. Both are required because the bootstrap interval runs narrow on a handful of cases. Going from 8 of 10 to 9 of 10 is one case flipping and is reported as no clear difference; on a 10-case suite it takes six cases moving the same way, with none moving back, to be called.
+
+```bash
+python -m agent_system.evals compare <baseline_run_id> <run_id>
+python -m agent_system.evals run --suite routing --repeats 3 --baseline <run_id> --fail-on-regression   # exit 1 only when clearly worse
+```
+
+What this does not fix: the suites are small. With 10 to 20 cases the intervals are wide and only large changes will show as clear. The remedy is more cases and more repeats, not a different formula.
+
+---
+
+## Checking the graders against a person
+
+An LLM judge is a model like any other. Until its verdicts have been compared with a person's on the same outputs, its scores are unvalidated, and agreement between two judges is not agreement with you.
+
+**Labelling.** Open a case result, go to **Scores & judges**, and mark **Pass** or **Fail** under *Your verdict*: once for the case as a whole (`overall`) and once per rubric that was judged, with an optional note on why. Clicking the chosen button again removes the label. Tick **Hide judge scores until I have labelled** so the judge's score cannot anchor yours; the case's own pass/fail badge is still visible in the header. Labels are stored in `eval_human_labels`, one per result and rubric.
+
+**What is compared.**
+
+| Label | Grader checked | Its verdict |
+|---|---|---|
+| a rubric | each judge that scored that rubric | its mean on the rubric is at least the suite's `pass_threshold` |
+| `overall` | the harness | the case's stored pass/fail (deterministic checks and judges together) |
+
+**What is reported** (Evals tab, *Grader calibration* card; `python -m agent_system.evals calibration`; `GET /api/v1/evals/calibration`). A failure is the thing worth catching, so it is the positive class.
+
+| Number | Meaning |
+|---|---|
+| agrees | Share of labels where grader and person match. Misleading alone: if 80% of outputs are fine, a judge that passes everything agrees 80% of the time. |
+| catches failures | Of the outputs you failed, the share the grader failed. The number that matters most. |
+| passes good | Of the outputs you passed, the share the grader passed. |
+| kappa | Agreement beyond what the two pass rates would give by chance. |
+| by threshold | Agreement at cut-offs from 2.5 to 4.5, to show whether 3.5 is the right one for that rubric. |
+| status | `needs more labels` below 30 labels or fewer than 5 of either class; `agrees with you` when both rates are at least 80%; otherwise `disagrees too often`. |
+
+The card links to the cases where you and a grader disagreed. Reading those is the point: each one is either a rubric to tighten, a threshold to move, or a deterministic check to add.
+
+**How to use it.** Label 30 to 50 results per rubric, deliberately including failures (a run with only passes cannot measure whether failures are caught). Label real conversations as well as suite cases. Re-check after changing a rubric or the judge model, since calibration belongs to one judge, one rubric and one threshold.
+
+---
+
 ## Evaluating real conversations
 
 Under **Evals → Conversations**, tick any of your conversations (up to 50) and press **Evaluate**. You can also send `POST /api/v1/evals/runs` with `conversation_ids`.
@@ -264,6 +327,8 @@ python -m agent_system.evals run --suite routing --fail-under 0.8         # exit
 | `--concurrency` | Parallel cases (default 2; forced to 1 on SQLite) |
 | `--no-analysis` / `--show-analysis` | Skip, or print, the failure write-up |
 | `--fail-under` | Pass-rate threshold for the exit code |
+| `--baseline` | A run id to compare against, paired by case |
+| `--fail-on-regression` | With `--baseline`: exit 1 when the run is clearly worse |
 
 **What it needs:**
 - Neo4j and the database configured in `.env`;
@@ -285,7 +350,8 @@ kubectl exec -n agent-system deploy/agent-system-backend -- \
 **Eval runs**
 - **History.** Each run shows its suite, judge, pass rate and status: `running`, `complete`, `failed` or `interrupted`.
 - **Scorecard:**
-  - pass rate, turn latency (p50 and p95), cost per case, tokens;
+  - pass rate with its 95% interval, turn latency (p50 and p95), cost per case, tokens;
+  - with repeats: the share of cases that passed every time, at least once, and with mixed results;
   - deterministic check means;
   - judge means per `rubric.dimension`, per judge, plus agreement when `both` ran;
   - node latency (p95);
@@ -295,7 +361,8 @@ kubectl exec -n agent-system deploy/agent-system-backend -- \
   - **Scores & judges:** every deterministic check with its detail, and every judge dimension with its rationale;
   - **Seed & knowledge graph:** what was seeded, the expectations, and the social graph after the run. Not shown for real conversations or research cases.
 - **Failure analysis:** the markdown write-up.
-- **Compare with an earlier run** of the same suite: metric deltas, regressions (passed before, fails now) and fixes.
+- **Compare with an earlier run** of the same suite: a paired verdict (better, worse, or no clear difference) with its interval and p-value, then metric deltas, regressions (passed before, fails now) and fixes.
+- **Grader calibration:** how often each judge, and the harness as a whole, agrees with your labels.
 
 **Conversations**
 - The list of your conversations, each showing how many turns were traced.
@@ -364,6 +431,7 @@ These are new tables, created by `create_all` at startup; the project has no mig
 |---|---|
 | `turn_traces` | One row per real chat or group turn: `path`, the full `trace` as JSON, `total_ms`, tokens, `cost_usd` |
 | `eval_runs` | `suite`, `status`, `judge`, `git_sha`, `config` (including `origin`: `api` or `cli`), `summary`, `failure_analysis_md`, `error` |
+| `eval_human_labels` | A person's pass/fail on a case result, per rubric or `overall`, with a note. Removed with the run's results. |
 | `eval_case_results` | Per case and repeat: `passed`, `failure_tags`, `case`, `scores`, `judgements`, `turns` (with traces), `total_ms`, `cost_usd`, `judge_cost_usd`, `error`. For entity cases the graph snapshot is stored under `judgements._snapshot`. |
 
 At startup, runs still marked `running` are set to `interrupted` if they were started from the API or are more than 12 hours old. CLI runs may be alive in another process, so newer ones are left alone.
@@ -383,7 +451,9 @@ All endpoints are under `/api/v1/evals` and require a superuser.
 | GET | `/runs/{id}` | Run detail: config, summary, failure analysis |
 | GET | `/runs/{id}/cases` | Case rows |
 | GET | `/cases/{id}` | Full case result, including turns and traces |
-| GET | `/compare?a=&b=` | Metric deltas, regressions and fixes (`a` is the baseline) |
+| GET | `/compare?a=&b=` | Paired comparison, metric deltas, regressions and fixes (`a` is the baseline) |
+| PUT | `/cases/{id}/labels/{rubric}` | Set a human label: `{passed: true|false|null, note}`; `null` removes it. `rubric` is a rubric name or `overall` |
+| GET | `/calibration?suite=` | Agreement between each grader and the human labels |
 | GET | `/graph` | Static FSM topology used by the tree |
 | GET | `/conversations` | The caller's conversations, with message and traced-turn counts |
 | GET | `/traces/conversation/{id}` | Turns of one of the caller's conversations, with `trace` or `null` |

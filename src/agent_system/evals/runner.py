@@ -23,6 +23,7 @@ from typing import Any
 
 from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture
 from agent_system.evals import judges as judges_mod
+from agent_system.evals import stats
 from agent_system.evals.schema import EvalCase, ResearchCase, Suite, load_suite
 from agent_system.evals.scorers import percentile, score_agent_case, score_research_sources
 from agent_system.evals.seed import seed_user, snapshot_entities, teardown_user
@@ -427,10 +428,15 @@ def summarize(suite: Suite, results: list[dict[str, Any]], judge_names: list[str
         for tag in r["failure_tags"]:
             bucket[tag] = bucket.get(tag, 0) + 1
     judge_unpriced = sum((r.get("judge_usage") or {}).get("unpriced_calls", 0) for r in results)
+    # `cases` counts attempts (case x repeat); the interval and consistency work per distinct case
+    per_case = stats.group_by_case({"case_id": r.get("case_id", i), "passed": r["passed"]} for i, r in enumerate(results))
     return {
         "cases": n,
         "passed": passed,
         "pass_rate": round(passed / n, 3) if n else None,
+        "distinct_cases": len(per_case),
+        "pass_rate_interval": stats.pass_rate_interval(per_case),
+        "consistency": stats.consistency(per_case),
         "deterministic": {k: round(sum(v) / len(v), 3) for k, v in sorted(det.items())},
         "judge": judge_means,
         "agreement": agreement,

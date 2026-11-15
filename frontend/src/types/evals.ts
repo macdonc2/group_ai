@@ -128,6 +128,7 @@ export interface EvalRunItem {
   started_at: string | null;
   completed_at: string | null;
   pass_rate: number | null;
+  pass_rate_interval?: RateInterval | null;
   cases: number | null;
   passed: number | null;
   cost_usd: number | null;
@@ -137,10 +138,26 @@ export interface EvalRunItem {
   live: boolean;
 }
 
+/** 95% interval on a rate; `method` says how it was computed (see evals/stats.py). */
+export interface RateInterval { low: number; high: number; level: number; method: string; cases?: number }
+
+/** How repeatable results are across k attempts per case. */
+export interface EvalConsistency {
+  k: number;
+  pass_all_k: number;
+  pass_any: number;
+  always_fail: string[];
+  flaky: string[];
+  flaky_rate: number;
+}
+
 export interface EvalSummary {
   cases: number;
   passed: number;
   pass_rate: number | null;
+  distinct_cases?: number;
+  pass_rate_interval?: RateInterval | null;
+  consistency?: EvalConsistency | null;
   deterministic: Record<string, number>;
   judge: Record<string, Record<string, number>>;
   agreement: { judges: string[]; n: number; exact: number | null; within_1: number | null; weighted_kappa: number | null } | null;
@@ -229,7 +246,11 @@ export interface EvalCaseDetail {
   cost_usd: number | null;
   judge_cost_usd: number | null;
   error: string | null;
+  labels?: HumanLabels;
 }
+
+/** A person's pass/fail per rubric, or "overall" for the whole case. */
+export type HumanLabels = Record<string, { passed: boolean; note: string }>;
 
 export interface TracedConversation {
   conversation_id: string;
@@ -253,4 +274,40 @@ export interface RunComparison {
   metrics: { metric: string; a: number | null; b: number | null; delta: number | null }[];
   regressions: string[];
   fixes: string[];
+  paired?: PairedComparison;
+}
+
+export interface PairedComparison {
+  shared_cases: number;
+  verdict: 'better' | 'worse' | 'no_clear_difference' | 'no_shared_cases';
+  pass_rate_a?: number;
+  pass_rate_b?: number;
+  difference?: number;
+  interval?: RateInterval;
+  p_value?: number;
+  improved?: string[];
+  worsened?: string[];
+}
+
+export interface GraderCalibration {
+  grader: string;
+  rubric: string;
+  n: number;
+  human_pass: number;
+  human_fail: number;
+  agreement: number | null;
+  catches_failures: number | null;
+  passes_good: number | null;
+  kappa: number | null;
+  status: 'needs_more_labels' | 'trustworthy' | 'unreliable';
+  by_threshold?: { threshold: number; agreement: number | null; catches_failures: number | null; passes_good: number | null }[];
+  disagreements: { result_id: string; run_id: string | null; case_id: string | null; human: boolean; grader_mean: number | null; note: string }[];
+}
+
+export interface CalibrationReport {
+  labelled_results: number;
+  labels: number;
+  min_labels: number;
+  min_per_class: number;
+  graders: GraderCalibration[];
 }

@@ -8,7 +8,7 @@ these are new tables rather than new columns on existing ones.
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -73,3 +73,23 @@ class EvalCaseResultModel(Base):
     judge_cost_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class EvalHumanLabelModel(Base):
+    """A person's pass/fail on one case result, used to check the graders (see evals/calibration.py).
+
+    `rubric` is a rubric name, or "overall" for the case as a whole. One label per result and rubric.
+    """
+
+    __tablename__ = "eval_human_labels"
+    __table_args__ = (UniqueConstraint("result_id", "rubric", name="uq_eval_human_label"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    result_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("eval_case_results.id", ondelete="CASCADE"), index=True
+    )
+    rubric: Mapped[str] = mapped_column(String(64))
+    passed: Mapped[bool] = mapped_column(Boolean)
+    note: Mapped[str] = mapped_column(Text, default="")
+    user_id: Mapped[str] = mapped_column(String(36))
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -11,7 +11,15 @@ import sys
 
 def _print_summary(run_id: str, summary: dict) -> None:
     print(f"\nrun {run_id}")
-    print(f"  pass rate: {summary.get('passed')}/{summary.get('cases')} ({summary.get('pass_rate')})")
+    ci = summary.get("pass_rate_interval")
+    band = f"  95% interval {ci['low']} to {ci['high']} over {ci['cases']} cases" if ci else ""
+    print(f"  pass rate: {summary.get('passed')}/{summary.get('cases')} ({summary.get('pass_rate')}){band}")
+    con = summary.get("consistency")
+    if con:
+        print(f"  consistency over {con['k']} attempts: passed every time {con['pass_all_k']}, "
+              f"at least once {con['pass_any']}, mixed results {con['flaky_rate']}")
+        if con["flaky"]:
+            print(f"    mixed: {', '.join(con['flaky'])}")
     for name, v in (summary.get("deterministic") or {}).items():
         print(f"  {name:<22} {v}")
     for judge, dims in (summary.get("judge") or {}).items():
@@ -67,9 +75,96 @@ async def _run(args: argparse.Namespace) -> int:
                     print("\n" + run.failure_analysis_md)
                 if run.status != "complete" or (args.fail_under is not None and (run.summary.get("pass_rate") or 0) < args.fail_under):
                     code = 1
+                if args.baseline:
+                    code = max(code, await _compare_with(session, args.baseline, run_id, args.fail_on_regression))
     finally:
         await shutdown_container()
     return code
+
+
+async def _attempts(session, run_id: str) -> dict[str, list[bool]]:
+    from sqlalchemy import select
+
+    from agent_system.adapters.outbound.persistence import EvalCaseResultModel
+    from agent_system.evals import stats
+
+    rows = (await session.execute(select(EvalCaseResultModel.case_id, EvalCaseResultModel.passed)
+                                  .where(EvalCaseResultModel.run_id == run_id))).all()
+    return stats.group_by_case({"case_id": c, "passed": ok} for c, ok in rows)
+
+
+async def _compare_with(session, baseline: str, run_id: str, fail_on_regression: bool) -> int:
+    """Print the paired comparison against `baseline`; return 1 if it is clearly worse and that should fail."""
+    from agent_system.evals import stats
+
+    paired = stats.paired_comparison(await _attempts(session, baseline), await _attempts(session, run_id))
+    _print_paired(baseline, run_id, paired)
+    return 1 if fail_on_regression and paired["verdict"] == "worse" else 0
+
+
+def _print_paired(a: str, b: str, paired: dict) -> None:
+    print(f"\ncompare {b} against baseline {a}")
+    if paired["verdict"] == "no_shared_cases":
+        print("  the two runs share no cases")
+        return
+    ci = paired["interval"]
+    print(f"  shared cases: {paired['shared_cases']}  pass rate {paired['pass_rate_a']} -> {paired['pass_rate_b']}")
+    print(f"  difference: {paired['difference']:+}  95% interval {ci['low']:+} to {ci['high']:+}  p = {paired['p_value']}")
+    print("  verdict: " + {"better": "better than the baseline", "worse": "worse than the baseline",
+                           "no_clear_difference": "no clear difference on this evidence"}[paired["verdict"]])
+    for label, key in (("improved", "improved"), ("worsened", "worsened")):
+        if paired[key]:
+            print(f"  {label}: {', '.join(paired[key])}")
+
+
+async def _compare(args: argparse.Namespace) -> int:
+    from agent_system.composition_root.container import get_container, shutdown_container
+
+    try:
+        container = await get_container()
+        async with container.database.session() as session:
+            return await _compare_with(session, args.baseline, args.run, args.fail_on_regression)
+    finally:
+        await shutdown_container()
+
+
+async def _calibration(args: argparse.Namespace) -> int:
+    from sqlalchemy import select
+
+    from agent_system.adapters.outbound.persistence import EvalCaseResultModel, EvalHumanLabelModel, EvalRunModel
+    from agent_system.composition_root.container import get_container, shutdown_container
+    from agent_system.evals.calibration import calibrate, rows_for_result
+    from agent_system.evals.schema import list_suites, load_suite
+
+    try:
+        container = await get_container()
+        async with container.database.session() as session:
+            found = (await session.execute(
+                select(EvalHumanLabelModel, EvalCaseResultModel, EvalRunModel.suite)
+                .join(EvalCaseResultModel, EvalCaseResultModel.id == EvalHumanLabelModel.result_id)
+                .join(EvalRunModel, EvalRunModel.id == EvalCaseResultModel.run_id))).all()
+    finally:
+        await shutdown_container()
+    thresholds = {n: load_suite(n).pass_threshold for n in list_suites()}
+    by_result: dict[str, dict] = {}
+    for label, result, suite in found:
+        if args.suite and suite != args.suite:
+            continue
+        e = by_result.setdefault(result.id, {"result": {"id": result.id, "run_id": result.run_id, "case_id": result.case_id,
+                                                        "passed": result.passed, "judgements": result.judgements},
+                                             "suite": suite, "labels": {}})
+        e["labels"][label.rubric] = {"passed": label.passed, "note": label.note}
+    rows = [r for e in by_result.values() for r in rows_for_result(e["result"], e["labels"], thresholds.get(e["suite"], 3.5))]
+    graders = calibrate(rows)
+    if not graders:
+        print("No human labels yet. Label case results in the Evals tab (Scores & judges), then run this again.")
+        return 0
+    print(f"{'grader':<10} {'rubric':<24} {'n':>4} {'agree':>6} {'catches fails':>14} {'passes good':>12} {'kappa':>6}  status")
+    for g in graders:
+        fmt = lambda v: "-" if v is None else f"{v:.2f}"  # noqa: E731
+        print(f"{g['grader']:<10} {g['rubric']:<24} {g['n']:>4} {fmt(g['agreement']):>6} {fmt(g['catches_failures']):>14} "
+              f"{fmt(g['passes_good']):>12} {fmt(g['kappa']):>6}  {g['status']}")
+    return 0
 
 
 async def _run_graph_qa(args: argparse.Namespace) -> int:
@@ -111,6 +206,15 @@ def main() -> None:
     run.add_argument("--no-analysis", action="store_true", help="Skip the LLM failure write-up")
     run.add_argument("--show-analysis", action="store_true", help="Print the failure analysis markdown")
     run.add_argument("--fail-under", type=float, help="Exit 1 when pass rate is below this (CI gate)")
+    run.add_argument("--baseline", help="Run id to compare against, paired by case")
+    run.add_argument("--fail-on-regression", action="store_true",
+                     help="With --baseline: exit 1 when the run is clearly worse (interval on the difference below zero)")
+    cmp_ = sub.add_parser("compare", help="Paired comparison of two stored runs")
+    cmp_.add_argument("baseline")
+    cmp_.add_argument("run")
+    cmp_.add_argument("--fail-on-regression", action="store_true")
+    cal = sub.add_parser("calibration", help="Agreement between the graders and the human labels")
+    cal.add_argument("--suite")
     gq = sub.add_parser("graph-qa", help="Run the graph explorer agent against the synthetic graph fixture")
     gq.add_argument("--case", action="append", help="Only these case ids (repeatable)")
     gq.add_argument("--repeats", type=int, default=1)
@@ -131,6 +235,10 @@ def main() -> None:
             print(f"{name:<20} {s.kind:<8} {n:>3} cases  rubrics={','.join(s.rubrics)}  {s.description}")
         print(f"\nrubrics: {', '.join(list_rubrics())}")
         return
+    if args.cmd == "compare":
+        sys.exit(asyncio.run(_compare(args)))
+    if args.cmd == "calibration":
+        sys.exit(asyncio.run(_calibration(args)))
     if args.cmd == "graph-qa":
         sys.exit(asyncio.run(_run_graph_qa(args)))
     sys.exit(asyncio.run(_run(args)))

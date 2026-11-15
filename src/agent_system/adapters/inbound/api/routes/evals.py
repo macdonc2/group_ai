@@ -16,6 +16,7 @@ from agent_system.adapters.inbound.api.auth import RequireSuperuser
 from agent_system.adapters.inbound.api.dependencies import SessionDep
 from agent_system.adapters.outbound.persistence import (
     EvalCaseResultModel,
+    EvalHumanLabelModel,
     EvalRunModel,
     TurnTraceModel,
 )
@@ -46,6 +47,7 @@ def _run_item(r: EvalRunModel, done: int | None = None) -> dict[str, Any]:
         "started_at": r.started_at.isoformat() if r.started_at else None,
         "completed_at": r.completed_at.isoformat() if r.completed_at else None,
         "pass_rate": s.get("pass_rate"), "cases": s.get("cases"), "passed": s.get("passed"),
+        "pass_rate_interval": s.get("pass_rate_interval"),
         "cost_usd": (s.get("cost") or {}).get("system_usd"),
         "p50_ms": (s.get("latency") or {}).get("turn_p50_ms"),
         "total": (r.config or {}).get("total"), "done": done,
@@ -187,7 +189,76 @@ async def get_case_result(result_id: str, _: RequireSuperuser, session: SessionD
         "failure_tags": r.failure_tags, "case": r.case, "scores": r.scores, "judgements": judgements,
         "entity_snapshot": (r.judgements or {}).get("_snapshot"), "turns": r.turns,
         "total_ms": r.total_ms, "cost_usd": r.cost_usd, "judge_cost_usd": r.judge_cost_usd, "error": r.error,
+        "labels": await _labels(session, [r.id]),
     }
+
+
+async def _labels(session: Any, result_ids: list[str]) -> dict[str, dict[str, Any]]:
+    """Human labels for one result as {rubric: {passed, note}}."""
+    rows = (await session.execute(
+        select(EvalHumanLabelModel).where(EvalHumanLabelModel.result_id.in_(result_ids))
+    )).scalars()
+    return {row.rubric: {"passed": row.passed, "note": row.note} for row in rows}
+
+
+class LabelIn(BaseModel):
+    """`passed: null` removes the label."""
+
+    passed: bool | None
+    note: str = Field(default="", max_length=2000)
+
+
+@router.put("/cases/{result_id}/labels/{rubric}")
+async def set_label(result_id: str, rubric: str, payload: LabelIn, token: RequireSuperuser,
+                    session: SessionDep) -> dict[str, Any]:
+    """Record a person's pass/fail on a case result: per rubric, or "overall" for the whole case."""
+    from agent_system.evals.calibration import OVERALL
+    from agent_system.evals.judges import list_rubrics
+
+    if rubric != OVERALL and rubric not in list_rubrics():
+        raise HTTPException(status_code=400, detail=f"Unknown rubric '{rubric}'")
+    if not await session.get(EvalCaseResultModel, result_id):
+        raise HTTPException(status_code=404, detail="Case result not found")
+    row = (await session.execute(
+        select(EvalHumanLabelModel).where(EvalHumanLabelModel.result_id == result_id,
+                                          EvalHumanLabelModel.rubric == rubric)
+    )).scalar_one_or_none()
+    if payload.passed is None:
+        if row is not None:
+            await session.delete(row)
+    elif row is None:
+        session.add(EvalHumanLabelModel(id=str(uuid.uuid4()), result_id=result_id, rubric=rubric,
+                                        passed=payload.passed, note=payload.note, user_id=token.user_id))
+    else:
+        row.passed, row.note, row.user_id = payload.passed, payload.note, token.user_id
+    await session.commit()
+    return {"labels": await _labels(session, [result_id])}
+
+
+@router.get("/calibration")
+async def calibration(_: RequireSuperuser, session: SessionDep, suite: str | None = None) -> dict[str, Any]:
+    """How often each grader agrees with the human labels, across every labelled case result."""
+    from agent_system.evals.calibration import MIN_LABELS, MIN_PER_CLASS, calibrate, rows_for_result
+    from agent_system.evals.schema import list_suites as names
+    from agent_system.evals.schema import load_suite
+
+    query = (select(EvalHumanLabelModel, EvalCaseResultModel, EvalRunModel.suite)
+             .join(EvalCaseResultModel, EvalCaseResultModel.id == EvalHumanLabelModel.result_id)
+             .join(EvalRunModel, EvalRunModel.id == EvalCaseResultModel.run_id))
+    if suite:
+        query = query.where(EvalRunModel.suite == suite)
+    by_result: dict[str, dict[str, Any]] = {}
+    for label, result, suite_name in (await session.execute(query)).all():
+        entry = by_result.setdefault(result.id, {
+            "result": {"id": result.id, "run_id": result.run_id, "case_id": result.case_id,
+                       "passed": result.passed, "judgements": result.judgements},
+            "suite": suite_name, "labels": {}})
+        entry["labels"][label.rubric] = {"passed": label.passed, "note": label.note}
+    thresholds = {n: load_suite(n).pass_threshold for n in names()}
+    rows = [row for e in by_result.values()
+            for row in rows_for_result(e["result"], e["labels"], thresholds.get(e["suite"], 3.5))]
+    return {"labelled_results": len(by_result), "labels": sum(len(e["labels"]) for e in by_result.values()),
+            "min_labels": MIN_LABELS, "min_per_class": MIN_PER_CLASS, "graders": calibrate(rows)}
 
 
 @router.get("/compare")
@@ -213,17 +284,19 @@ async def compare_runs(a: str, b: str, _: RequireSuperuser, session: SessionDep)
         rows.append({"metric": key, "a": va, "b": vb,
                      "delta": round(vb - va, 4) if isinstance(va, (int, float)) and isinstance(vb, (int, float)) else None})
 
-    async def outcomes(run_id: str) -> dict[str, bool]:
+    from agent_system.evals import stats
+
+    async def attempts(run_id: str) -> dict[str, list[bool]]:
         res = (await session.execute(select(EvalCaseResultModel.case_id, EvalCaseResultModel.passed)
                                      .where(EvalCaseResultModel.run_id == run_id))).all()
-        agg: dict[str, list[bool]] = {}
-        for cid, ok in res:
-            agg.setdefault(cid, []).append(ok)
-        return {k: all(v) for k, v in agg.items()}
+        return stats.group_by_case({"case_id": cid, "passed": ok} for cid, ok in res)
 
-    oa, ob = await outcomes(a), await outcomes(b)
+    pa, pb = await attempts(a), await attempts(b)
+    oa, ob = {k: all(v) for k, v in pa.items()}, {k: all(v) for k, v in pb.items()}
     return {
         "a": _run_item(ra), "b": _run_item(rb), "metrics": rows,
+        # the two runs share their cases, so the test is paired: see evals/stats.py
+        "paired": stats.paired_comparison(pa, pb),
         "regressions": sorted(k for k in oa if oa[k] and ob.get(k) is False),
         "fixes": sorted(k for k in oa if not oa[k] and ob.get(k) is True),
     }

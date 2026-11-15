@@ -36,6 +36,7 @@ interface EvalState {
   refreshRuns: () => Promise<void>;
   selectRun: (id: string | null) => Promise<void>;
   selectCase: (id: string | null) => Promise<void>;
+  setLabel: (rubric: string, passed: boolean | null, note?: string) => Promise<void>;
   selectConversation: (id: string | null) => Promise<void>;
   startRun: (body: { suite?: string; conversation_ids?: string[]; judge: string; repeats?: number; case_ids?: string[] }) => Promise<string | null>;
   setCompareWith: (id: string | null) => void;
@@ -114,6 +115,17 @@ export const useEvalStore = create<EvalState>()((set, get) => ({
     try {
       const caseDetail = await api.evals.caseResult(id);
       if (get().selectedCaseId === id) set({ caseDetail });
+    } catch (e) {
+      set({ error: message(e) });
+    }
+  },
+
+  setLabel: async (rubric, passed, note = '') => {
+    const detail = get().caseDetail;
+    if (!detail) return;
+    try {
+      const { labels } = await api.evals.setLabel(detail.id, rubric, passed, note);
+      if (get().caseDetail?.id === detail.id) set({ caseDetail: { ...detail, labels } });
     } catch (e) {
       set({ error: message(e) });
     }
