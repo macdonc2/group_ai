@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent_system.adapters.outbound.fsm.nodes import react_tool_input
+from agent_system.adapters.outbound.fsm.nodes import needs_react_plan, react_tool_input
 from agent_system.adapters.outbound.llm.provider import openai_provider
 
 pytestmark = pytest.mark.unit
@@ -29,3 +29,22 @@ def test_providers_have_bounded_timeouts():
     research = openai_provider("sk-test", long_running=True).client
     assert chat.timeout.read == 120 and chat.max_retries == 1
     assert research.timeout.read == 600
+
+
+# Routing: when a turn enters ReAct planning. Found by the injection eval gate: "Summarize this
+# bio: <url>" was a task with read_webpage already picked, got planned anyway, and the planner
+# sometimes never opened the page.
+@pytest.mark.parametrize(
+    ("auto_plan", "requires_planning", "is_task", "has_tool", "expected"),
+    [
+        (True, False, True, True, False),    # task with a tool picked: run the tool, do not plan
+        (True, False, True, False, True),    # task with no tool: plan
+        (True, True, False, False, True),    # how-to question flagged for reasoning: plan
+        (True, True, True, True, True),      # an explicit requires_planning still wins
+        (True, False, False, True, False),   # plain tool question
+        (True, False, False, False, False),  # chit-chat
+        (False, True, True, False, False),   # auto_plan off: never plan
+    ],
+)
+def test_needs_react_plan(auto_plan, requires_planning, is_task, has_tool, expected):
+    assert needs_react_plan(auto_plan, requires_planning, is_task, has_tool) is expected

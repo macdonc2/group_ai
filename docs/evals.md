@@ -92,7 +92,7 @@ Every agent turn records a `TurnTrace`, whether it comes from a chat, a group ch
 |---|---|
 | `AnalyzeIntent` | intent from primary / fallback model / keyword heuristics |
 | `CheckPlan` | `active_plan ∧ plan.is_active` |
-| `CheckPlan` | `auto_plan ∧ (requires_planning ∨ intent = task)` |
+| `CheckPlan` | `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))` |
 | `ExecutePlan` | `react_mode ∧ plan` |
 | `ExecutePlan` | `step N: needs_tool ∧ tool_suggestion` |
 | `ExecutePlan` | `requires_tool ∧ tool_name` |

@@ -211,12 +211,13 @@ Actions). It is the only secret either workflow uses.
   OpenAI side. That budget is the only hard spend cap; everything in the
   workflow (one run at a time per branch, job timeouts, fixed attempt counts)
   limits how fast money can be spent, not how much.
-- Cost per run is not known yet. The harness prints a cost line per suite, but
-  with the current library versions the API calls report zero tokens (a known
-  issue in [evals.md](evals.md#operations-and-known-issues)), so read the first
-  few runs' cost from that OpenAI project's usage page. One pass of
-  `incidents` is about 20 model calls per engine; `injection` is of similar
-  size; the statistical suites add a judge call per rubric per case.
+- The first gates run (both engines, two attempts per case) made 236 model
+  calls and used about 421k input and 29k output tokens in 7 minutes. The
+  harness prints tokens and a cost line per suite in the job summary, but the
+  dollar figure is a lower bound until every model in use has a price in
+  `MODEL_PRICING_JSON`; the OpenAI usage page has the real number. The
+  statistical suites add a judge call per rubric per case and have not been
+  measured yet.
 
 Logs are public on a public repository. Eval runs print the prompts and replies
 of the synthetic test users, which contain nothing private, but do not point

@@ -482,6 +482,8 @@ For ANALYSIS questions (e.g., "What should I consider when buying a house?"):
 
 For RESEARCH questions that need current info:
 - Mark steps that require tools (web_search, etc.)
+- To read a specific page or link the user gave, the tool is read_webpage (input: the URL).
+  The system can open links, so never plan around asking the user to paste the page.
 - Other steps can use reasoning from knowledge
 
 Each step should be a DISTINCT phase of thinking - not just rewording the same thing.
@@ -510,6 +512,9 @@ IMPORTANT:
 - Be thorough in your reasoning - show your thinking
 - If this step genuinely needs current/real-time info, mark needs_tool=True
 - Most knowledge questions can be answered from training data (needs_tool=False)
+- If the step needs the contents of a specific page or link, set needs_tool=True,
+  tool_suggestion="read_webpage" and tool_input to the URL. The system can open links: never
+  conclude that a page cannot be accessed without asking for the tool.
 - When needs_tool=True, set tool_input to what the tool should receive: for web_search a short,
   specific query built from the ORIGINAL question's concrete terms (e.g. "Big Bend National Park
   lodging Terlingua", not "Check current park access, seasonal heat, ..."); for calculate the bare

@@ -364,7 +364,7 @@ Every agent turn is traced, and an eval harness measures the agent's behaviour a
 
 - **Turn tracing.** Each turn records:
   - every FSM node visit, with its latency;
-  - the named predicate behind each branch, with its inputs (e.g. `auto_plan ∧ (requires_planning ∨ intent = task)`);
+  - the named predicate behind each branch, with its inputs (e.g. `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))`);
   - memory retrieval hits with scores, and whether they reached the prompt;
   - tool inputs and outputs;
   - tokens and cost per LLM call, attributed to the node that made it.
