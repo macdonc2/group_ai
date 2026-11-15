@@ -1,13 +1,14 @@
 # Continuous integration
 
-Two workflows, split by what they cost:
+Three workflows. Two check changes, split by what they cost; the third watches production:
 
 | Workflow | Runs | Calls a model | Blocks a merge |
 |---|---|---|---|
 | [`ci.yml`](../.github/workflows/ci.yml) | every pull request, every push to `main` | no | yes |
 | [`evals.yml`](../.github/workflows/evals.yml) | on demand, or on a pull request labelled `run-evals` (no schedule yet) | yes | no (see [Live evals](#live-evals)) |
+| [`monitor.yml`](../.github/workflows/monitor.yml) | every 10 minutes | no | no: it checks the live site and keeps one `prod-alert` issue in step ([observability](observability.md#uptime-check-and-alerts)) |
 
-Neither deploys anything; deploys stay manual.
+None of them deploys anything; deploys stay manual.
 
 ## CI (free, every change)
 
