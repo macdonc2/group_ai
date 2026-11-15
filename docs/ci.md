@@ -13,11 +13,10 @@ run on any change. It does not deploy; deploys stay manual.
 | Backend (integration, Neo4j) | `tests/integration` against a real Neo4j, including the eval harness end to end with a mocked model | 2 min |
 | Frontend (types, lint, build) | `npm ci`, `tsc -b`, ESLint (new findings only), `vite build` | 1 min |
 | Docker images (build only) | Both Dockerfiles build. Nothing is pushed | 2 to 8 min |
-| Backend tests inside the image (advisory) | Unit and e2e tests again, inside the built backend image | 2 min |
+| Backend tests inside the image | Unit and e2e tests again, inside the built backend image | 2 min |
 
-The first four run in parallel and a pull request is ready when all four are
-green. The fifth is advisory: it shows its own result but does not fail the
-workflow (see below).
+The first four run in parallel; the fifth waits for the image build so it can
+reuse its layer cache. A pull request is ready when all five are green.
 
 ## Running the same checks locally
 
@@ -82,22 +81,28 @@ testcontainers using the Docker daemon the runner already has, exactly as on a
 laptop. A workflow `services:` container would mean a second way of starting
 Neo4j that only CI uses.
 
-**Tests run twice, against two sets of library versions.** The backend job
-installs exactly what `uv.lock` pins. The backend image installs whatever is
-newest inside the ranges in `pyproject.toml` on the day it is built. Those have
-drifted far apart, so the images job runs the unit and e2e tests again inside
-the built image: that is the code and libraries that would ship. Because the
-image floats, this job can turn red from an upstream release with no change in
-the repo. That is a true signal (the next deploy would pick up the same
-release) but it is not the pull request's fault, so the job is marked
-`continue-on-error` and should not be a required check until the image installs
-from the lockfile.
+**One set of library versions everywhere.** `uv.lock` pins every package, and
+the laptop (`uv sync --locked`), CI and the backend image all install from it.
+The image used to install whatever was newest inside the ranges in
+`pyproject.toml` on the day it was built, which had drifted a long way from
+what tests ran against (pydantic-ai 1.107 in production, 1.56 in tests) and
+meant any deploy could pick up a release nobody had tested. Now an upgrade is a
+change to `uv.lock` in a pull request, tested like any other change:
 
-It is red today, for exactly this reason:
-`tests/unit/tools/test_react_tool_input.py::test_providers_have_bounded_timeouts`
-passes against the lockfile (pydantic-ai 1.56) and fails in the image
-(pydantic-ai 1.107), where `cached_async_http_client` is deprecated and pytest
-turns deprecation warnings into errors.
+```bash
+uv lock --upgrade-package pydantic-ai     # one package
+uv lock --upgrade                         # everything
+```
+
+Both installs use `--locked`, so a `pyproject.toml` edit without a matching
+`uv.lock` fails CI and fails the image build. The cost is that upgrades no
+longer happen by themselves; someone (or a tool such as Dependabot or Renovate)
+has to propose them.
+
+**Tests also run inside the built image.** Same versions, but it is the image
+that ships, not the CI virtualenv: a different Python build, system packages
+and install step. Test tools are not in the image, so the job mounts `tests/`
+and installs pytest at run time.
 
 **No path filters.** Every job runs on every change, even a docs-only one.
 Skipping jobs by path saves a few minutes but a skipped job that is also a
@@ -118,7 +123,6 @@ fails in minutes instead of holding a runner for six hours.
 ## Known gaps
 
 - `tests/e2e/api/test_api.py` is deselected: 7 tests fail against the current API.
-- The in-image job is advisory and currently failing (above).
 - No coverage threshold, no `mypy`, no format check.
 - No dependency or image vulnerability scan.
 - Branch protection is not configured by the workflow; required checks are set

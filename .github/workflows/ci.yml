@@ -150,20 +150,14 @@ jobs:
           cache-from: type=gha,scope=frontend
           cache-to: type=gha,scope=frontend,mode=max
 
-  # The backend image installs from the version ranges in pyproject.toml, not
-  # from uv.lock, so it holds newer libraries than the jobs above tested. This
-  # runs the same tests against what would actually ship.
-  #
-  # continue-on-error: the image floats, so this can fail because of an upstream
-  # release rather than the change under review. A failure shows on the job but
-  # does not fail the workflow. Remove that line once the image installs from
-  # the lockfile.
+  # The image installs from uv.lock, so its libraries should match the backend
+  # job's. This checks the thing that actually ships: the built image, with its
+  # own Python, system packages and install step, still passes the tests.
   image-tests:
-    name: Backend tests inside the image (advisory)
+    name: Backend tests inside the image
     needs: images # reuse the layer cache the build job just wrote
     runs-on: ubuntu-24.04
     timeout-minutes: 20
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

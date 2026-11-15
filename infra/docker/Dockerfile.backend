@@ -14,20 +14,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv for faster dependency resolution
-RUN pip install --no-cache-dir uv
+# uv, pinned to the version CI uses
+RUN pip install --no-cache-dir uv==0.9.8
 
-# Copy dependency files and README (required by pyproject.toml)
-ARG GIT_SHA=""
-ENV GIT_SHA=${GIT_SHA}
+# Install exactly the versions in uv.lock, the same ones CI tests against.
+# --locked fails the build if uv.lock no longer matches pyproject.toml, and the
+# exported file carries hashes, so a tampered or re-uploaded package is refused.
+# Dependencies go in before the source so this layer is reused when only code
+# changes.
+COPY pyproject.toml uv.lock README.md ./
+RUN uv export --locked --no-dev --no-emit-project -o /tmp/requirements.txt \
+    && uv pip install --system --no-cache --require-hashes -r /tmp/requirements.txt \
+    && rm /tmp/requirements.txt
 
-COPY pyproject.toml README.md ./
-
-# Copy source code (needed for package install)
+# The app itself (non-editable), with no dependency resolution
 COPY src/ ./src/
-
-# Install Python dependencies (non-editable for production)
-RUN uv pip install --system --no-cache .
+RUN uv pip install --system --no-cache --no-deps .
 
 # Headless Chromium for reading JavaScript-rendered pages (web_search / read_webpage).
 # The shell-only build is enough for text; installed where the non-root user can read it.
@@ -35,6 +37,11 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN python -m playwright install --with-deps --only-shell chromium \
     && chmod -R a+rX /ms-playwright \
     && rm -rf /var/lib/apt/lists/*
+
+# Set late: it changes on every commit and would otherwise invalidate the
+# dependency and browser layers above.
+ARG GIT_SHA=""
+ENV GIT_SHA=${GIT_SHA}
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
