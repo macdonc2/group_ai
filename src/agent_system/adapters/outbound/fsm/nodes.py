@@ -49,6 +49,21 @@ def react_tool_input(tool: str | None, proposed: str | None, user_input: str, st
     return step_description
 
 
+def needs_react_plan(auto_plan: bool, requires_planning: bool, is_task: bool, has_suggested_tool: bool) -> bool:
+    """Whether a turn enters ReAct planning (CreatePlan) or goes straight on.
+
+    A task with no tool to run is planned. A task for which intent analysis
+    already picked a tool is not: planning discards that pick and leaves the
+    planner to rediscover it, which it does only some of the time ("Summarize
+    this page: <url>" was planned around a `web_fetch` tool that does not exist
+    and answered that the page could not be opened). The intent prompt already
+    says tools and reasoning mode are mutually exclusive; this makes routing
+    agree. An explicit `requires_planning` still wins, and `auto_plan` off
+    still disables planning entirely.
+    """
+    return bool(auto_plan and (requires_planning or (is_task and not has_suggested_tool)))
+
+
 async def _intent_memory_hints(ctx, limit: int = 5, min_score: float = 0.7) -> list[str]:
     """Top things the *user* told us in other conversations that relate to this message.
 
@@ -461,13 +476,15 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         # Respect the user's auto_plan preference: when off, never start ReAct mode
         auto_plan = getattr(ctx.state.user.preferences, "auto_plan", True)
         is_task = bool(ctx.state.intent and ctx.state.intent.intent_type == IntentType.TASK)
-        needs_plan = bool(auto_plan and (ctx.state.plan_needed or is_task))
+        has_tool = bool(ctx.state.requires_tool and ctx.state.tool_name)
+        needs_plan = needs_react_plan(auto_plan, bool(ctx.state.plan_needed), is_task, has_tool)
 
         # Determine if a new plan is needed based on intent analysis
         if ctx.deps.decide(
-            "CheckPlan", "auto_plan ∧ (requires_planning ∨ intent = task)", needs_plan,
+            "CheckPlan", "auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))", needs_plan,
             "CreatePlan" if needs_plan else "ExecutePlan",
             auto_plan=auto_plan, requires_planning=ctx.state.plan_needed, intent_is_task=is_task,
+            suggested_tool=ctx.state.tool_name if has_tool else None,
         ):
             # Enable ReAct mode for task intents - will use step-by-step reasoning
             ctx.state.react_mode = True
@@ -477,7 +494,8 @@ class CheckPlan(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             return CreatePlan()
 
         # No plan needed, go directly to response
-        reason = "Auto-plan is off" if not auto_plan else "Not a task intent"
+        reason = ("Auto-plan is off" if not auto_plan
+                  else "Intent analysis already picked a tool" if is_task else "Not a task intent")
         await ctx.deps.emit_event("node_complete", "CheckPlan", "No plan needed")
         # Skip CreatePlan
         await ctx.deps.emit_event("node_skipped", "CreatePlan", reason)
