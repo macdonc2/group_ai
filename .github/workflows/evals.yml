@@ -3,8 +3,13 @@
 name: Evals (live)
 
 on:
-  schedule:
-    - cron: "17 9 * * *" # nightly, about 03:17 or 04:17 in Houston
+  # No schedule on purpose. A nightly run spends money with nobody watching,
+  # and the key it uses is currently the app's own, with no separate budget:
+  # the first full run drained the account. Once EVAL_OPENAI_API_KEY is a
+  # dedicated key with a spending limit, restore the nightly by adding:
+  #   schedule:
+  #     - cron: "17 9 * * *" # about 03:17 or 04:17 in Houston
+  # The `schedule` handling below is kept so that is the only change needed.
   workflow_dispatch:
     inputs:
       tier:
@@ -85,15 +90,22 @@ jobs:
             fi
           fi
 
-          # A wrong or revoked key does not crash the harness: every model call
-          # fails, cases score as failures, and a first run would record that
-          # as the baseline. Check the key with a free request before spending
-          # twenty minutes finding out.
+          # A key that is wrong, revoked or out of credits does not crash the
+          # harness: every model call fails, cases score as failures, and a
+          # first run would record that as the baseline. So make one real,
+          # billable call first. Listing models is not enough: that succeeds
+          # on an account with no credits. A two-token embedding costs a
+          # fraction of a cent and is refused when the account cannot pay.
           if [ "$run" = "true" ]; then
-            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
-              -H "Authorization: Bearer $EVAL_OPENAI_API_KEY" https://api.openai.com/v1/models || true)
+            status=$(curl -sS -o preflight.json -w '%{http_code}' --max-time 30 \
+              -H "Authorization: Bearer $EVAL_OPENAI_API_KEY" \
+              -H "Content-Type: application/json" \
+              -d '{"model":"text-embedding-3-small","input":"ok"}' \
+              https://api.openai.com/v1/embeddings || true)
             if [ "$status" != "200" ]; then
-              echo "::error::OpenAI rejected EVAL_OPENAI_API_KEY (HTTP $status). Check the key and its project budget."
+              # the provider's own error code, e.g. insufficient_quota or invalid_api_key
+              code=$(grep -oE '"code": *"[a-z_]+"' preflight.json | head -1 | grep -oE '[a-z_]+"$' | tr -d '"' || true)
+              echo "::error::OpenAI refused a test call with EVAL_OPENAI_API_KEY (HTTP $status ${code:-unknown}). Nothing was run. Check the key and that the account has credits."
               exit 1
             fi
           fi
@@ -135,8 +147,9 @@ jobs:
           --health-interval 5s --health-timeout 10s --health-retries 30
     env:
       CHAT_ENGINE: ${{ matrix.engine }}
-      # Two attempts per case nightly, to catch a case that only passes some
-      # of the time; one on a pull request, to keep the label cheap.
+      # Two attempts per case on a manual (or scheduled) run, to catch a case
+      # that only passes some of the time; one on a pull request, to keep the
+      # label cheap.
       REPEATS: ${{ github.event_name == 'pull_request' && '1' || '2' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -173,6 +186,18 @@ jobs:
           set -o pipefail
           uv run --no-sync python -m agent_system.evals run --suite injection \
             --judge none --no-analysis --repeats "$REPEATS" --fail-under 1.0 2>&1 | tee injection.log
+
+      # Credits can also run out part-way through. The harness then keeps
+      # going and scores every remaining case as an ordinary failure, which
+      # reads like a regression. Treat it as a broken run instead.
+      - name: Fail if the provider refused calls
+        if: ${{ !cancelled() }}
+        run: |
+          n=$(cat incidents.log injection.log 2>/dev/null | grep -cE 'insufficient_quota|credit_balance_exhausted|no credits remaining|invalid_api_key|Incorrect API key' || true)
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "::error::OpenAI refused model calls during this run ($n log lines: out of credits or a bad key). The results are not valid; fix the account and run again."
+            exit 1
+          fi
 
       - name: Summary
         if: ${{ !cancelled() }}
@@ -268,13 +293,26 @@ jobs:
             --baseline-file .eval-out/previous.json --fail-on-regression \
             --export .eval-baseline/baseline.json 2>&1 | tee stats.log
 
+      # Credits can also run out part-way through. The harness then keeps
+      # going and scores every remaining case as an ordinary failure, which
+      # reads like a regression. Treat it as a broken run instead.
+      - name: Fail if the provider refused calls
+        if: ${{ !cancelled() }}
+        run: |
+          n=$(cat stats.log 2>/dev/null | grep -cE 'insufficient_quota|credit_balance_exhausted|no credits remaining|invalid_api_key|Incorrect API key' || true)
+          if [ "${n:-0}" -gt 0 ]; then
+            echo "::error::OpenAI refused model calls during this run ($n log lines: out of credits or a bad key). The results are not valid; fix the account and run again."
+            exit 1
+          fi
+
       - name: Summary
         if: ${{ !cancelled() }}
         run: |
           {
             echo "### Statistical suites"
             echo '```'
-            grep -hE '^run |^  (pass rate|HARD GATE|consistency|latency|cost|failures|flags|judge|difference|verdict|shared cases|improved|worsened|!)|^compare |^no baseline' stats.log || echo "no results were produced"
+            # failing cases by name, then each suite's summary and comparison
+            grep -hE '^\[[0-9]+/[0-9]+\] .*: FAIL|^run |^  (pass rate|HARD GATE|consistency|latency|cost|failures|flags|judge|difference|verdict|shared cases|improved|worsened|!)|^compare |^no baseline' stats.log || echo "no results were produced"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
