@@ -52,6 +52,7 @@ def _print_summary(run_id: str, summary: dict) -> None:
 async def _run(args: argparse.Namespace) -> int:
     from agent_system.adapters.outbound.persistence import EvalRunModel
     from agent_system.composition_root.container import get_container, shutdown_container
+    from agent_system.evals import baseline_file
     from agent_system.evals.runner import run_suite
 
     logging.getLogger().setLevel(logging.WARNING)  # app modules configure INFO on import
@@ -83,6 +84,15 @@ async def _run(args: argparse.Namespace) -> int:
                     code = 1
                 if args.baseline:
                     code = max(code, await _compare_with(session, args.baseline, run_id, args.fail_on_regression))
+                if args.baseline_file or args.export:
+                    attempts = await _attempts(session, run_id)
+                    if args.baseline_file:
+                        code = max(code, _compare_with_file(args.baseline_file, suite, run_id, attempts,
+                                                            args.fail_on_regression))
+                    # an interrupted or errored run is not a result worth comparing against later
+                    if args.export and run.status == "complete":
+                        baseline_file.save(args.export, suite,
+                                           baseline_file.entry(run_id, run.git_sha, run.summary, attempts))
     finally:
         await shutdown_container()
     return code
@@ -105,6 +115,21 @@ async def _compare_with(session, baseline: str, run_id: str, fail_on_regression:
 
     paired = stats.paired_comparison(await _attempts(session, baseline), await _attempts(session, run_id))
     _print_paired(baseline, run_id, paired)
+    return 1 if fail_on_regression and paired["verdict"] == "worse" else 0
+
+
+def _compare_with_file(path: str, suite: str, run_id: str, attempts: dict[str, list[bool]],
+                       fail_on_regression: bool) -> int:
+    """Like `_compare_with`, but the baseline is a suite entry in a file written by `--export`."""
+    from agent_system.evals import baseline_file, stats
+
+    base = baseline_file.load(path).get(suite)
+    if not base:
+        print(f"\nno baseline for {suite} in {path}; nothing to compare against")
+        return 0
+    paired = stats.paired_comparison(baseline_file.attempts_of(base), attempts)
+    label = f"{base.get('run_id')} (commit {(base.get('git_sha') or 'unknown')[:9]}, {base.get('recorded_at')})"
+    _print_paired(label, run_id, paired)
     return 1 if fail_on_regression and paired["verdict"] == "worse" else 0
 
 
@@ -214,7 +239,10 @@ def main() -> None:
     run.add_argument("--fail-under", type=float, help="Exit 1 when pass rate is below this (CI gate)")
     run.add_argument("--baseline", help="Run id to compare against, paired by case")
     run.add_argument("--fail-on-regression", action="store_true",
-                     help="With --baseline: exit 1 when the run is clearly worse (interval on the difference below zero)")
+                     help="With --baseline or --baseline-file: exit 1 when the run is clearly worse "
+                          "(interval on the difference below zero)")
+    run.add_argument("--baseline-file", help="Compare each suite against its entry in this file (written by --export)")
+    run.add_argument("--export", help="Record each suite's per-case results in this file, for a later --baseline-file")
     cmp_ = sub.add_parser("compare", help="Paired comparison of two stored runs")
     cmp_.add_argument("baseline")
     cmp_.add_argument("run")

@@ -385,7 +385,9 @@ python -m agent_system.evals run --suite routing --fail-under 0.8         # exit
 | `--no-analysis` / `--show-analysis` | Skip, or print, the failure write-up |
 | `--fail-under` | Pass-rate threshold for the exit code |
 | `--baseline` | A run id to compare against, paired by case |
-| `--fail-on-regression` | With `--baseline`: exit 1 when the run is clearly worse |
+| `--fail-on-regression` | With `--baseline` or `--baseline-file`: exit 1 when the run is clearly worse |
+| `--export` | Write each suite's pass/fail per case to a JSON file |
+| `--baseline-file` | Compare against a file written by `--export`, for when the earlier run is not in this database (CI) |
 
 **What it needs:**
 - Neo4j and the database configured in `.env`;
@@ -540,15 +542,9 @@ curl -X POST https://agent.macdonml.com/api/v1/evals/runs -H "Authorization: Bea
 
 - **Where runs execute.** Runs execute in the backend process. A backend rollout interrupts them; the run is marked `interrupted`, and the throwaway users are removed by the teardown in each case's `finally`.
 - **SQLite for local dev.** SQLite allows only one writer at a time. Eval cases therefore run one at a time, and chat traces are written through the request's own session. Postgres has no such limit.
-- **Production doesn't use the tested library versions.** The backend image installs from the version ranges in `pyproject.toml`, not from `uv.lock`, so production runs newer libraries than local tests. For example: pydantic-ai 1.107 vs 1.56, openai 3.18 vs 2.17, opentelemetry-sdk 1.44 vs 1.39. Two consequences so far:
-  - An OpenTelemetry hook added in the newer SDK broke every LLM call until the span processor was changed to subclass `SpanProcessor` (2026-09-22).
-  - With pydantic-ai 1.107 and openai 3.18, Responses API calls report **zero tokens**. Production traces therefore show 0 tokens and $0 cost, while latency, routes, predicates and retrievals are correct.
-
-  The fix is to build the image from `uv.lock`. Until then, smoke-test changes inside the built image:
-
-  ```bash
-  docker run --rm --platform linux/amd64 <image> python -c "..."
-  ```
+- **Library versions.** The backend image installs from `uv.lock`, the same versions tests and CI use (see [ci.md](ci.md)). It used to install from the ranges in `pyproject.toml`, so production ran newer libraries than tests did. Two problems came from that, and the second is still open:
+  - An OpenTelemetry hook added in a newer SDK broke every LLM call until the span processor was changed to subclass `SpanProcessor` (2026-09-22).
+  - With pydantic-ai 1.107 and openai 3.x, Responses API calls report **zero tokens**. Traces and eval runs therefore show 0 tokens and $0 cost, while latency, routes, predicates and retrievals are correct.
 - **Findings still open** from the first runs:
   - `store_pet` overwrites a stored species with a new guess (`COALESCE($species, p.species)`);
   - hypotheticals create real entities;

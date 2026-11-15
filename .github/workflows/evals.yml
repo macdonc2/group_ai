@@ -1,0 +1,301 @@
+# Live-model evals. These call OpenAI and cost money, so they do not run on
+# every push. What runs when, what blocks, and what it costs: docs/ci.md
+name: Evals (live)
+
+on:
+  schedule:
+    - cron: "17 9 * * *" # nightly, about 03:17 or 04:17 in Houston
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: "gates = incidents + injection; all = gates, then the statistical suites"
+        type: choice
+        options: [gates, all]
+        default: gates
+      repeats:
+        description: "Attempts per case in the statistical suites"
+        type: choice
+        options: ["1", "2", "3"]
+        default: "1"
+      reset_baseline:
+        description: "Ignore the stored baseline and make this run the new one"
+        type: boolean
+        default: false
+  # Runs only when the pull request carries the `run-evals` label (see preflight).
+  pull_request:
+    types: [labeled, synchronize, reopened]
+
+# One live run at a time per branch: a second one waits instead of doubling
+# the spend, and a new push to a labelled pull request replaces the old run.
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.9.8"
+  PYTHON_VERSION: "3.12"
+  # Service containers below. These are throwaway values for a database that
+  # exists for one job, not secrets.
+  DATABASE_URL: postgresql+asyncpg://agent:agent@localhost:5432/agent
+  NEO4J_URI: bolt://localhost:7687
+  NEO4J_USER: neo4j
+  NEO4J_PASSWORD: ci-password
+  SECRET_KEY: ci-only-not-a-real-secret-0123456789abcdef
+  DEBUG: "false"
+
+jobs:
+  # Decides whether anything runs, so the jobs that hold the key start only
+  # when they should. A job-level `if` cannot read secrets; a step can.
+  preflight:
+    name: Should this run?
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+      stats: ${{ steps.decide.outputs.stats }}
+    steps:
+      - id: decide
+        env:
+          EVENT: ${{ github.event_name }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'run-evals') }}
+          # A pull request from a fork gets no secrets, and must not: its code
+          # is untrusted. Only branches of this repository qualify.
+          SAME_REPO: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+          TIER: ${{ inputs.tier }}
+          EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+        run: |
+          run=true; stats=false
+          case "$EVENT" in
+            pull_request)
+              if [ "$HAS_LABEL" != "true" ] || [ "$SAME_REPO" != "true" ]; then run=false; fi ;;
+            schedule) stats=true ;;
+            workflow_dispatch) if [ "$TIER" = "all" ]; then stats=true; fi ;;
+          esac
+
+          if [ "$run" = "true" ] && [ -z "$EVAL_OPENAI_API_KEY" ]; then
+            if [ "$EVENT" = "schedule" ]; then
+              echo "::warning::EVAL_OPENAI_API_KEY is not set, so the nightly evals were skipped. Add it under Settings > Secrets and variables > Actions."
+              run=false
+            else
+              echo "::error::EVAL_OPENAI_API_KEY is not set. Add it under Settings > Secrets and variables > Actions."
+              exit 1
+            fi
+          fi
+
+          # A wrong or revoked key does not crash the harness: every model call
+          # fails, cases score as failures, and a first run would record that
+          # as the baseline. Check the key with a free request before spending
+          # twenty minutes finding out.
+          if [ "$run" = "true" ]; then
+            status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 \
+              -H "Authorization: Bearer $EVAL_OPENAI_API_KEY" https://api.openai.com/v1/models || true)
+            if [ "$status" != "200" ]; then
+              echo "::error::OpenAI rejected EVAL_OPENAI_API_KEY (HTTP $status). Check the key and its project budget."
+              exit 1
+            fi
+          fi
+
+          [ "$run" = "true" ] || stats=false
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+          echo "stats=$stats" >> "$GITHUB_OUTPUT"
+          echo "run=$run stats=$stats"
+
+  # Hard gates. Deterministic checks only, no judge. Any failing case fails the job.
+  gates:
+    name: Gates (${{ matrix.engine }})
+    needs: preflight
+    if: needs.preflight.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false # a failure on one engine should not hide the other's result
+      matrix:
+        engine: [fsm, loop]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agent" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/ci-password
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-password 'RETURN 1'"
+          --health-interval 5s --health-timeout 10s --health-retries 30
+    env:
+      CHAT_ENGINE: ${{ matrix.engine }}
+      # Two attempts per case nightly, to catch a case that only passes some
+      # of the time; one on a pull request, to keep the label cheap.
+      REPEATS: ${{ github.event_name == 'pull_request' && '1' || '2' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install from uv.lock
+        run: uv sync --locked
+
+      # The key is given to the two steps that call the model and to nothing
+      # else. GitHub masks it if it ever appears in output.
+      - name: incidents (every case must pass)
+        env:
+          EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m agent_system.evals run --suite incidents \
+            --judge none --no-analysis --repeats "$REPEATS" 2>&1 | tee incidents.log
+
+      # injection has no hard gate of its own in the suite file, so the
+      # threshold is set here: every case, every attempt.
+      - name: injection (every case must pass)
+        if: ${{ !cancelled() }}
+        env:
+          EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m agent_system.evals run --suite injection \
+            --judge none --no-analysis --repeats "$REPEATS" --fail-under 1.0 2>&1 | tee injection.log
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Gates on the \`$CHAT_ENGINE\` engine"
+            echo '```'
+            # per-case lines and the run summary, without the app's own logging
+            grep -hE '^\[[0-9]+/[0-9]+\] |^run |^  (pass rate|HARD GATE|consistency|latency|cost|failures|flags|judge|difference|verdict|shared cases|improved|worsened|!)' incidents.log injection.log || echo "no results were produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Statistical suites: real model, real judge, small case counts. Compared
+  # case by case against the last good run on main.
+  stats:
+    name: Statistical suites vs baseline
+    needs: [preflight, gates]
+    if: needs.preflight.outputs.stats == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: agent
+          POSTGRES_PASSWORD: agent
+          POSTGRES_DB: agent
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U agent" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+      neo4j:
+        image: neo4j:5
+        env:
+          NEO4J_AUTH: neo4j/ci-password
+        ports: ["7687:7687"]
+        options: >-
+          --health-cmd "cypher-shell -u neo4j -p ci-password 'RETURN 1'"
+          --health-interval 5s --health-timeout 10s --health-retries 30
+    env:
+      REPEATS: ${{ inputs.repeats || '1' }}
+      RESET_BASELINE: ${{ inputs.reset_baseline || 'false' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install from uv.lock
+        run: uv sync --locked
+
+      # The eval database is empty at the start of every job, so the baseline
+      # is carried as a small JSON file (pass/fail per case) in the Actions
+      # cache. The key is unique per run; restore-keys picks the newest one.
+      - name: Restore the baseline from the last good run on main
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eval-baseline
+          key: eval-baseline-${{ github.run_id }}
+          restore-keys: eval-baseline-
+
+      - name: Set the baseline aside
+        run: |
+          mkdir -p .eval-baseline .eval-out
+          if [ "$RESET_BASELINE" = "true" ]; then
+            echo "Baseline reset requested: this run is not compared against anything."
+          elif [ -f .eval-baseline/baseline.json ]; then
+            cp .eval-baseline/baseline.json .eval-out/previous.json
+          else
+            echo "No stored baseline yet: this run becomes the first one."
+          fi
+          rm -f .eval-baseline/baseline.json
+
+      # Fails when a suite is clearly worse than the baseline (the paired
+      # verdict, not a raw drop in pass rate) or below the floor. The floor is
+      # only a sanity check that the run worked at all; it is far below normal.
+      - name: Run suites and compare
+        env:
+          EVAL_OPENAI_API_KEY: ${{ secrets.EVAL_OPENAI_API_KEY }}
+        run: |
+          set -o pipefail
+          uv run --no-sync python -m agent_system.evals run \
+            --suite routing --suite tool_selection --suite memory_retrieval \
+            --suite entity_resolution --suite e2e_tasks \
+            --judge openai --repeats "$REPEATS" --show-analysis \
+            --fail-under 0.5 \
+            --baseline-file .eval-out/previous.json --fail-on-regression \
+            --export .eval-baseline/baseline.json 2>&1 | tee stats.log
+
+      - name: Summary
+        if: ${{ !cancelled() }}
+        run: |
+          {
+            echo "### Statistical suites"
+            echo '```'
+            grep -hE '^run |^  (pass rate|HARD GATE|consistency|latency|cost|failures|flags|judge|difference|verdict|shared cases|improved|worsened|!)|^compare |^no baseline' stats.log || echo "no results were produced"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # The baseline only moves forward on a run that passed, and only from
+      # main. A regression therefore keeps failing against the last good run
+      # until it is fixed, or until someone accepts it with reset_baseline.
+      - name: Save this run as the new baseline
+        if: ${{ success() && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .eval-baseline
+          key: eval-baseline-${{ github.run_id }}
+
+      - name: Keep the results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: eval-results-${{ github.run_id }}
+          path: |
+            .eval-baseline/baseline.json
+            .eval-out/previous.json
+            stats.log
+          if-no-files-found: ignore
+          retention-days: 30
