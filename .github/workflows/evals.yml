@@ -187,7 +187,7 @@ jobs:
       - name: Fail if the provider refused calls
         if: ${{ !cancelled() }}
         run: |
-          n=$(cat incidents.log injection.log 2>/dev/null | grep -cE 'insufficient_quota|no credits remaining|invalid_api_key|Incorrect API key' || true)
+          n=$(cat incidents.log injection.log 2>/dev/null | grep -cE 'insufficient_quota|credit_balance_exhausted|no credits remaining|invalid_api_key|Incorrect API key' || true)
           if [ "${n:-0}" -gt 0 ]; then
             echo "::error::OpenAI refused model calls during this run ($n log lines: out of credits or a bad key). The results are not valid; fix the account and run again."
             exit 1
@@ -293,7 +293,7 @@ jobs:
       - name: Fail if the provider refused calls
         if: ${{ !cancelled() }}
         run: |
-          n=$(cat stats.log 2>/dev/null | grep -cE 'insufficient_quota|no credits remaining|invalid_api_key|Incorrect API key' || true)
+          n=$(cat stats.log 2>/dev/null | grep -cE 'insufficient_quota|credit_balance_exhausted|no credits remaining|invalid_api_key|Incorrect API key' || true)
           if [ "${n:-0}" -gt 0 ]; then
             echo "::error::OpenAI refused model calls during this run ($n log lines: out of credits or a bad key). The results are not valid; fix the account and run again."
             exit 1
