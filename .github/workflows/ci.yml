@@ -4,7 +4,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'claude/github-cicd-33da76'] # TEMPORARY: branch trigger until the PR exists
   workflow_dispatch:
 
 # A new push to a pull request cancels the run for the push before it.
@@ -121,9 +121,9 @@ jobs:
         run: npm run build
 
   images:
-    name: Docker images (build, test in image)
+    name: Docker images (build only)
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -137,15 +137,51 @@ jobs:
           context: .
           file: infra/docker/Dockerfile.backend
           build-args: GIT_SHA=${{ github.sha }}
-          tags: agent-system-backend:ci
-          load: true
           push: false
           cache-from: type=gha,scope=backend
           cache-to: type=gha,scope=backend,mode=max
 
-      # The image installs from the version ranges in pyproject.toml, not from
-      # uv.lock, so it can hold newer libraries than the jobs above tested.
-      # This runs the same tests against what would actually ship.
+      - name: Build frontend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.frontend
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
+
+  # The backend image installs from the version ranges in pyproject.toml, not
+  # from uv.lock, so it holds newer libraries than the jobs above tested. This
+  # runs the same tests against what would actually ship.
+  #
+  # continue-on-error: the image floats, so this can fail because of an upstream
+  # release rather than the change under review. A failure shows on the job but
+  # does not fail the workflow. Remove that line once the image installs from
+  # the lockfile.
+  image-tests:
+    name: Backend tests inside the image (advisory)
+    needs: images # reuse the layer cache the build job just wrote
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Load backend image from cache
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: agent-system-backend:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=backend
+
       - name: Library versions in the image
         run: >-
           docker run --rm agent-system-backend:ci
@@ -163,13 +199,3 @@ jobs:
           && python -m pytest tests/unit tests/e2e
           --deselect tests/e2e/api/test_api.py
           $PYTEST_OPTS -q"
-
-      - name: Build frontend image
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: infra/docker/Dockerfile.frontend
-          tags: agent-system-frontend:ci
-          push: false
-          cache-from: type=gha,scope=frontend
-          cache-to: type=gha,scope=frontend,mode=max
