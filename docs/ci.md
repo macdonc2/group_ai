@@ -143,8 +143,17 @@ this tier is scheduled and opt-in instead of running on every push.
 | Statistical suites | `routing`, `tool_selection`, `memory_retrieval`, `entity_resolution`, `e2e_tasks` | no suite is clearly worse than the baseline, and none is below 50% | yes | no | with `tier: all` |
 
 A first job, "Should this run?", decides whether the others start. It skips a
-pull request without the label, refuses a pull request from a fork, and checks
-the key with a free request before anything is spent.
+pull request without the label, refuses a pull request from a fork, and makes
+one tiny billable call to confirm the key works and the account has credits.
+
+**A run that could not reach the model is an error, not a result.** With a bad
+key or no credits the harness does not crash: each case just fails. A first
+run in that state would be saved as the baseline, and a later one would look
+like a regression. This happened on the first full run, when the account ran
+out of credits part-way through and the last suite scored 3 of 10 with zero
+tokens. So the preflight call is a real one (listing models succeeds with no
+credits), and after each eval step the job fails outright if the log shows the
+provider refusing calls. A failed job never updates the baseline.
 
 To run it by hand: Actions tab, **Evals (live)**, **Run workflow**. To run the
 gates on a pull request, add the `run-evals` label; they rerun on each push
