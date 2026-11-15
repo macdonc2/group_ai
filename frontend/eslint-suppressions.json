@@ -1,0 +1,30 @@
+{
+  "src/components/groups/GroupMembers.tsx": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 1
+    }
+  },
+  "src/components/settings/ChangePassword.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    }
+  },
+  "src/components/settings/UserManagement.tsx": {
+    "@typescript-eslint/no-explicit-any": {
+      "count": 1
+    },
+    "@typescript-eslint/no-unused-vars": {
+      "count": 3
+    }
+  },
+  "src/hooks/useGroupWebSocket.ts": {
+    "react-hooks/refs": {
+      "count": 1
+    }
+  },
+  "src/stores/authStore.ts": {
+    "@typescript-eslint/no-unused-vars": {
+      "count": 3
+    }
+  }
+}

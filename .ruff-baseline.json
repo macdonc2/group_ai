@@ -1,0 +1,507 @@
+{
+ "scripts/test_entity_extraction.py": {
+  "E402": 1
+ },
+ "scripts/test_planning_trigger.py": {
+  "E402": 1
+ },
+ "src/agent_system/adapters/inbound/api/auth.py": {
+  "W293": 11
+ },
+ "src/agent_system/adapters/inbound/api/dependencies.py": {
+  "B008": 1,
+  "F821": 1,
+  "I001": 2,
+  "W293": 18
+ },
+ "src/agent_system/adapters/inbound/api/main.py": {
+  "F401": 1,
+  "I001": 2,
+  "W293": 10
+ },
+ "src/agent_system/adapters/inbound/api/observability.py": {
+  "UP017": 1
+ },
+ "src/agent_system/adapters/inbound/api/routes/agent.py": {
+  "F401": 2,
+  "I001": 1,
+  "SIM105": 1,
+  "W293": 48
+ },
+ "src/agent_system/adapters/inbound/api/routes/auth.py": {
+  "B904": 1,
+  "I001": 1,
+  "W293": 66
+ },
+ "src/agent_system/adapters/inbound/api/routes/calendar.py": {
+  "B904": 1,
+  "F541": 1
+ },
+ "src/agent_system/adapters/inbound/api/routes/conversations.py": {
+  "W293": 19
+ },
+ "src/agent_system/adapters/inbound/api/routes/groups.py": {
+  "B023": 5,
+  "E402": 7,
+  "E741": 2,
+  "F401": 6,
+  "F541": 3,
+  "F821": 1,
+  "I001": 12,
+  "UP017": 2,
+  "UP041": 1,
+  "W291": 4,
+  "W293": 200
+ },
+ "src/agent_system/adapters/inbound/api/routes/journal.py": {
+  "I001": 2,
+  "SIM105": 1
+ },
+ "src/agent_system/adapters/inbound/api/routes/knowledge.py": {
+  "B008": 2,
+  "B904": 3,
+  "W293": 2
+ },
+ "src/agent_system/adapters/inbound/api/routes/plans.py": {
+  "B904": 1,
+  "W293": 31
+ },
+ "src/agent_system/adapters/inbound/api/routes/research.py": {
+  "UP041": 1
+ },
+ "src/agent_system/adapters/inbound/api/routes/tools.py": {
+  "F401": 2,
+  "I001": 1,
+  "W291": 1,
+  "W293": 6
+ },
+ "src/agent_system/adapters/inbound/api/schemas.py": {
+  "I001": 1,
+  "W293": 1
+ },
+ "src/agent_system/adapters/inbound/api/websocket.py": {
+  "F401": 1,
+  "UP042": 1,
+  "W293": 24
+ },
+ "src/agent_system/adapters/outbound/calendar/google_adapter.py": {
+  "UP017": 3
+ },
+ "src/agent_system/adapters/outbound/embedding/openai_adapter.py": {
+  "W293": 13
+ },
+ "src/agent_system/adapters/outbound/fsm/nodes.py": {
+  "B007": 1,
+  "E741": 1,
+  "F541": 1,
+  "F841": 1,
+  "I001": 9,
+  "SIM102": 2,
+  "W291": 8,
+  "W293": 225
+ },
+ "src/agent_system/adapters/outbound/fsm/state.py": {
+  "F401": 3,
+  "I001": 1,
+  "UP035": 1,
+  "W291": 1,
+  "W293": 11
+ },
+ "src/agent_system/adapters/outbound/fsm/workflow.py": {
+  "I001": 1,
+  "N818": 1
+ },
+ "src/agent_system/adapters/outbound/graph/neo4j_adapter.py": {
+  "B007": 2,
+  "B905": 2,
+  "C401": 1,
+  "SIM105": 4,
+  "W291": 26,
+  "W293": 176
+ },
+ "src/agent_system/adapters/outbound/houston_events.py": {
+  "UP017": 1,
+  "W293": 19
+ },
+ "src/agent_system/adapters/outbound/htown_events/__init__.py": {
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/llm/__init__.py": {
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/llm/adapter.py": {
+  "F401": 1,
+  "W293": 21
+ },
+ "src/agent_system/adapters/outbound/llm/agents.py": {
+  "I001": 1,
+  "W291": 3,
+  "W293": 35
+ },
+ "src/agent_system/adapters/outbound/llm/chat_agent.py": {
+  "UP035": 1
+ },
+ "src/agent_system/adapters/outbound/llm/event_extractor.py": {
+  "I001": 1,
+  "W291": 2,
+  "W293": 11
+ },
+ "src/agent_system/adapters/outbound/llm/group_summarizer.py": {
+  "W293": 8
+ },
+ "src/agent_system/adapters/outbound/llm/journal_agent.py": {
+  "UP035": 1
+ },
+ "src/agent_system/adapters/outbound/llm/journal_memory.py": {
+  "I001": 1,
+  "UP035": 1
+ },
+ "src/agent_system/adapters/outbound/llm/knowledge_extractor.py": {
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/llm/personas.py": {
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/llm/schemas.py": {
+  "W291": 7,
+  "W293": 3
+ },
+ "src/agent_system/adapters/outbound/llm/title_generator.py": {
+  "F841": 1,
+  "I001": 1,
+  "W293": 7
+ },
+ "src/agent_system/adapters/outbound/llm/tools.py": {
+  "C401": 1,
+  "C416": 1,
+  "F401": 2,
+  "F541": 1,
+  "I001": 5,
+  "SIM102": 1,
+  "SIM105": 1,
+  "SIM108": 1,
+  "UP017": 13,
+  "W293": 285
+ },
+ "src/agent_system/adapters/outbound/persistence/database.py": {
+  "W293": 1
+ },
+ "src/agent_system/adapters/outbound/persistence/group_repositories.py": {
+  "E712": 1,
+  "F401": 2,
+  "I001": 1,
+  "SIM102": 1,
+  "W293": 16
+ },
+ "src/agent_system/adapters/outbound/persistence/journal_repository.py": {
+  "C416": 1,
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/persistence/mappers.py": {
+  "I001": 1,
+  "W293": 1
+ },
+ "src/agent_system/adapters/outbound/persistence/models.py": {
+  "F401": 1,
+  "W293": 1
+ },
+ "src/agent_system/adapters/outbound/persistence/repositories.py": {
+  "E712": 3,
+  "F401": 2,
+  "W293": 11
+ },
+ "src/agent_system/adapters/outbound/persistence/research_repositories.py": {
+  "F401": 1
+ },
+ "src/agent_system/adapters/outbound/research/figures.py": {
+  "B905": 1,
+  "E741": 2
+ },
+ "src/agent_system/adapters/outbound/research/lanes.py": {
+  "B905": 1,
+  "I001": 1
+ },
+ "src/agent_system/adapters/outbound/research/narration.py": {
+  "C408": 1
+ },
+ "src/agent_system/adapters/outbound/research/runner.py": {
+  "I001": 2
+ },
+ "src/agent_system/adapters/outbound/research/source_figures.py": {
+  "B007": 2
+ },
+ "src/agent_system/adapters/outbound/web/reader.py": {
+  "I001": 1
+ },
+ "src/agent_system/application/services/calendar_sync.py": {
+  "I001": 1,
+  "W293": 1
+ },
+ "src/agent_system/application/services/contradiction_detector.py": {
+  "I001": 1,
+  "W293": 40
+ },
+ "src/agent_system/application/services/datetime_parser.py": {
+  "F401": 1,
+  "I001": 1,
+  "UP017": 2,
+  "W291": 1,
+  "W293": 34
+ },
+ "src/agent_system/application/services/expertise_profiler.py": {
+  "I001": 1,
+  "W293": 31
+ },
+ "src/agent_system/application/services/inference_engine.py": {
+  "W293": 50
+ },
+ "src/agent_system/application/services/pattern_detector.py": {
+  "W291": 1,
+  "W293": 54
+ },
+ "src/agent_system/application/services/preference_aggregator.py": {
+  "B007": 1,
+  "SIM114": 1,
+  "W293": 47
+ },
+ "src/agent_system/composition_root/container.py": {
+  "F401": 1,
+  "F541": 2,
+  "W293": 22
+ },
+ "src/agent_system/composition_root/services.py": {
+  "F401": 1,
+  "W293": 37
+ },
+ "src/agent_system/docs/internal_docs.py": {
+  "I001": 1
+ },
+ "src/agent_system/domain/entities/__init__.py": {
+  "I001": 1
+ },
+ "src/agent_system/domain/entities/calendar_event.py": {
+  "F401": 1,
+  "UP042": 2
+ },
+ "src/agent_system/domain/entities/extracted_event.py": {
+  "UP042": 2,
+  "W293": 1
+ },
+ "src/agent_system/domain/entities/group.py": {
+  "UP042": 1,
+  "W291": 5,
+  "W293": 5
+ },
+ "src/agent_system/domain/entities/knowledge.py": {
+  "UP042": 1,
+  "W293": 3
+ },
+ "src/agent_system/domain/entities/plan.py": {
+  "W293": 7
+ },
+ "src/agent_system/domain/entities/research.py": {
+  "UP042": 1
+ },
+ "src/agent_system/domain/entities/user.py": {
+  "W293": 2
+ },
+ "src/agent_system/domain/ports/calendar.py": {
+  "F401": 1
+ },
+ "src/agent_system/domain/ports/clock.py": {
+  "W293": 1
+ },
+ "src/agent_system/domain/ports/embedding.py": {
+  "W293": 5
+ },
+ "src/agent_system/domain/ports/id_generator.py": {
+  "W293": 2
+ },
+ "src/agent_system/domain/ports/knowledge_graph.py": {
+  "W293": 33
+ },
+ "src/agent_system/domain/ports/llm.py": {
+  "W293": 6
+ },
+ "src/agent_system/domain/utils/encryption.py": {
+  "F401": 1,
+  "W293": 15
+ },
+ "src/agent_system/domain/value_objects/knowledge.py": {
+  "UP042": 7,
+  "W293": 7
+ },
+ "src/agent_system/domain/value_objects/message.py": {
+  "UP042": 1
+ },
+ "src/agent_system/domain/value_objects/plan.py": {
+  "UP042": 2,
+  "W293": 1
+ },
+ "src/agent_system/evals/__main__.py": {
+  "I001": 1
+ },
+ "src/agent_system/evals/runner.py": {
+  "I001": 1
+ },
+ "src/agent_system/evals/stats.py": {
+  "UP035": 1
+ },
+ "tests/conftest.py": {
+  "E402": 1,
+  "W293": 4
+ },
+ "tests/e2e/api/test_access_control.py": {
+  "PT018": 2,
+  "SIM117": 1
+ },
+ "tests/e2e/api/test_api.py": {
+  "W293": 4
+ },
+ "tests/e2e/api/test_auth_hardening.py": {
+  "SIM117": 2
+ },
+ "tests/e2e/api/test_conversation_persona.py": {
+  "PT018": 3
+ },
+ "tests/e2e/api/test_journal_api.py": {
+  "PT018": 15
+ },
+ "tests/e2e/api/test_observability.py": {
+  "PT018": 7
+ },
+ "tests/e2e/api/test_research_api.py": {
+  "I001": 1,
+  "PT018": 5
+ },
+ "tests/integration/adapters/test_graph_isolation.py": {
+  "PT018": 5
+ },
+ "tests/integration/adapters/test_journal_memory_isolation.py": {
+  "PT018": 5
+ },
+ "tests/integration/adapters/test_persistence.py": {
+  "F401": 2,
+  "I001": 1,
+  "W293": 39
+ },
+ "tests/integration/test_eval_harness.py": {
+  "PT018": 4
+ },
+ "tests/unit/application/test_services.py": {
+  "F401": 2,
+  "I001": 1,
+  "W293": 34
+ },
+ "tests/unit/chat/test_chat_loop.py": {
+  "I001": 1,
+  "PT018": 12
+ },
+ "tests/unit/chat/test_fsm_untrusted_guard.py": {
+  "PT018": 1,
+  "SIM300": 4
+ },
+ "tests/unit/chat/test_personas.py": {
+  "B905": 1,
+  "I001": 1,
+  "PT018": 11
+ },
+ "tests/unit/chat/test_turn_limits.py": {
+  "F401": 1,
+  "PT018": 6
+ },
+ "tests/unit/domain/test_entities.py": {
+  "F401": 2,
+  "I001": 1,
+  "W293": 34
+ },
+ "tests/unit/domain/test_social_entities.py": {
+  "F401": 2,
+  "I001": 1,
+  "PT018": 1,
+  "W293": 49
+ },
+ "tests/unit/domain/test_value_objects.py": {
+  "F401": 1,
+  "I001": 1,
+  "W293": 16
+ },
+ "tests/unit/evals/test_conversations.py": {
+  "PT018": 2
+ },
+ "tests/unit/evals/test_judges_and_trace.py": {
+  "I001": 1,
+  "PT018": 4
+ },
+ "tests/unit/evals/test_scorers.py": {
+  "PT018": 9
+ },
+ "tests/unit/evals/test_stats_and_calibration.py": {
+  "PT018": 16
+ },
+ "tests/unit/evals/test_world_fixture_and_gate.py": {
+  "I001": 1,
+  "PT018": 8
+ },
+ "tests/unit/graph/test_graph_explorer.py": {
+  "F401": 1,
+  "PT018": 3
+ },
+ "tests/unit/journal/test_journal_agent.py": {
+  "I001": 1,
+  "PT018": 4
+ },
+ "tests/unit/journal/test_journal_memory.py": {
+  "B008": 1,
+  "PT018": 5
+ },
+ "tests/unit/research/test_depth_and_source_figures.py": {
+  "F401": 1,
+  "I001": 1,
+  "PT018": 6
+ },
+ "tests/unit/research/test_runner.py": {
+  "E741": 1,
+  "F841": 1,
+  "I001": 1,
+  "PT018": 13
+ },
+ "tests/unit/research/test_sources_and_figures.py": {
+  "PT006": 1,
+  "PT011": 1,
+  "PT018": 4
+ },
+ "tests/unit/research/test_writer_and_narration.py": {
+  "I001": 1,
+  "PT018": 4
+ },
+ "tests/unit/tools/test_add_to_calendar.py": {
+  "I001": 1,
+  "PT018": 12,
+  "UP017": 2
+ },
+ "tests/unit/tools/test_calendar_read_timezone.py": {
+  "PT018": 3
+ },
+ "tests/unit/tools/test_houston_events.py": {
+  "C408": 1,
+  "PT018": 6,
+  "UP017": 1
+ },
+ "tests/unit/tools/test_intent_memory_hints.py": {
+  "PT018": 1
+ },
+ "tests/unit/tools/test_memory_recall.py": {
+  "PT018": 10
+ },
+ "tests/unit/tools/test_react_tool_input.py": {
+  "PT018": 1
+ },
+ "tests/unit/tools/test_url_guard.py": {
+  "I001": 1,
+  "PT018": 1
+ },
+ "tests/unit/tools/test_web_reader.py": {
+  "PT018": 3
+ }
+}

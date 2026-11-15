@@ -1,0 +1,175 @@
+# What runs when, and how to run the same checks locally: docs/ci.md
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A new push to a pull request cancels the run for the push before it.
+# Runs on main are never cancelled, so every commit on main gets a result.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Nothing here needs to write to the repository. No job uses a secret.
+permissions:
+  contents: read
+
+env:
+  UV_VERSION: "0.9.8"
+  PYTHON_VERSION: "3.12" # same as infra/docker/Dockerfile.backend
+  NODE_VERSION: "20" # same as infra/docker/Dockerfile.frontend
+  # No test in these suites calls a model; the app only needs the key to be set.
+  OPENAI_API_KEY: sk-test
+  PYTEST_OPTS: >-
+    -o addopts=
+    -o asyncio_default_fixture_loop_scope=function
+    -p no:cacheprovider
+
+jobs:
+  backend:
+    name: Backend (lint, unit, e2e)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # --locked fails if uv.lock no longer matches pyproject.toml.
+      - name: Install from uv.lock
+        run: uv sync --locked --extra dev
+
+      - name: Lint (new findings only)
+        run: uv run --no-sync python scripts/ruff_ratchet.py
+
+      - name: Eval suites load and validate
+        run: uv run --no-sync python -m agent_system.evals list
+
+      # tests/e2e/api/test_api.py predates the current API and has 7 failing
+      # tests; it is left out until someone repairs or deletes it.
+      - name: Unit and e2e tests
+        run: >-
+          uv run --no-sync python -m pytest tests/unit tests/e2e
+          --deselect tests/e2e/api/test_api.py
+          $PYTEST_OPTS -q
+
+  integration:
+    name: Backend (integration, Neo4j)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install from uv.lock
+        run: uv sync --locked --extra dev
+
+      # The tests start their own Neo4j with testcontainers, using the Docker
+      # daemon already on the runner, so no service container is declared.
+      # Includes the eval harness run end to end with a mocked model.
+      - name: Integration tests
+        run: uv run --no-sync python -m pytest tests/integration $PYTEST_OPTS -q
+
+  frontend:
+    name: Frontend (types, lint, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      # -b follows the project references. Plain `tsc --noEmit` reads the root
+      # tsconfig.json, which lists no files, and so checks nothing.
+      - name: Type check
+        run: npx tsc -b --noEmit
+
+      # Existing errors are recorded in eslint-suppressions.json; new ones fail.
+      - name: Lint (new findings only)
+        run: npx eslint .
+
+      - name: Production build
+        run: npm run build
+
+  images:
+    name: Docker images (build, test in image)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build backend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.backend
+          build-args: GIT_SHA=${{ github.sha }}
+          tags: agent-system-backend:ci
+          load: true
+          push: false
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,scope=backend,mode=max
+
+      # The image installs from the version ranges in pyproject.toml, not from
+      # uv.lock, so it can hold newer libraries than the jobs above tested.
+      # This runs the same tests against what would actually ship.
+      - name: Library versions in the image
+        run: >-
+          docker run --rm agent-system-backend:ci
+          python -m pip list --format=freeze
+          | grep -iE '^(pydantic|pydantic-ai|pydantic-graph|fastapi|sqlalchemy|neo4j|openai)=='
+
+      - name: Unit and e2e tests inside the image
+        run: >-
+          docker run --rm
+          -e OPENAI_API_KEY
+          -v "$PWD/tests:/app/tests:ro"
+          agent-system-backend:ci
+          sh -c "python -m pip install --quiet --user --no-warn-script-location
+          pytest==9.0.2 pytest-asyncio==1.3.0
+          && python -m pytest tests/unit tests/e2e
+          --deselect tests/e2e/api/test_api.py
+          $PYTEST_OPTS -q"
+
+      - name: Build frontend image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infra/docker/Dockerfile.frontend
+          tags: agent-system-frontend:ci
+          push: false
+          cache-from: type=gha,scope=frontend
+          cache-to: type=gha,scope=frontend,mode=max
