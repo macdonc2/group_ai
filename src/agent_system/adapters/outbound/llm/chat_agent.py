@@ -233,8 +233,10 @@ async def _record(ctx: RunContext[ChatDeps], tool: str, args: dict[str, Any], ok
 
 
 async def _call(ctx: RunContext[ChatDeps], name: str, **kwargs: Any) -> Any:
+    from agent_system.adapters.outbound.llm.tools import run_tool
+
     try:
-        return await ctx.deps.impl[name](**kwargs)
+        return await run_tool(name, ctx.deps.impl[name], **kwargs)
     except Exception as exc:  # noqa: BLE001 - a failing tool is a result the model can react to
         logger.warning("chat tool %s failed: %s: %s", name, type(exc).__name__, exc)
 

@@ -35,10 +35,10 @@ def test_providers_have_bounded_timeouts():
 # bio: <url>" was a task with read_webpage already picked, got planned anyway, and the planner
 # sometimes never opened the page.
 @pytest.mark.parametrize(
-    ("auto_plan", "requires_planning", "is_task", "has_tool", "expected"),
+    ("auto_plan", "requires_planning", "is_task", "has_direct_tool", "expected"),
     [
-        (True, False, True, True, False),    # task with a tool picked: run the tool, do not plan
-        (True, False, True, False, True),    # task with no tool: plan
+        (True, False, True, True, False),    # task whose picked tool is the whole job (read_webpage): run it
+        (True, False, True, False, True),    # task with no tool, or only an information tool: plan
         (True, True, False, False, True),    # how-to question flagged for reasoning: plan
         (True, True, True, True, True),      # an explicit requires_planning still wins
         (True, False, False, True, False),   # plain tool question
@@ -46,5 +46,5 @@ def test_providers_have_bounded_timeouts():
         (False, True, True, False, False),   # auto_plan off: never plan
     ],
 )
-def test_needs_react_plan(auto_plan, requires_planning, is_task, has_tool, expected):
-    assert needs_react_plan(auto_plan, requires_planning, is_task, has_tool) is expected
+def test_needs_react_plan(auto_plan, requires_planning, is_task, has_direct_tool, expected):
+    assert needs_react_plan(auto_plan, requires_planning, is_task, has_direct_tool) is expected

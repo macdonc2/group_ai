@@ -109,7 +109,8 @@ def test_any_of_mentions_accept_any_one_spelling():
 def test_the_incidents_suite_is_a_hard_gate_and_every_case_names_its_incident():
     suite = load_suite("incidents")
     assert suite.must_pass_all and suite.rubrics == []          # deterministic, so the gate needs no judge
-    assert all(c.incident and (c.events_fixture or c.calendar_fixture) for c in suite.cases)
+    # every case names its incident and runs on frozen data, never the live network
+    assert all(c.incident and (c.events_fixture or c.calendar_fixture or c.web_fixture) for c in suite.cases)
 
     result = lambda cid, ok: {"case_id": cid, "passed": ok, "scores": {}, "judgements": {}, "turns": [],  # noqa: E731
                               "failure_tags": [] if ok else ["incomplete_answer"], "total_ms": 1.0}

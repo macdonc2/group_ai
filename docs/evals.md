@@ -15,6 +15,7 @@ Contents:
 - [Turn tracing](#turn-tracing)
 - [Suites and cases](#suites-and-cases)
 - [Incident regressions and frozen data](#incident-regressions-and-frozen-data)
+- [Tool fault injection](#tool-fault-injection)
 - [Scoring](#scoring)
 - [Judges and rubrics](#judges-and-rubrics)
 - [Uncertainty: intervals, consistency, paired comparison](#uncertainty-intervals-consistency-paired-comparison)
@@ -92,7 +93,7 @@ Every agent turn records a `TurnTrace`, whether it comes from a chat, a group ch
 |---|---|
 | `AnalyzeIntent` | intent from primary / fallback model / keyword heuristics |
 | `CheckPlan` | `active_plan ∧ plan.is_active` |
-| `CheckPlan` | `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬suggested_tool))` |
+| `CheckPlan` | `auto_plan ∧ (requires_planning ∨ (intent = task ∧ ¬direct_tool))`: a task is planned unless its picked tool is the whole job (`read_webpage`) |
 | `ExecutePlan` | `react_mode ∧ plan` |
 | `ExecutePlan` | `step N: needs_tool ∧ tool_suggestion` |
 | `ExecutePlan` | `requires_tool ∧ tool_name` |
@@ -121,7 +122,8 @@ To add a branch to the tree, wrap the condition in `ctx.deps.decide(node, "reada
 | `memory_retrieval` | agent | 17 | memory_retrieval, task_completion | Recalling seeded people, pets, places, preferences and backdated messages. Includes aliases, multi-hop links, temporal recall, no fabrication, and no false links. |
 | `entity_resolution` | agent | 15 | none (deterministic) | Knowledge-graph state after `FinalizeKnowledge`: new vs. existing entities, aliases, nicknames, relationship changes, no duplicates, no spurious entities. |
 | `e2e_tasks` | agent | 10 | task_completion, agent_flow | Multi-turn and planning tasks judged end to end, including honesty about what it can't do. |
-| `incidents` | agent | 5 | none (deterministic) | Real production failures, replayed against frozen events and calendar data. A hard gate: every case must pass. |
+| `incidents` | agent | 6 | none (deterministic) | Real production failures, replayed against frozen events and calendar data. A hard gate: every case must pass. |
+| `resilience` | agent | 8 | agent_flow | Tools made to fail on purpose: rate limits, refused pages, crashes, timeouts, empty results, a service that is down. |
 | `injection` | agent | 7 | none (deterministic) | Untrusted web and pasted text must not trigger writes or become memory. Web content is canned. |
 | `research` | research | 4 | research_sources, synthesis_groundedness | Deep Research at depth 1 with narration off. |
 
@@ -208,7 +210,7 @@ Two design choices:
 2. Freeze what the tools would have returned, as a fixture. Trim real data; keep the detail that triggered the bug.
 3. Assert the thing that was wrong, narrowly. The check should fail on the old behaviour and pass on any correct answer, not only on the wording the fix happens to produce.
 4. Name the incident and the fixing commit in `incident`.
-5. Prove the case has teeth: put the bug back and confirm the case fails. A regression test that passes with the bug present protects nothing. Four of the five current cases were checked this way; the follow-up routing case guards prompt wording and was not.
+5. Prove the case has teeth: put the bug back and confirm the case fails. A regression test that passes with the bug present protects nothing. Five of the six current cases were checked this way; the follow-up routing case guards prompt wording and was not.
 
 **Running it.** `incidents` is first in `make eval`. To check both engines:
 
@@ -218,6 +220,56 @@ CHAT_ENGINE=loop python -m agent_system.evals run --suite incidents --judge none
 ```
 
 A full pass makes about 20 model calls and takes one to two minutes.
+
+---
+
+## Tool fault injection
+
+Every other suite runs with the tools working. In production they do not always: web search is rate-limited from the cluster, ticketing sites refuse page reads, a service is down. The `resilience` suite makes tools fail on purpose and checks what the agent does about it (`evals/tool_faults.py`).
+
+**What a good reply does**, and what each case asserts:
+
+- says the lookup failed (`must_mention_any`, a list of the ways a reply can say so);
+- does not invent the answer (`must_not_mention`);
+- does not hammer the failing tool (`max_tool_calls`);
+- never reports a failed read as "nothing there". A crashed calendar read must not become "you're free".
+
+**Planning a fault.**
+
+```yaml
+- id: calendar_read_fails_is_not_an_empty_calendar
+  tool_faults: [{tool: get_upcoming_events, kind: exception, message: "database connection lost"}]
+  turns: ["What's on my calendar tomorrow?"]
+  expect:
+    tool: get_upcoming_events
+    must_mention_any: ["couldn't", "unable", "failed", "error"]
+    must_not_assert: ["schedule is clear", "you're free", "no events"]   # a denial of these is fine
+    max_tool_calls: 3
+```
+
+| `kind` | What the tool call gets | What it tests |
+|---|---|---|
+| `error` | The tool's own failure result (`success=False` and a message, e.g. HTTP 429) | What the agent tells the user |
+| `exception` | The tool raises | An unhandled crash in a tool must not crash the turn |
+| `timeout` | The tool raises `TimeoutError` | The same, for the timeout path |
+| `empty` | Success with no data | "No results" must not be turned into an answer |
+
+`times: N` fails only the first N calls and lets later ones through (retry behaviour). `required: false` marks a fault on a tool the agent may reasonably use instead of another; with only optional faults, at least one must fire. A service being down can also be expressed with a fixture: `events_fixture: []` is what the events adapter returns when it cannot reach the service.
+
+**How it works.** Both chat engines call tools through one function, `tools.run_tool`. It has an optional interceptor that nothing sets in production; the eval runner installs one that reads the running case's faults. So the fault is met by the same code that handles a real failure: the state machine's `ExecuteTool` and `EvaluateResult`, or the loop's `_call`.
+
+**A case cannot pass for the wrong reason.** If the agent never calls the faulted tool, nothing was tested, and the case fails with `fault_not_reached`. That tag points at routing, not at failure handling.
+
+**Not a hard gate.** `resilience` is measured like the other suites (pass rate, interval, consistency across repeats). Substring checks are a blunt tool for "did it admit the failure", so run it with a judge when you want a second opinion: the `agent_flow` rubric's `recovery` dimension scores exactly this.
+
+**Results when first run** (2026-11-15, no judge):
+
+| Engine | Attempts | Result |
+|---|---|---|
+| Loop | 2 per case | 16 of 16 |
+| State machine | 3 per case | 21 of 24: seven cases passed every time, `page_read_refused` failed every time |
+
+The one failure was a routing defect, not a failure-handling one: asked "Summarize this page for me: <url>", the state machine classified it as a task, planned, and called `recall_about_topic` with the URL as the topic. It never tried to read the page, so the fault was never met. The router had chosen `read_webpage`; `CheckPlan` planned every `task` intent regardless, and planning replaces the router's tool with the planner's own steps. Fixed the same day by not planning a task whose chosen tool is the whole job (`DIRECT_ANSWER_TOOLS`, currently `read_webpage`). A broader first fix, letting any chosen tool skip planning, was rejected by the routing and end-to-end suites: the router also names `web_search` or `recall_about_topic` for genuine planning tasks, and those stopped being planned. The case is kept as the `a_commanded_page_summary_reads_the_page` case in `incidents`.
 
 ---
 
@@ -234,12 +286,17 @@ A full pass makes about 20 model calls and takes one to two minutes.
 | `recall` | Every `must_recall` fact reached the model's context. Also reports `recall@5` and MRR. | `missed_retrieval` |
 | `mentions` | The reply contains every `must_mention` | `incomplete_answer` |
 | `mentions_any` | The reply contains at least one `must_mention_any` | `incomplete_answer` |
+| `no_false_claim` | The reply states none of `must_not_assert`. A phrase inside a denial ("that doesn't mean you have no events") does not count. Heuristic: no negation word earlier in the same sentence. | `false_claim` |
+| `tool_calls` | The last turn made at most `max_tool_calls` tool calls | `retry_storm` |
+| `faults_fired` | Every planned tool fault was actually met | `fault_not_reached` |
 | `no_hallucination` | The reply contains no `must_not_mention` | `hallucinated_memory` |
 | `entity_resolution` | Each expected entity exists with its aliases linked and the right relationship or species | `entity_miss` |
 | `entity_dedup` | No expected entity is split across several nodes | `entity_dup` |
 | `no_spurious_entities` | No forbidden entity was created | `entity_spurious` |
 | `latency` | The turn is within `max_latency_ms` | `slow` |
 | research: `source_count`, `source_diversity`, `lane_coverage`, `citable_sources` | minimum sources met, ≥50% distinct domains, every expected lane produced findings, every source has a URL | `thin_sources`, `low_diversity`, `lane_empty`, `uncitable_source` |
+
+Phrase checks (`must_mention`, `must_mention_any`, `must_not_mention`) ignore case and whitespace and treat typographic quotes and dashes as plain ones, so a case asking for `couldn't` matches the `couldn’t` a model writes.
 
 **Pass rule.** A case passes when all of these hold:
 - every deterministic score passes;

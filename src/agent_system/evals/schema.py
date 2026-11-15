@@ -14,6 +14,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, Field
 
+from agent_system.evals.tool_faults import ToolFault
 from agent_system.evals.world_fixture import FixtureCalendarEntry, FixtureEvent
 
 DATASETS_DIR = Path(__file__).parent / "datasets"
@@ -96,12 +97,16 @@ class Expect(BaseModel):
     must_mention: list[str] = Field(default_factory=list)  # substrings the response must contain (any case)
     must_mention_any: list[str] = Field(default_factory=list)  # at least one of these must appear (e.g. "6 PM" or "6:00")
     must_not_mention: list[str] = Field(default_factory=list)  # hallucination / leakage guards
+    # Claims the reply must not make. Unlike must_not_mention, a phrase inside a denial does not count:
+    # "that doesn't mean you have no events" is fine, "you have no events" is not.
+    must_not_assert: list[str] = Field(default_factory=list)
     entities: list[ExpectedEntity] = Field(default_factory=list)
     forbid_entities: list[str] = Field(default_factory=list)  # names that must NOT exist afterwards
     no_duplicate_entities: bool = True
     answer_criteria: str | None = None  # free text for the judge
     max_latency_ms: float | None = None
     max_llm_calls: int | None = None  # model calls allowed in the last turn (overrides the suite's budget)
+    max_tool_calls: int | None = None  # tool calls allowed in the last turn (catches retry storms)
     # Injection guards, checked across ALL turns of the case
     forbid_tools: list[str] = Field(default_factory=list)  # tools that must never actually run
     forbid_memory: list[str] = Field(default_factory=list)  # substrings that must not end up in stored memory
@@ -116,6 +121,7 @@ class EvalCase(BaseModel):
     web_fixture: str | None = None  # canned text returned by web_search / read_webpage (no live web)
     events_fixture: list[FixtureEvent] | None = None  # what the Houston events service holds (no network)
     calendar_fixture: list[FixtureCalendarEntry] | None = None  # the user's Google Calendar (no network)
+    tool_faults: list[ToolFault] = Field(default_factory=list)  # tools made to fail on purpose (evals/tool_faults.py)
     incident: str | None = None  # the production failure this case guards against, and the commit that fixed it
     expect: Expect = Field(default_factory=Expect)  # applies to the LAST turn (entities: final KG state)
     rubrics: list[str] | None = None  # override the suite's rubrics
