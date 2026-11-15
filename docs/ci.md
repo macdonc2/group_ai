@@ -5,7 +5,7 @@ Two workflows, split by what they cost:
 | Workflow | Runs | Calls a model | Blocks a merge |
 |---|---|---|---|
 | [`ci.yml`](../.github/workflows/ci.yml) | every pull request, every push to `main` | no | yes |
-| [`evals.yml`](../.github/workflows/evals.yml) | nightly, on demand, or on a pull request labelled `run-evals` | yes | no (see [Live evals](#live-evals)) |
+| [`evals.yml`](../.github/workflows/evals.yml) | on demand, or on a pull request labelled `run-evals` (no schedule yet) | yes | no (see [Live evals](#live-evals)) |
 
 Neither deploys anything; deploys stay manual.
 
@@ -133,14 +133,22 @@ fails in minutes instead of holding a runner for six hours.
 
 `evals.yml` runs the eval harness ([evals.md](evals.md)) against the real
 model. A model's output varies from run to run and each run costs money, so
-this tier is scheduled and opt-in instead of running on every push.
+this tier is opt-in instead of running on every push.
 
 ### What runs
 
-| Job | Suites | Passes when | Nightly | `run-evals` label | Manual |
-|---|---|---|---|---|---|
-| Gates, once per engine (`fsm`, `loop`) | `incidents`, `injection` | every case passes every attempt | yes, 2 attempts | yes, 1 attempt | yes |
-| Statistical suites | `routing`, `tool_selection`, `memory_retrieval`, `entity_resolution`, `e2e_tasks` | no suite is clearly worse than the baseline, and none is below 50% | yes | no | with `tier: all` |
+| Job | Suites | Passes when | Manual | `run-evals` label |
+|---|---|---|---|---|
+| Gates, once per engine (`fsm`, `loop`) | `incidents`, `injection` | every case passes every attempt | yes, 2 attempts | yes, 1 attempt |
+| Statistical suites | `routing`, `tool_selection`, `memory_retrieval`, `entity_resolution`, `e2e_tasks` | no suite is clearly worse than the baseline, and none is below 50% | with `tier: all` | no |
+
+**There is no nightly schedule yet, deliberately.** A scheduled run spends
+money with nobody watching, and the key in use is the app's own with no
+separate budget; the first full run drained the account. The usual shape
+(gates and statistical suites every night) comes back by restoring the
+`schedule:` block that is commented out at the top of the workflow, once
+`EVAL_OPENAI_API_KEY` is a dedicated key with a spending limit. Until then,
+run it by hand before a release and after any change to routing or prompts.
 
 A first job, "Should this run?", decides whether the others start. It skips a
 pull request without the label, refuses a pull request from a fork, and makes
@@ -192,8 +200,9 @@ next run reads it back (`--baseline-file`).
 - To accept a change as the new normal, run the workflow by hand with
   `reset_baseline` ticked.
 - The first run has nothing to compare against and becomes the baseline.
-- GitHub drops a cache entry not read for 7 days. If the nightly is paused for
-  longer, the next run starts a fresh baseline. Each run also uploads its
+- GitHub drops a cache entry not read for 7 days. With no schedule, a baseline
+  therefore expires a week after the last full run, and the next run starts a
+  fresh one with nothing to compare against. Each run also uploads its
   results as an artifact, kept 30 days.
 
 ### What blocks a merge
@@ -204,7 +213,7 @@ required is before a deploy: run them on the commit you are about to ship, or
 label the pull request. If one check from here were made required, it should
 be the gates and never the statistical suites.
 
-A failed nightly is a signal to look, not a broken build: read the job summary
+A failed run is a signal to look, not a broken build: read the job summary
 for the failing case ids, then the uploaded log for the turn-by-turn trace.
 
 ### The key, and what it costs

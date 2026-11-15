@@ -3,8 +3,13 @@
 name: Evals (live)
 
 on:
-  schedule:
-    - cron: "17 9 * * *" # nightly, about 03:17 or 04:17 in Houston
+  # No schedule on purpose. A nightly run spends money with nobody watching,
+  # and the key it uses is currently the app's own, with no separate budget:
+  # the first full run drained the account. Once EVAL_OPENAI_API_KEY is a
+  # dedicated key with a spending limit, restore the nightly by adding:
+  #   schedule:
+  #     - cron: "17 9 * * *" # about 03:17 or 04:17 in Houston
+  # The `schedule` handling below is kept so that is the only change needed.
   workflow_dispatch:
     inputs:
       tier:
@@ -142,8 +147,9 @@ jobs:
           --health-interval 5s --health-timeout 10s --health-retries 30
     env:
       CHAT_ENGINE: ${{ matrix.engine }}
-      # Two attempts per case nightly, to catch a case that only passes some
-      # of the time; one on a pull request, to keep the label cheap.
+      # Two attempts per case on a manual (or scheduled) run, to catch a case
+      # that only passes some of the time; one on a pull request, to keep the
+      # label cheap.
       REPEATS: ${{ github.event_name == 'pull_request' && '1' || '2' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
