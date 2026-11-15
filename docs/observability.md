@@ -10,6 +10,7 @@ How the app reports what it is doing, and why it is built this way.
 | Readiness check (`/health/ready`) | yes | yes |
 | OpenTelemetry traces and metrics | **off** (no endpoint configured) | on, when `OTEL_EXPORTER_OTLP_ENDPOINT` is set |
 | Collector, Prometheus, Tempo, Loki, Grafana | not installed | `infra/observability/docker-compose.yml` |
+| Uptime check and alerts | scheduled GitHub workflow + `/health/alerts` | run `scripts/prod_monitor.py --dry-run` |
 
 Production has no telemetry backend on purpose; see [Why the stack is not in the cluster](#why-the-stack-is-not-in-the-cluster).
 
@@ -149,14 +150,63 @@ So the workflow is: metrics say *that* something is wrong and for which route; t
 - **Pure ASGI middleware**, not `BaseHTTPMiddleware`, so streaming responses and WebSockets pass through unbuffered.
 - **One tracer provider.** The LLM capture and the exporter share it, so agent spans are children of the HTTP span rather than a separate trace.
 
-## What to alert on (if a backend is added)
+## Uptime check and alerts
+
+Production has no metrics service (see the next section for why), so alerting is built from two things that cost nothing: the turn records the app already stores, and a scheduled GitHub Actions workflow.
+
+```
+GitHub Actions, every 10 minutes (.github/workflows/monitor.yml)
+        │  scripts/prod_monitor.py
+        ├── GET /health/ready    is the site up?            (3 tries, 20 s apart)
+        └── GET /health/alerts   is the agent in trouble?   (the app judges its last hour of turns)
+        │
+        ▼
+one GitHub issue labelled `prod-alert`, assigned to the repository owner
+   opened when something is wrong · commented when the problem changes · closed on recovery
+```
+
+**Why two questions.** Readiness says the process and the database are up. It cannot see every chat failing, the model account running out of credits, or spend running away, because the API answers 200 through all of those. On 2026-11-15 the OpenAI credits ran out and nothing noticed; `/health/alerts` is the check for that.
+
+**What `/health/alerts` checks** (`application/services/alerts.py`), over the last 60 minutes of `turn_traces`:
+
+| Code | Fires when | Setting |
+|---|---|---|
+| `model_unreachable` | At least 2 turns used no model tokens, and they are at least half of all turns | |
+| `turn_failures` | At least 3 turns ended in an error, a timeout or the step limit, and they are at least 30% of turns | `ALERT_FAILED_TURNS_MIN`, `ALERT_FAILED_SHARE` |
+| `slow_turns` | At least 3 successful turns and their p95 is over 120 s | `ALERT_P95_MS` |
+| `spend_hour` | Model spend in the last hour is over $5 | `ALERT_SPEND_HOUR_USD` (0 = off) |
+| `spend_day` | Model spend in the last 24 hours is over $20 | `ALERT_SPEND_DAY_USD` (0 = off) |
+
+Every rule has a minimum count as well as a share. This is a single-user app: an hour may hold three turns, and a share alone would fire on one bad turn out of one.
+
+The endpoint always returns 200 with `status: ok` or `alerting`, so a monitor can tell "down" (no answer) from "up and alerting". It needs no login, like the other health endpoints, so it returns alert codes and fixed descriptions only. The numbers behind an alert are logged as an `alert_firing` event:
+
+```bash
+kubectl -n agent-system logs deploy/agent-system-backend --since=2h | grep alert_firing
+```
+
+**What the monitor adds from outside:** `site_down` (no answer after three tries), `not_ready` (readiness returned an error, with which dependency), and `alerts_unreadable`.
+
+**How you hear about it.** The workflow keeps one issue in step with the state. Opening, changing and closing it each send GitHub's normal notification email to the assignee. While nothing changes it does nothing, so a two-hour outage is two emails (opened, recovered), not twelve. Make sure GitHub notifications for the repository reach an inbox you read.
+
+**Limits, stated plainly.**
+
+- GitHub runs schedules late under load, often by 5 to 20 minutes, so detection takes 10 to 30 minutes. This is a personal-app alarm, not a pager.
+- GitHub switches a schedule off after 60 days with no activity in the repository. A commit or a manual run turns it back on.
+- If GitHub is down, nothing checks.
+- The alert rules only see chat, group and journal turns. Deep Research spend and failures, HTTP error rates and refused logins are not covered; those need request metrics.
+- The daily Houston events job (a different app) is not covered. It fails silently today.
+- Spend is priced from token counts at list prices, so it is an estimate.
+
+**Try it.** `python3 scripts/prod_monitor.py --url https://agent.macdonml.com --dry-run` prints what the monitor sees without touching GitHub. The workflow can also be run by hand from the Actions tab.
+
+## What to alert on if a metrics backend is added
+
+The list above is what the turn records can answer. With request metrics these become possible too:
 
 - Server error ratio above 1% for 10 minutes.
 - p95 latency of non-streaming routes above a threshold.
-- `/health/ready` failing, or `dependency_down` log events.
 - A sharp rise in refused requests (credential stuffing, or a broken client).
-- Token spend per hour above a budget.
-- Agent turns ending in `error`, `timeout` or `step_limit` above a small share.
 
 ## Why the stack is not in the cluster
 

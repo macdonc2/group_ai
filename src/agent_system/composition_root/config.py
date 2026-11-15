@@ -124,6 +124,13 @@ class Settings(BaseSettings):
     # Evals
     eval_openai_api_key: str | None = Field(default=None, description="OpenAI key used by eval runs (system under test + OpenAI judge)")
     eval_judge_model: str = Field(default="openai:gpt-6-astra", description="Model for the OpenAI judge")
+    # Alerts over recent chat turns (GET /health/alerts; application/services/alerts.py)
+    alert_failed_turns_min: int = Field(default=3, description="Failed turns in the last hour needed before alerting")
+    alert_failed_share: float = Field(default=0.3, description="...and the share of turns they must make up")
+    alert_p95_ms: float = Field(default=120_000, description="Alert when p95 turn time over the last hour exceeds this")
+    alert_spend_hour_usd: float = Field(default=5.0, description="Alert when model spend in the last hour exceeds this; 0 = off")
+    alert_spend_day_usd: float = Field(default=20.0, description="Alert when model spend in the last 24 hours exceeds this; 0 = off")
+
     eval_max_cost_usd: float = Field(
         default=5.0, description="Spend cap for one eval run (system + judge), in USD; the run stops when it is reached. 0 = no cap",
     )

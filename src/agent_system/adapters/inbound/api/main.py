@@ -233,6 +233,44 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             response.status_code = 503
         return {"status": "ready" if ready else "not_ready", "checks": checks}
     
+    @app.get("/health/alerts")
+    async def alerts() -> dict[str, Any]:
+        """Is the agent itself in trouble? Judged from the last hour of stored chat turns.
+
+        Readiness cannot see chats failing, an empty model account or runaway spend, because
+        the API still answers 200 through all of them. This always returns 200 with a status,
+        so a monitor can tell "the app is down" (no answer) from "the app is up and alerting".
+
+        No auth, like the other health endpoints, so the response carries alert codes and
+        fixed descriptions only: no amounts, counts of users or text. The numbers go to the
+        log as `alert_firing`. The result is cached for a minute so polling costs one query.
+        """
+        import time
+
+        from agent_system.application.services.alerts import Thresholds, load_and_evaluate
+        from agent_system.composition_root.config import get_settings
+
+        cached = getattr(app.state, "alerts_cache", None)
+        if cached and time.monotonic() - cached[0] < 60:
+            return cached[1]
+        s = get_settings()
+        thresholds = Thresholds(failed_turns_min=s.alert_failed_turns_min, failed_share=s.alert_failed_share,
+                                p95_ms=s.alert_p95_ms, spend_hour_usd=s.alert_spend_hour_usd,
+                                spend_day_usd=s.alert_spend_day_usd)
+        try:
+            async with get_database().session() as session:
+                found, turns = await load_and_evaluate(session, thresholds)
+        except Exception as exc:  # noqa: BLE001 - the check itself failing is an alert, not a 500
+            logger.warning("Alert check failed: %s", type(exc).__name__, extra={"event": "alert_check_failed"})
+            return {"status": "alerting", "window_minutes": thresholds.window_minutes,
+                    "alerts": [{"code": "check_failed", "summary": "The alert check could not read the turn records. Check the database."}]}
+        for alert in found:
+            logger.warning("Alert firing: %s", alert.code, extra={"event": "alert_firing", "alert": alert.code, **alert.detail})
+        body = {"status": "alerting" if found else "ok", "window_minutes": thresholds.window_minutes,
+                "had_traffic": turns > 0, "alerts": [{"code": a.code, "summary": a.summary} for a in found]}
+        app.state.alerts_cache = (time.monotonic(), body)
+        return body
+
     @app.get("/")
     async def root() -> dict[str, Any]:
         """Root endpoint with API information."""

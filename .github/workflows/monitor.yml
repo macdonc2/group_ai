@@ -1,0 +1,36 @@
+# Uptime and alert check for production. What it does and its limits: docs/observability.md
+name: Production monitor
+
+on:
+  schedule:
+    # Every 10 minutes. GitHub runs schedules late under load (often 5 to 20 minutes), and
+    # turns a schedule off after 60 days with no activity in the repository.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# One check at a time; a late run never overlaps the next.
+concurrency:
+  group: production-monitor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write # opens, updates and closes the one alert issue
+
+jobs:
+  check:
+    name: Check production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/prod_monitor.py
+          sparse-checkout-cone-mode: false
+      - name: Check the site and sync the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Set the repository variable PROD_URL to move the check; this is the default.
+          PROD_URL: ${{ vars.PROD_URL || 'https://agent.macdonml.com' }}
+        run: python3 scripts/prod_monitor.py --url "$PROD_URL" --assignee "${{ github.repository_owner }}"
