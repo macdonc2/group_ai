@@ -1,11 +1,20 @@
 # Continuous integration
 
-One workflow, [`.github/workflows/ci.yml`](../.github/workflows/ci.yml), runs on
-every pull request, on every push to `main`, and on demand from the Actions tab.
-It uses no secrets and makes no model calls, so it costs nothing and is safe to
-run on any change. It does not deploy; deploys stay manual.
+Two workflows, split by what they cost:
 
-## What runs
+| Workflow | Runs | Calls a model | Blocks a merge |
+|---|---|---|---|
+| [`ci.yml`](../.github/workflows/ci.yml) | every pull request, every push to `main` | no | yes |
+| [`evals.yml`](../.github/workflows/evals.yml) | nightly, on demand, or on a pull request labelled `run-evals` | yes | no (see [Live evals](#live-evals)) |
+
+Neither deploys anything; deploys stay manual.
+
+## CI (free, every change)
+
+`ci.yml` uses no secrets and makes no model calls, so it costs nothing and is
+safe to run on any change, including one from a fork.
+
+### What runs
 
 | Job | What it checks | Rough time |
 |---|---|---|
@@ -18,7 +27,7 @@ run on any change. It does not deploy; deploys stay manual.
 The first four run in parallel; the fifth waits for the image build so it can
 reuse its layer cache. A pull request is ready when all five are green.
 
-## Running the same checks locally
+### Running the same checks locally
 
 Backend, from the repo root:
 
@@ -53,7 +62,7 @@ docker run --rm -e OPENAI_API_KEY=sk-test -v "$PWD/tests:/app/tests:ro" agent-sy
          python -m pytest tests/unit tests/e2e --deselect tests/e2e/api/test_api.py $OPTS -p no:cacheprovider -q"
 ```
 
-## Choices, and why
+### Choices, and why
 
 **Lint fails on new findings only.** When CI was added the repo had about 2,400
 ruff findings (about 1,900 of them whitespace on blank lines) and 10 ESLint
@@ -120,6 +129,110 @@ replaces. Runs on `main` are never cancelled, so each commit there has its own
 result. Every job has a timeout a few times its normal duration, so a hung test
 fails in minutes instead of holding a runner for six hours.
 
+## Live evals
+
+`evals.yml` runs the eval harness ([evals.md](evals.md)) against the real
+model. A model's output varies from run to run and each run costs money, so
+this tier is scheduled and opt-in instead of running on every push.
+
+### What runs
+
+| Job | Suites | Passes when | Nightly | `run-evals` label | Manual |
+|---|---|---|---|---|---|
+| Gates, once per engine (`fsm`, `loop`) | `incidents`, `injection` | every case passes every attempt | yes, 2 attempts | yes, 1 attempt | yes |
+| Statistical suites | `routing`, `tool_selection`, `memory_retrieval`, `entity_resolution`, `e2e_tasks` | no suite is clearly worse than the baseline, and none is below 50% | yes | no | with `tier: all` |
+
+A first job, "Should this run?", decides whether the others start. It skips a
+pull request without the label, refuses a pull request from a fork, and checks
+the key with a free request before anything is spent.
+
+To run it by hand: Actions tab, **Evals (live)**, **Run workflow**. To run the
+gates on a pull request, add the `run-evals` label; they rerun on each push
+while the label stays on.
+
+### Why two kinds of pass
+
+**The gates are pass or fail.** `incidents` replays real production failures
+against frozen data, and `injection` feeds the agent canned hostile web
+content. Both are scored by deterministic checks with no judge, and the right
+answer is not a matter of degree, so one failing case fails the job. A pass
+rate would let one returning bug hide among passes.
+
+**The statistical suites are compared, not thresholded.** They have 10 to 20
+cases each, so a single run's pass rate is a rough estimate (9 of 10 is
+consistent with anything from 60% to 98%). A fixed bar such as "at least 80%"
+would fail at random on a good night and pass a real regression on a lucky
+one. Instead each suite is compared case by case with the last good run on
+`main`, and the job fails only when the paired test says clearly worse. The 50%
+floor is only there to catch a run that did not work at all.
+
+The price of not crying wolf is sensitivity: on a 10-case suite about six
+cases have to get worse, with none getting better, before the verdict is
+"worse". Smaller regressions pass. More cases and more attempts per case
+(`repeats`) are what narrow that, not a stricter rule.
+
+### How the baseline is carried
+
+Eval results live in the app database, and a CI job starts with an empty one.
+The comparison only needs pass or fail per case, so the run writes that to a
+small JSON file (`--export`), the file is stored in the Actions cache, and the
+next run reads it back (`--baseline-file`).
+
+- The baseline moves forward only when the job passes, and only from `main`.
+  A regression keeps failing against the last good run until it is fixed.
+- To accept a change as the new normal, run the workflow by hand with
+  `reset_baseline` ticked.
+- The first run has nothing to compare against and becomes the baseline.
+- GitHub drops a cache entry not read for 7 days. If the nightly is paused for
+  longer, the next run starts a fresh baseline. Each run also uploads its
+  results as an artifact, kept 30 days.
+
+### What blocks a merge
+
+Nothing in this workflow, by design. The gates take a few minutes and real
+money, and they answer "is this safe to release", so the place they are
+required is before a deploy: run them on the commit you are about to ship, or
+label the pull request. If one check from here were made required, it should
+be the gates and never the statistical suites.
+
+A failed nightly is a signal to look, not a broken build: read the job summary
+for the failing case ids, then the uploaded log for the turn-by-turn trace.
+
+### The key, and what it costs
+
+One repository secret, `EVAL_OPENAI_API_KEY` (Settings, Secrets and variables,
+Actions). It is the only secret either workflow uses.
+
+- It is passed only to the steps that call the model, never to install or
+  summary steps. GitHub masks it in logs.
+- Pull requests from forks never receive it. The label only works on branches
+  of this repository, which only collaborators can push to.
+- Use a key from a dedicated OpenAI project with a monthly budget set on the
+  OpenAI side. That budget is the only hard spend cap; everything in the
+  workflow (one run at a time per branch, job timeouts, fixed attempt counts)
+  limits how fast money can be spent, not how much.
+- Cost per run is not known yet. The harness prints a cost line per suite, but
+  with the current library versions the API calls report zero tokens (a known
+  issue in [evals.md](evals.md#operations-and-known-issues)), so read the first
+  few runs' cost from that OpenAI project's usage page. One pass of
+  `incidents` is about 20 model calls per engine; `injection` is of similar
+  size; the statistical suites add a judge call per rubric per case.
+
+Logs are public on a public repository. Eval runs print the prompts and replies
+of the synthetic test users, which contain nothing private, but do not point
+this workflow at real user data.
+
+### Running the same thing locally
+
+Needs Neo4j, a database and a key in `.env`:
+
+```bash
+CHAT_ENGINE=fsm  python -m agent_system.evals run --suite incidents --judge none --no-analysis
+CHAT_ENGINE=loop python -m agent_system.evals run --suite injection --judge none --no-analysis --fail-under 1.0
+python -m agent_system.evals run --suite routing --judge openai \
+  --baseline-file baseline.json --fail-on-regression --export baseline-new.json
+```
+
 ## Known gaps
 
 - `tests/e2e/api/test_api.py` is deselected: 7 tests fail against the current API.
@@ -127,4 +240,3 @@ fails in minutes instead of holding a runner for six hours.
 - No dependency or image vulnerability scan.
 - Branch protection is not configured by the workflow; required checks are set
   in the repository settings.
-- Live-model eval gates are not part of this workflow.
