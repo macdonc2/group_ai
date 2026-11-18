@@ -15,6 +15,7 @@ from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
     OptionalGoogleCalendarDep,
     SessionDep,
+    SettingsDep,
     get_session,
 )
 from agent_system.adapters.inbound.api.schemas import (
@@ -1060,14 +1061,14 @@ logger = logging.getLogger(__name__)
 WS_AUTH_SUBPROTOCOL = "bearer"
 
 
-async def _token_from_subprotocols(header: str | None):
+async def _token_from_subprotocols(header: str | None, secret_key: str):
     """The caller's identity from `Sec-WebSocket-Protocol: bearer, <jwt>`, or None."""
     from agent_system.adapters.inbound.api.auth import authenticate_token
 
     offered = [part.strip() for part in (header or "").split(",") if part.strip()]
     if len(offered) != 2 or offered[0] != WS_AUTH_SUBPROTOCOL:
         return None
-    return await authenticate_token(offered[1])
+    return await authenticate_token(offered[1], secret_key)
 
 
 @router.websocket("/{group_id}/conversations/{conversation_id}/ws")
@@ -1076,6 +1077,7 @@ async def websocket_chat(
     group_id: str,
     conversation_id: str,
     container: ContainerDep,
+    settings: SettingsDep,
 ):
     """WebSocket endpoint for real-time group chat.
 
@@ -1108,7 +1110,7 @@ async def websocket_chat(
     from agent_system.domain.value_objects import Message as DomainMessage
     
     # Who is this? Decided by the token alone, before anything is accepted.
-    token_data = await _token_from_subprotocols(websocket.headers.get("sec-websocket-protocol"))
+    token_data = await _token_from_subprotocols(websocket.headers.get("sec-websocket-protocol"), settings.secret_key)
     if token_data is None:
         await websocket.close(code=4401, reason="Not authenticated")
         return
@@ -1241,8 +1243,7 @@ async def websocket_chat(
                                         
                                         # Fall back to system key
                                         if not api_key_for_embedding:
-                                            from agent_system.composition_root.config import get_settings
-                                            api_key_for_embedding = get_settings().openai_api_key
+                                            api_key_for_embedding = settings.openai_api_key
                                         
                                         if not api_key_for_embedding:
                                             logger.debug("No API key available for embeddings")
@@ -1296,10 +1297,8 @@ async def websocket_chat(
                                 WorkflowState,
                                 run_agent_workflow,
                             )
-                            from agent_system.composition_root.config import get_settings
                             from agent_system.domain.entities import Conversation as DomainConversation, User
                             
-                            settings = get_settings()
                             
                             async with _database.session() as session:
                                 user_repo = SQLAlchemyUserRepository(session)
@@ -1543,7 +1542,6 @@ async def websocket_chat(
                         logger.info(f"=== Starting event extraction for message: {content[:50]}... ===")
                         try:
                             from agent_system.adapters.outbound.llm import extract_events_from_text
-                            from agent_system.composition_root.config import get_settings
                             
                             # Get API key for event extraction
                             api_key_for_extraction: str | None = None
@@ -1559,7 +1557,6 @@ async def websocket_chat(
                             
                             # Fall back to system key if user key not available
                             if not api_key_for_extraction:
-                                settings = get_settings()
                                 api_key_for_extraction = settings.openai_api_key
                             
                             if not api_key_for_extraction:
@@ -1702,7 +1699,6 @@ async def websocket_chat(
                     # This runs in parallel with regular message processing
                     try:
                         from agent_system.adapters.outbound.llm.knowledge_extractor import extract_knowledge_from_text
-                        from agent_system.composition_root.config import get_settings
                         
                         # Get API key for entity extraction (reuse logic from event extraction)
                         api_key_for_entities: str | None = None
@@ -1718,7 +1714,6 @@ async def websocket_chat(
                         
                         # Fall back to system key
                         if not api_key_for_entities:
-                            settings = get_settings()
                             api_key_for_entities = settings.openai_api_key
                         
                         knowledge_graph = container.knowledge_graph_adapter if container else None

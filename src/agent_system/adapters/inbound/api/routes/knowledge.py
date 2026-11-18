@@ -10,6 +10,7 @@ from agent_system.adapters.inbound.api.dependencies import (
     KnowledgeGraphDep,
     OptionalKnowledgeGraphDep,
     SessionDep,
+    SettingsDep,
     get_current_user,
 )
 from agent_system.application.services.graph_explorer import GraphSnapshot, clean_properties
@@ -127,6 +128,7 @@ async def ask_knowledge_graph(
     current_user: User = Depends(get_current_user),
     *,
     graph: OptionalKnowledgeGraphDep,
+    settings: SettingsDep,
 ) -> dict:
     """Ask the graph explorer agent a question about the current user's graph.
 
@@ -138,9 +140,7 @@ async def ask_knowledge_graph(
     from agent_system.adapters.outbound.llm.graph_agent import ask_graph
     from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
     from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture
-    from agent_system.composition_root.config import get_settings
 
-    settings = get_settings()
     api_key = _resolve_api_key(current_user, settings)
     try:
         snapshot = await _load_snapshot(graph, current_user_id)

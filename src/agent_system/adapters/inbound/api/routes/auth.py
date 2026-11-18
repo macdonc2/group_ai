@@ -12,7 +12,7 @@ from agent_system.adapters.inbound.api.auth import (
     TokenData,
     verify_password,
 )
-from agent_system.adapters.inbound.api.dependencies import SessionDep
+from agent_system.adapters.inbound.api.dependencies import SessionDep, SettingsDep
 from agent_system.adapters.inbound.api.throttle import FailureThrottle
 from pydantic import BaseModel
 
@@ -85,6 +85,7 @@ async def login(
     data: LoginRequest,
     request: Request,
     session: SessionDep,
+    settings: SettingsDep,
 ):
     """Authenticate a user and return an access token."""
     address = _client_address(request)
@@ -138,7 +139,7 @@ async def login(
         email=user.email,
         is_superuser=user.is_superuser,
     )
-    access_token = create_access_token(token_data)
+    access_token = create_access_token(token_data, settings.secret_key)
     
     logger.info(f"User logged in: {user.id}")
     
@@ -421,6 +422,7 @@ async def delete_user(
 async def bootstrap_admin(
     data: RegisterRequest,
     session: SessionDep,
+    settings: SettingsDep,
 ):
     """Bootstrap the first admin user.
     
@@ -455,7 +457,7 @@ async def bootstrap_admin(
         email=user.email,
         is_superuser=user.is_superuser,
     )
-    access_token = create_access_token(token_data)
+    access_token = create_access_token(token_data, settings.secret_key)
     
     logger.info(f"Bootstrap: Created first admin user: {user.id}")
     

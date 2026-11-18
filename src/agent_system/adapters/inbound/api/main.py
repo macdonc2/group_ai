@@ -82,10 +82,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan handler."""
-        # Tokens are signed and verified with the process-wide settings, so
-        # that is the key to judge. Fatal where real users are, a warning on
-        # a laptop.
-        problem = secret_key_problem(get_settings().secret_key)
+        # Tokens are signed and checked with this app's key; stored API keys are
+        # still encrypted with the process-wide one (`domain/utils/encryption.py`),
+        # so both are judged. Fatal where real users are, a warning on a laptop.
+        problem = secret_key_problem(settings.secret_key) or secret_key_problem(get_settings().secret_key)
         if problem:
             if _deployed(settings):
                 raise RuntimeError(f"Refusing to start: {problem}. Set a random SECRET_KEY of 32+ characters.")
@@ -136,6 +136,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         redoc_url="/redoc" if docs_on else None,
         openapi_url="/openapi.json" if docs_on else None,
     )
+    # Routes and dependencies read configuration from here (`SettingsDep`).
+    app.state.settings = settings
 
     # CORS decides which *other* websites' pages may call this API from a
     # browser. Deployed, the frontend is served from the same origin, so the
@@ -252,12 +254,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         import time
 
         from agent_system.application.services.alerts import Thresholds, load_and_evaluate
-        from agent_system.composition_root.config import get_settings
 
         cached = getattr(app.state, "alerts_cache", None)
         if cached and time.monotonic() - cached[0] < 60:
             return cached[1]
-        s = get_settings()
+        s = settings
         thresholds = Thresholds(failed_turns_min=s.alert_failed_turns_min, failed_share=s.alert_failed_share,
                                 p95_ms=s.alert_p95_ms, spend_hour_usd=s.alert_spend_hour_usd,
                                 spend_day_usd=s.alert_spend_day_usd)

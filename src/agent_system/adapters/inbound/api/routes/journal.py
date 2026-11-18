@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent_system.adapters.inbound.api.dependencies import ContainerDep, CurrentUserId, SessionDep, get_database
+from agent_system.adapters.inbound.api.dependencies import ContainerDep, CurrentUserId, SessionDep, SettingsDep, get_database
 from agent_system.adapters.inbound.api.schemas import StreamEvent
 from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
 from agent_system.adapters.outbound.persistence.journal_models import JournalEntryModel, JournalMessageModel
@@ -326,11 +326,10 @@ async def process_entry(entry_id: str, user_id: str, container: Any) -> None:
     removes what the first run stored.
     """
     from agent_system.adapters.outbound.llm import journal_memory
-    from agent_system.composition_root.config import get_settings
 
     async with _locks.setdefault(entry_id, asyncio.Lock()):
         try:
-            settings = get_settings()
+            settings = container.settings
             database = get_database()
             async with database.session() as session:
                 entry = await SQLAlchemyJournalRepository(session).get_entry(entry_id, user_id)
@@ -418,7 +417,8 @@ async def run_turn(message: str, *, deps: Any, api_key: str, history: list[Any])
 
 
 @router.post("/chat")
-async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep) -> StreamingResponse:
+async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep,
+                         settings: SettingsDep) -> StreamingResponse:
     """Talk with the journal agent about one day. Streams Server-Sent Events.
 
     A POST with the token in the Authorization header, so neither the message nor the
@@ -427,9 +427,7 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
     from agent_system.adapters.outbound.llm.journal_agent import JournalDeps, build_history
     from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture, set_current_node
     from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
-    from agent_system.composition_root.config import get_settings
 
-    settings = get_settings()
     user = await _user(session, current_user_id)
     day = _valid_day(payload.date, _today(user.timezone))
     message = payload.message.strip()

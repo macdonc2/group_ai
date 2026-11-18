@@ -7,6 +7,7 @@ from fastapi import Depends, HTTPException, status
 from starlette.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_system.adapters.inbound.api.settings import SettingsDep, get_app_settings  # noqa: F401 - re-exported
 from agent_system.adapters.outbound.persistence import Database
 from agent_system.adapters.outbound.research.runner import ResearchRunner, get_runner
 from agent_system.composition_root.container import Container, get_container
