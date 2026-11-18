@@ -173,8 +173,8 @@ def test_a_link_the_model_was_never_shown_is_reported():
              "Also try [Bandsintown](https://www.bandsintown.com/c/houston-tx) or "
              "[search Google](https://www.google.com/search?q=lantern+room).")
     check = check_reply(reply, bundle, also_allowed="can you read https://my.example/page for me?")
-    assert check == {"links": 5, "unsourced_links": ["https://www.bandsintown.com/c/houston-tx"]}
-    assert check_reply("No links.", bundle) == {"links": 0, "unsourced_links": []}
+    assert (check["links"], check["unsourced_links"]) == (5, ["https://www.bandsintown.com/c/houston-tx"])
+    assert check_reply("No links.", bundle) == {"links": 0, "unsourced_links": [], "quotes": 0, "unsupported_quotes": []}
 
 
 # --- both engines ----------------------------------------------------------
@@ -257,5 +257,6 @@ def test_every_turn_records_its_context_and_reply_check_on_the_trace():
     stored = trace.to_dict()["context"]
     assert [(p["id"], p["kind"], p["trust"]) for p in stored["passages"]] == [("w1", "web_search", "untrusted")]
     assert "text" not in stored["passages"][0]                      # identity and size, not the content again
-    assert stored["reply_check"] == {"links": 2, "unsourced_links": ["https://invented.example/page"]}
+    assert stored["reply_check"] == {"links": 2, "unsourced_links": ["https://invented.example/page"],
+                                     "quotes": 0, "unsupported_quotes": []}
     assert TurnTrace().to_dict()["context"] is None

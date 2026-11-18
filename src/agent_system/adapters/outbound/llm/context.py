@@ -289,6 +289,88 @@ class ContextBundle:
         return "\n".join(parts + self._shown_text)
 
 
+# ---------------------------------------------------------------------------
+# Grounding: is this quote really in that source?
+# ---------------------------------------------------------------------------
+#
+# The rules above cover text that comes straight from a source. A second kind of context is
+# written by a model: a research "finding", a summary of a page. It is handed to the next
+# model call as if it were fact, so before it goes it must be tied back to the source text
+# it claims to come from. That link is a quote, and a quote can be checked by code.
+
+_QUOTE_MARKS = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', "\u2032": "'", "\u2033": '"',
+                              "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-", "\u2014": "-", "\u2212": "-",
+                              "\u00a0": " ", "\u202f": " ", "\u2009": " ", "\u200b": "", "\u00ad": ""})
+_ELLIPSIS = re.compile(r"\s*(?:\.\.\.|\u2026|\[\.\.\.\]|\[\u2026\])\s*")
+MIN_QUOTE_CHARS = 12          # shorter than this, "a quote" could match almost any text
+MIN_QUOTE_WORDS = 3
+
+
+def normalise_for_match(text: Any) -> str:
+    """Text reduced to what must match: Unicode forms unified, typographic quotes and dashes made
+    plain, whitespace collapsed, case folded. Nothing else is forgiven: a changed word or number
+    does not match."""
+    import unicodedata
+
+    plain = unicodedata.normalize("NFKC", str(text or "")).translate(_QUOTE_MARKS)
+    return " ".join(plain.casefold().split())
+
+
+class QuoteCheck(BaseModel):
+    """The result of looking for a quote in a source."""
+
+    found: bool
+    reason: str = ""                 # "" | too_short | not_in_source | out_of_order
+    segments: int = 0                # parts the quote was split into at ellipses
+    start: int | None = None         # where it starts in the normalised source, when found
+
+
+def find_quote(quote: Any, source_text: Any) -> QuoteCheck:
+    """Whether `quote` appears in `source_text`, word for word.
+
+    A quote may leave words out with an ellipsis; each part must then appear, in order. Apart from
+    that and the normalisation above the match is exact, on purpose: a paraphrase is the model's
+    wording, and the point of the check is to tell the source's words from the model's.
+    """
+    source = normalise_for_match(source_text)
+    whole = normalise_for_match(str(quote or "").strip().strip('"\u201c\u201d'))
+    if len(whole) < MIN_QUOTE_CHARS or len(whole.split()) < MIN_QUOTE_WORDS:
+        return QuoteCheck(found=False, reason="too_short")
+    parts = [p.strip(" .") for p in _ELLIPSIS.split(whole)]
+    parts = [p for p in parts if p]
+    if not parts:
+        return QuoteCheck(found=False, reason="too_short")
+    position, first = 0, None
+    for part in parts:
+        at = source.find(part, position)
+        if at == -1:
+            elsewhere = source.find(part) != -1
+            return QuoteCheck(found=False, reason="out_of_order" if elsewhere else "not_in_source", segments=len(parts))
+        first = at if first is None else first
+        position = at + len(part)
+    return QuoteCheck(found=True, segments=len(parts), start=first)
+
+
+def quoted_spans(text: str, min_chars: int = 25) -> list[str]:
+    """Passages a reply presents as someone's exact words: text inside double quotation marks and
+    Markdown block quotes. Short quoted words (titles, names, scare quotes) are left out."""
+    pattern = '["\u201c]([^"\u201c\u201d\\n]{' + str(min_chars) + ',})["\u201d]'
+    spans = [m.group(1).strip() for m in re.finditer(pattern, text or "")]
+    block: list[str] = []
+    for line in (text or "").splitlines() + [""]:
+        if line.lstrip().startswith(">"):
+            block.append(line.lstrip()[1:].strip())
+        elif block:
+            joined = " ".join(b for b in block if b)
+            if len(joined) >= min_chars:
+                spans.append(joined)
+            block = []
+    seen: dict[str, None] = {}
+    for span in spans:
+        seen.setdefault(span, None)
+    return list(seen)
+
+
 def bundle_for(state: Any) -> ContextBundle:
     """The one bundle for a turn, kept on the workflow state so both chat engines share it."""
     bundle = getattr(state, "context_bundle", None)
@@ -327,13 +409,19 @@ def links_in(text: str) -> list[str]:
 
 
 def check_reply(reply: str, bundle: ContextBundle, also_allowed: str = "") -> dict[str, Any]:
-    """Links in the reply that appear nowhere in what the model was shown or what the user said.
+    """Links and quotations in the reply that appear nowhere in what the model was shown or what
+    the user said.
 
     A link like that came from the model's own memory. It may be right, but nothing in this turn
     supports it, so it is reported (on the trace, and in the log) for a person or an eval to
     look at. Search-engine links the app suggests on purpose are not counted.
     """
-    known = {_normalise_url(u) for u in links_in(bundle.all_shown_text() + "\n" + (also_allowed or ""))}
+    shown = bundle.all_shown_text() + "\n" + (also_allowed or "")
+    known = {_normalise_url(u) for u in links_in(shown)}
     given = links_in(reply)
     unsourced = [u for u in given if u not in known and not _SEARCH_LINK.match(u)]
-    return {"links": len(given), "unsourced_links": unsourced[:20]}
+    # Anything the reply presents as an exact quotation must be word for word in what was shown.
+    quotes = quoted_spans(reply)
+    unsupported = [q[:200] for q in quotes if not find_quote(q, shown).found]
+    return {"links": len(given), "unsourced_links": unsourced[:20],
+            "quotes": len(quotes), "unsupported_quotes": unsupported[:20]}

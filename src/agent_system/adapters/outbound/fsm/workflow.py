@@ -106,6 +106,9 @@ def _record_context(user_input: str, state: WorkflowState, trace: TurnTrace, res
         if bundle.reply_check["unsourced_links"]:
             logger.warning("Reply has links that were not in its context", extra={
                 "event": "unsourced_links", "count": len(bundle.reply_check["unsourced_links"])})
+        if bundle.reply_check["unsupported_quotes"]:
+            logger.warning("Reply quotes text that was not in its context", extra={
+                "event": "unsupported_quotes", "count": len(bundle.reply_check["unsupported_quotes"])})
     except Exception:  # noqa: BLE001
         logger.debug("context report failed", exc_info=True)
 
