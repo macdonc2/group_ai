@@ -7,11 +7,6 @@ from agent_system.composition_root.container import (
     set_container,
     shutdown_container,
 )
-from agent_system.composition_root.services import (
-    AgentService,
-    PlanService,
-    UserService,
-)
 
 __all__ = [
     # Config
@@ -22,8 +17,4 @@ __all__ = [
     "get_container",
     "set_container",
     "shutdown_container",
-    # Services
-    "AgentService",
-    "PlanService",
-    "UserService",
 ]

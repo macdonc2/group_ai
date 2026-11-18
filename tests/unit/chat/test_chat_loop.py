@@ -307,9 +307,8 @@ def _turn(model, *, group: bool = False):
         events.append((event_type, node))
 
     deps = AgentDependencies(llm_port=None, user_repository=None, conversation_repository=None,
-                             plan_repository=None, knowledge_graph_port=None, event_callback=on_event)
-    deps.chat_engine = "loop"
-    deps.chat_loop_model = model
+                             plan_repository=None, knowledge_graph_port=None, event_callback=on_event,
+                             chat_engine="loop", chat_loop_model=model)
     return state, deps, events
 
 
@@ -319,7 +318,7 @@ class TestEngineSwitch:
         assert workflow.chat_engine_for(state, deps) == "loop"
         group_state, group_deps, _ = _turn(None, group=True)
         assert workflow.chat_engine_for(group_state, group_deps) == "fsm"
-        del deps.chat_engine  # falls back to the setting, whose default is the FSM
+        deps.chat_engine = None  # falls back to the setting, whose default is the FSM
         monkeypatch.delenv("CHAT_ENGINE", raising=False)
         assert workflow.chat_engine_for(state, deps) == "fsm"
 

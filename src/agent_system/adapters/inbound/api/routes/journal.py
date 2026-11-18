@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent_system.adapters.inbound.api.dependencies import CurrentUserId, SessionDep, get_database
+from agent_system.adapters.inbound.api.dependencies import ContainerDep, CurrentUserId, SessionDep, SettingsDep, get_database
 from agent_system.adapters.inbound.api.schemas import StreamEvent
 from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
 from agent_system.adapters.outbound.persistence.journal_models import JournalEntryModel, JournalMessageModel
@@ -176,7 +176,7 @@ async def list_entries(current_user_id: CurrentUserId, session: SessionDep,
 
 
 @router.post("/entries", status_code=status.HTTP_201_CREATED)
-async def create_entry(payload: EntryCreate, current_user_id: CurrentUserId, session: SessionDep) -> EntryRead:
+async def create_entry(payload: EntryCreate, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep) -> EntryRead:
     user = await _user(session, current_user_id)
     today = _today(user.timezone)
     day = _valid_day(payload.date, today) if payload.date else today.isoformat()
@@ -185,13 +185,13 @@ async def create_entry(payload: EntryCreate, current_user_id: CurrentUserId, ses
         raise HTTPException(status_code=422, detail="An entry needs some text")
     entry = await SQLAlchemyJournalRepository(session).create_entry(current_user_id, day, body)
     await session.commit()  # the background task reads the row from its own session
-    schedule_memory(entry.id, current_user_id)
+    schedule_memory(entry.id, current_user_id, container)
     return _entry_read(entry)
 
 
 @router.put("/entries/{entry_id}")
 async def update_entry(entry_id: str, payload: EntryUpdate, current_user_id: CurrentUserId,
-                       session: SessionDep) -> EntryRead:
+                       session: SessionDep, container: ContainerDep) -> EntryRead:
     body = payload.body.strip()
     if not body:
         raise HTTPException(status_code=422, detail="An entry needs some text")
@@ -204,28 +204,28 @@ async def update_entry(entry_id: str, payload: EntryUpdate, current_user_id: Cur
         kept = [s for s in (entry.suggestions or []) if s.get("status") == "added"]
         entry = await repo.update_entry(entry_id, current_user_id, body=body, memory_status="pending", suggestions=kept)
         await session.commit()
-        schedule_memory(entry_id, current_user_id)
+        schedule_memory(entry_id, current_user_id, container)
     return _entry_read(entry)
 
 
 @router.delete("/entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_entry(entry_id: str, current_user_id: CurrentUserId, session: SessionDep) -> None:
+async def delete_entry(entry_id: str, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep) -> None:
     """Delete an entry, its embeddings and its summary node. Facts already learned from it stay."""
     if not await SQLAlchemyJournalRepository(session).delete_entry(entry_id, current_user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     await session.commit()
     # Runs after any in-flight memory write for this entry, and finds the row gone.
-    schedule_memory(entry_id, current_user_id)
+    schedule_memory(entry_id, current_user_id, container)
 
 
 @router.post("/entries/{entry_id}/remember", status_code=status.HTTP_202_ACCEPTED)
-async def retry_memory(entry_id: str, current_user_id: CurrentUserId, session: SessionDep) -> EntryRead:
+async def retry_memory(entry_id: str, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep) -> EntryRead:
     """Rebuild an entry's memory (the retry button shown when it failed)."""
     entry = await SQLAlchemyJournalRepository(session).update_entry(entry_id, current_user_id, memory_status="pending")
     if entry is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Entry not found")
     await session.commit()
-    schedule_memory(entry_id, current_user_id)
+    schedule_memory(entry_id, current_user_id, container)
     return _entry_read(entry)
 
 
@@ -291,8 +291,8 @@ _tasks: set[asyncio.Task] = set()
 _locks: dict[str, asyncio.Lock] = {}  # one memory write per entry at a time, in this process
 
 
-def schedule_memory(entry_id: str, user_id: str) -> None:
-    task = asyncio.get_running_loop().create_task(process_entry(entry_id, user_id))
+def schedule_memory(entry_id: str, user_id: str, container: Any) -> None:
+    task = asyncio.get_running_loop().create_task(process_entry(entry_id, user_id, container))
     _tasks.add(task)
     task.add_done_callback(_tasks.discard)
 
@@ -308,10 +308,8 @@ def _api_key(user: Any, settings: Any) -> str | None:
     return None
 
 
-async def _memory_ports(api_key: str | None) -> tuple[Any, Any]:
-    from agent_system.composition_root.container import get_container
-
-    container = await get_container()
+def _memory_ports(container: Any, api_key: str | None) -> tuple[Any, Any]:
+    """The graph store and an embedder: the app's own, else one made with the user's key."""
     embedder = container.embedding_adapter
     if embedder is None and api_key:
         from agent_system.adapters.outbound.embedding import OpenAIEmbeddingAdapter
@@ -320,7 +318,7 @@ async def _memory_ports(api_key: str | None) -> tuple[Any, Any]:
     return container.knowledge_graph_adapter, embedder
 
 
-async def process_entry(entry_id: str, user_id: str) -> None:
+async def process_entry(entry_id: str, user_id: str, container: Any) -> None:
     """Bring an entry's derived memory in line with its current text. Never raises.
 
     Always works from the row as it is now, under a per-entry lock: after a quick
@@ -328,17 +326,16 @@ async def process_entry(entry_id: str, user_id: str) -> None:
     removes what the first run stored.
     """
     from agent_system.adapters.outbound.llm import journal_memory
-    from agent_system.composition_root.config import get_settings
 
     async with _locks.setdefault(entry_id, asyncio.Lock()):
         try:
-            settings = get_settings()
+            settings = container.settings
             database = get_database()
             async with database.session() as session:
                 entry = await SQLAlchemyJournalRepository(session).get_entry(entry_id, user_id)
                 user = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
             api_key = _api_key(user, settings) if user else None
-            kg, embedder = await _memory_ports(api_key)
+            kg, embedder = _memory_ports(container, api_key)
             if entry is None or user is None:
                 await journal_memory.forget_entry(kg, user_id, entry_id)
                 _locks.pop(entry_id, None)
@@ -420,7 +417,8 @@ async def run_turn(message: str, *, deps: Any, api_key: str, history: list[Any])
 
 
 @router.post("/chat")
-async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, session: SessionDep) -> StreamingResponse:
+async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, session: SessionDep, container: ContainerDep,
+                         settings: SettingsDep) -> StreamingResponse:
     """Talk with the journal agent about one day. Streams Server-Sent Events.
 
     A POST with the token in the Authorization header, so neither the message nor the
@@ -429,9 +427,7 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
     from agent_system.adapters.outbound.llm.journal_agent import JournalDeps, build_history
     from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture, set_current_node
     from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
-    from agent_system.composition_root.config import get_settings
 
-    settings = get_settings()
     user = await _user(session, current_user_id)
     day = _valid_day(payload.date, _today(user.timezone))
     message = payload.message.strip()
@@ -447,7 +443,7 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
                    for e in await repo.entries_for_day(current_user_id, day)]
     history = build_history([{"role": m.role, "content": m.content}
                              for m in await repo.messages_for_day(current_user_id, day, limit=12)])
-    kg, embedder = await _memory_ports(api_key)
+    kg, embedder = _memory_ports(container, api_key)
 
     queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
 
@@ -488,7 +484,8 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
                 saved = await own_repo.add_message(current_user_id, day, "assistant", outcome.response,
                                                    outcome.tools_used)
                 await own.commit()
-            await save_turn_trace(trace, user_id=current_user_id, conversation_id=f"journal:{day}", source="journal")
+            await save_turn_trace(trace, user_id=current_user_id, conversation_id=f"journal:{day}", source="journal",
+                                  database=get_database())
             await emit("response", "Journal", "Response complete", {
                 "response": outcome.response, "message_id": saved.id, "tools_used": outcome.tools_used,
                 "stopped": outcome.stopped,

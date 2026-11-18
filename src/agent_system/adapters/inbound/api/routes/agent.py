@@ -13,6 +13,8 @@ from agent_system.adapters.inbound.api.auth import authenticate_token
 from agent_system.adapters.outbound.fsm.workflow import requested_engine
 from agent_system.adapters.outbound.llm.personas import is_valid_persona
 from agent_system.adapters.inbound.api.dependencies import (
+    ContainerDep,
+    SettingsDep,
     CurrentUserId,
     SessionDep,
 )
@@ -87,6 +89,8 @@ async def chat_with_agent(
     data: AgentRequest,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    container: ContainerDep,
+    settings: SettingsDep,
 ) -> AgentResponse:
     """Send a message to the agent and get a response.
     
@@ -101,9 +105,6 @@ async def chat_with_agent(
         WorkflowState,
         run_agent_workflow,
     )
-    from agent_system.composition_root.config import get_settings
-    
-    settings = get_settings()
     
     user_repo = SQLAlchemyUserRepository(session)
     conv_repo = SQLAlchemyConversationRepository(session)
@@ -166,10 +167,6 @@ async def chat_with_agent(
         conversation=conversation,
         current_plan=current_plan,
     )
-    
-    # Get knowledge graph from container (if available)
-    from agent_system.composition_root.container import get_container
-    container = await get_container()
     
     # Create embedding adapter using user's API key if not available from container
     embedding_port = container.embedding_adapter
@@ -261,6 +258,8 @@ async def chat_with_agent_stream(
     persona: str | None = Query(None, description="Optional wrestler persona key"),
     engine: str | None = Query(None, description='Chat engine for this message, "fsm" or "loop" (superusers only)'),
     session: SessionDep = None,
+    container: ContainerDep = None,
+    settings: SettingsDep = None,
 ) -> StreamingResponse:
     """Stream agent responses with real-time FSM trace events.
     
@@ -280,7 +279,7 @@ async def chat_with_agent_stream(
             detail="Token required",
         )
     
-    token_data = await authenticate_token(token)
+    token_data = await authenticate_token(token, settings.secret_key)
     if token_data is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -293,9 +292,6 @@ async def chat_with_agent_stream(
         WorkflowState,
         run_agent_workflow,
     )
-    from agent_system.composition_root.config import get_settings
-    
-    settings = get_settings()
     
     user_repo = SQLAlchemyUserRepository(session)
     conv_repo = SQLAlchemyConversationRepository(session)
@@ -391,10 +387,6 @@ async def chat_with_agent_stream(
                 conversation=conversation,
                 current_plan=current_plan,
             )
-            
-            # Get knowledge graph from container (if available)
-            from agent_system.composition_root.container import get_container
-            container = await get_container()
             
             # Create embedding adapter using user's API key if not available from container
             embedding_port = container.embedding_adapter

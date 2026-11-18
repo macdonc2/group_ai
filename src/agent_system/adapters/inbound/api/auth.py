@@ -9,6 +9,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel
 
+from agent_system.adapters.inbound.api.settings import SettingsDep
 from agent_system.composition_root.config import get_settings
 
 # Password hashing
@@ -40,10 +41,12 @@ def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def create_access_token(data: TokenData) -> str:
-    """Create a JWT access token."""
-    settings = get_settings()
-    
+def create_access_token(data: TokenData, secret_key: str | None = None) -> str:
+    """Create a JWT access token, signed with `secret_key`.
+
+    Routes pass the app's key (`settings.secret_key`). Left out, the process-wide
+    settings are used, which is what scripts and older callers get.
+    """
     expire = datetime.utcnow() + timedelta(days=ACCESS_TOKEN_EXPIRE_DAYS)
     to_encode = {
         "sub": data.user_id,
@@ -52,16 +55,14 @@ def create_access_token(data: TokenData) -> str:
         "exp": expire,
     }
     
-    # Use the secret_key from settings for JWT signing
-    secret_key = settings.secret_key
-    
+    secret_key = secret_key or get_settings().secret_key
+
     return jwt.encode(to_encode, secret_key, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> TokenData | None:
-    """Decode and validate a JWT access token."""
-    settings = get_settings()
-    secret_key = settings.secret_key
+def decode_access_token(token: str, secret_key: str | None = None) -> TokenData | None:
+    """Decode and validate a JWT access token signed with `secret_key` (see `create_access_token`)."""
+    secret_key = secret_key or get_settings().secret_key
     
     try:
         payload = jwt.decode(token, secret_key, algorithms=[ALGORITHM])
@@ -81,7 +82,7 @@ def decode_access_token(token: str) -> TokenData | None:
         return None
 
 
-async def authenticate_token(raw: str | None) -> TokenData | None:
+async def authenticate_token(raw: str | None, secret_key: str | None = None) -> TokenData | None:
     """Who a token belongs to *now*, or None.
 
     A valid signature only proves the token was issued at some point in the
@@ -90,7 +91,7 @@ async def authenticate_token(raw: str | None) -> TokenData | None:
     of when the token expires. Admin status comes from the database, never
     from the token.
     """
-    claims = decode_access_token(raw) if raw else None
+    claims = decode_access_token(raw, secret_key) if raw else None
     if claims is None:
         return None
 
@@ -110,6 +111,7 @@ async def authenticate_token(raw: str | None) -> TokenData | None:
 
 async def get_current_user_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    settings: SettingsDep,
 ) -> TokenData:
     """Get the current user from the JWT token.
     
@@ -124,7 +126,7 @@ async def get_current_user_token(
     if credentials is None:
         raise credentials_exception
     
-    token_data = await authenticate_token(credentials.credentials)
+    token_data = await authenticate_token(credentials.credentials, settings.secret_key)
     if token_data is None:
         raise credentials_exception
     
@@ -133,12 +135,13 @@ async def get_current_user_token(
 
 async def get_optional_user_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)],
+    settings: SettingsDep,
 ) -> TokenData | None:
     """Get the current user from the JWT token, or None if not authenticated."""
     if credentials is None:
         return None
     
-    return await authenticate_token(credentials.credentials)
+    return await authenticate_token(credentials.credentials, settings.secret_key)
 
 
 async def require_superuser(

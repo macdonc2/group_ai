@@ -11,7 +11,12 @@ from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from agent_system.adapters.inbound.api.auth import authenticate_token
-from agent_system.adapters.inbound.api.dependencies import CurrentUserId, SessionDep
+from agent_system.adapters.inbound.api.dependencies import (
+    CurrentUserId,
+    ResearchRunnerDep,
+    SessionDep,
+    SettingsDep,
+)
 from agent_system.adapters.inbound.api.schemas import (
     FigureRead,
     ResearchCreate,
@@ -24,7 +29,6 @@ from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
 from agent_system.adapters.outbound.persistence.research_repositories import (
     SQLAlchemyResearchRepository,
 )
-from agent_system.adapters.outbound.research import get_runner
 from agent_system.adapters.outbound.research.runner import TERMINAL_EVENTS
 from agent_system.domain.entities.research import ResearchJob, ResearchStatus
 from agent_system.domain.value_objects import UserId
@@ -47,14 +51,14 @@ def _resolve_api_key(user, settings) -> str:
     )
 
 
-async def _user_from_query_or_header(token: str | None, authorization: str | None) -> str:
+async def _user_from_query_or_header(token: str | None, authorization: str | None, secret_key: str) -> str:
     """<img>/<audio> tags can't send headers; accept ?token= as well."""
     raw = token
     if not raw and authorization and authorization.lower().startswith("bearer "):
         raw = authorization.split(" ", 1)[1]
     if not raw:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token required")
-    data = await authenticate_token(raw)
+    data = await authenticate_token(raw, secret_key)
     if data is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
     return data.user_id
@@ -70,10 +74,7 @@ def _list_item(job: ResearchJob, has_audio: bool = False) -> ResearchListItem:
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def create_research(payload: ResearchCreate, current_user_id: CurrentUserId, session: SessionDep) -> ResearchListItem:
-    from agent_system.composition_root.config import get_settings
-
-    settings = get_settings()
+async def create_research(payload: ResearchCreate, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep, settings: SettingsDep) -> ResearchListItem:
     user = await SQLAlchemyUserRepository(session).get(UserId.from_string(current_user_id))
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
@@ -88,7 +89,7 @@ async def create_research(payload: ResearchCreate, current_user_id: CurrentUserI
     await session.commit()
     job.progress = progress
 
-    get_runner().start(job.id, api_key)
+    runner.start(job.id, api_key)
     return _list_item(job)
 
 
@@ -119,19 +120,19 @@ async def get_research(job_id: str, current_user_id: CurrentUserId, session: Ses
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep) -> None:
-    await get_runner().cancel(job_id)
+async def delete_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep) -> None:
+    await runner.cancel(job_id)
     if not await SQLAlchemyResearchRepository(session).delete(job_id, current_user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
 
 
 @router.post("/{job_id}/cancel")
-async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep) -> ResearchListItem:
+async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep) -> ResearchListItem:
     repo = SQLAlchemyResearchRepository(session)
     job = await repo.get(job_id, current_user_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
-    await get_runner().cancel(job_id)
+    await runner.cancel(job_id)
     return _list_item(job)
 
 
@@ -139,17 +140,18 @@ async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: 
 async def stream_research(
     job_id: str,
     session: SessionDep,
+    runner: ResearchRunnerDep,
+    settings: SettingsDep,
     token: str | None = Query(None, description="Auth token (EventSource cannot send headers)"),
     after: int = Query(0, description="Replay only events with seq greater than this"),
 ) -> StreamingResponse:
     """Replay persisted events, then tail live ones until the job ends."""
-    user_id = await _user_from_query_or_header(token, None)
+    user_id = await _user_from_query_or_header(token, None, settings.secret_key)
     repo = SQLAlchemyResearchRepository(session)
     job = await repo.get(job_id, user_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
 
-    runner = get_runner()
     # Subscribe BEFORE reading history so nothing falls in the gap; dedupe by seq.
     live_q = runner.subscribe(job_id)
     history = await repo.get_events(job_id)
@@ -202,10 +204,10 @@ async def stream_research(
 
 @router.get("/{job_id}/figures/{ordinal}")
 async def get_figure(
-    job_id: str, ordinal: int, session: SessionDep,
+    job_id: str, ordinal: int, session: SessionDep, settings: SettingsDep,
     token: str | None = Query(None), authorization: str | None = Header(None),
 ) -> Response:
-    user_id = await _user_from_query_or_header(token, authorization)
+    user_id = await _user_from_query_or_header(token, authorization, settings.secret_key)
     repo = SQLAlchemyResearchRepository(session)
     if not await repo.get(job_id, user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
@@ -217,10 +219,10 @@ async def get_figure(
 
 @router.get("/{job_id}/audio")
 async def get_audio(
-    job_id: str, session: SessionDep,
+    job_id: str, session: SessionDep, settings: SettingsDep,
     token: str | None = Query(None), authorization: str | None = Header(None),
 ) -> Response:
-    user_id = await _user_from_query_or_header(token, authorization)
+    user_id = await _user_from_query_or_header(token, authorization, settings.secret_key)
     repo = SQLAlchemyResearchRepository(session)
     if not await repo.get(job_id, user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
@@ -236,12 +238,10 @@ async def get_audio(
 
 
 @router.post("/{job_id}/narrate", status_code=status.HTTP_202_ACCEPTED)
-async def regenerate_narration(job_id: str, current_user_id: CurrentUserId, session: SessionDep) -> dict:
+async def regenerate_narration(job_id: str, current_user_id: CurrentUserId, session: SessionDep, settings: SettingsDep) -> dict:
     """Re-run just the narration for a finished report."""
     from agent_system.adapters.outbound.research import narration, writer
-    from agent_system.composition_root.config import get_settings
 
-    settings = get_settings()
     repo = SQLAlchemyResearchRepository(session)
     job = await repo.get(job_id, current_user_id)
     if not job or not job.report_markdown:

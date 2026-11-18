@@ -7,12 +7,15 @@ from pydantic import BaseModel, Field
 
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
+    KnowledgeGraphDep,
+    OptionalKnowledgeGraphDep,
     SessionDep,
+    SettingsDep,
     get_current_user,
 )
 from agent_system.application.services.graph_explorer import GraphSnapshot, clean_properties
-from agent_system.composition_root.container import get_container
 from agent_system.domain.entities import User
+from agent_system.domain.ports import KnowledgeGraphPort
 from agent_system.domain.value_objects import UserId
 
 logger = logging.getLogger(__name__)
@@ -44,12 +47,11 @@ def _node_label(text: str, max_len: int = 30) -> str:
     return text[:max_len] + "..." if len(text) > max_len else text
 
 
-async def _load_snapshot(current_user_id: str) -> GraphSnapshot:
+async def _load_snapshot(graph: KnowledgeGraphPort | None, current_user_id: str) -> GraphSnapshot:
     """The current user's graph, scoped to their own data."""
-    container = await get_container()
-    if not container.knowledge_graph_adapter:
+    if not graph:
         raise HTTPException(status_code=503, detail="Knowledge graph service not available")
-    nodes, edges = await container.knowledge_graph_adapter.get_user_subgraph(UserId.from_string(current_user_id))
+    nodes, edges = await graph.get_user_subgraph(UserId.from_string(current_user_id))
     return GraphSnapshot.from_records(nodes, edges)
 
 
@@ -57,6 +59,8 @@ async def _load_snapshot(current_user_id: str) -> GraphSnapshot:
 async def get_user_knowledge_graph(
     current_user_id: CurrentUserId,
     current_user: User = Depends(get_current_user),
+    *,
+    graph: KnowledgeGraphDep,
 ) -> dict:
     """Get the full knowledge graph for the current user.
 
@@ -64,17 +68,13 @@ async def get_user_knowledge_graph(
     tool, interaction, suggestion, ...) plus social graph nodes (person, pet,
     location) as one unified graph.
     """
-    container = await get_container()
-    if not container.knowledge_graph_adapter:
-        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
-
     try:
         # Fix user node label if needed
-        await container.knowledge_graph_adapter.update_user_label(
+        await graph.update_user_label(
             user_id=current_user_id,
             label=current_user.email,
         )
-        snapshot = await _load_snapshot(current_user_id)
+        snapshot = await _load_snapshot(graph, current_user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -126,6 +126,9 @@ async def ask_knowledge_graph(
     current_user_id: CurrentUserId,
     session: SessionDep,
     current_user: User = Depends(get_current_user),
+    *,
+    graph: OptionalKnowledgeGraphDep,
+    settings: SettingsDep,
 ) -> dict:
     """Ask the graph explorer agent a question about the current user's graph.
 
@@ -137,12 +140,10 @@ async def ask_knowledge_graph(
     from agent_system.adapters.outbound.llm.graph_agent import ask_graph
     from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
     from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture
-    from agent_system.composition_root.config import get_settings
 
-    settings = get_settings()
     api_key = _resolve_api_key(current_user, settings)
     try:
-        snapshot = await _load_snapshot(current_user_id)
+        snapshot = await _load_snapshot(graph, current_user_id)
     except HTTPException:
         raise
     except Exception as e:
@@ -176,18 +177,11 @@ async def ask_knowledge_graph(
 @router.delete("/graph")
 async def clear_user_knowledge_graph(
     current_user_id: CurrentUserId,
+    graph: KnowledgeGraphDep,
 ) -> dict:
     """Clear the knowledge graph for the current user."""
-    container = await get_container()
-    
-    if not container.knowledge_graph_adapter:
-        raise HTTPException(
-            status_code=503,
-            detail="Knowledge graph service not available"
-        )
-    
     try:
-        deleted = await container.knowledge_graph_adapter.clear_user_graph(
+        deleted = await graph.clear_user_graph(
             user_id=current_user_id
         )
         return {"deleted_nodes": deleted}

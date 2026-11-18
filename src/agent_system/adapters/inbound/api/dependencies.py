@@ -4,9 +4,14 @@ from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, status
+from starlette.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from agent_system.adapters.inbound.api.settings import SettingsDep, get_app_settings  # noqa: F401 - re-exported
 from agent_system.adapters.outbound.persistence import Database
+from agent_system.adapters.outbound.research.runner import ResearchRunner, get_runner
+from agent_system.composition_root.container import Container, get_container
+from agent_system.domain.ports import GoogleCalendarPort, KnowledgeGraphPort
 
 
 # Global database instance (set by application factory)
@@ -40,6 +45,68 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
 
 # Type alias for session dependency
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+# ---- The app's long-lived objects ------------------------------------------
+#
+# A route names what it needs as a parameter (`graph: KnowledgeGraphDep`) and FastAPI
+# supplies it. The route's signature then says what it depends on, and a test can swap
+# any of these with `app.dependency_overrides[get_knowledge_graph] = lambda: fake`.
+
+
+async def get_app_container(connection: HTTPConnection) -> Container:
+    """The container this app built at startup.
+
+    `HTTPConnection` is what an HTTP request and a WebSocket have in common, so this
+    works for both kinds of route. An app whose startup did not run (a test driving it
+    without the lifespan) has no container, so it falls back to the shared `get_container()`.
+    """
+    container = getattr(connection.app.state, "container", None)
+    return container if container is not None else await get_container()
+
+
+ContainerDep = Annotated[Container, Depends(get_app_container)]
+
+
+def get_optional_knowledge_graph(container: ContainerDep) -> KnowledgeGraphPort | None:
+    """The graph store, or None when it is not available."""
+    return container.knowledge_graph_adapter
+
+
+def get_knowledge_graph(container: ContainerDep) -> KnowledgeGraphPort:
+    """The graph store; the request ends with 503 when it is not available."""
+    if not container.knowledge_graph_adapter:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    return container.knowledge_graph_adapter
+
+
+def get_optional_google_calendar(container: ContainerDep) -> GoogleCalendarPort | None:
+    """The Google Calendar adapter, or None when OAuth credentials are not configured."""
+    return container.google_calendar_adapter
+
+
+def get_google_calendar(container: ContainerDep) -> GoogleCalendarPort:
+    """The Google Calendar adapter; the request ends with 503 when it is not configured."""
+    if not container.google_calendar_adapter:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Google Calendar integration is not configured",
+        )
+    return container.google_calendar_adapter
+
+
+def get_research_runner() -> ResearchRunner:
+    """The in-process Deep Research runner the app started."""
+    return get_runner()
+
+
+# "Optional" variants are for routes that carry on, or answer differently, without the
+# adapter; the plain ones are for routes that cannot do anything without it.
+KnowledgeGraphDep = Annotated[KnowledgeGraphPort, Depends(get_knowledge_graph)]
+OptionalKnowledgeGraphDep = Annotated[KnowledgeGraphPort | None, Depends(get_optional_knowledge_graph)]
+GoogleCalendarDep = Annotated[GoogleCalendarPort, Depends(get_google_calendar)]
+OptionalGoogleCalendarDep = Annotated[GoogleCalendarPort | None, Depends(get_optional_google_calendar)]
+ResearchRunnerDep = Annotated[ResearchRunner, Depends(get_research_runner)]
 
 
 async def get_current_user_id(

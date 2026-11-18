@@ -357,7 +357,7 @@ async def run_lane_bounded(lane: Lane, question: str, deps: LaneDeps, emit: Emit
 
 
 async def run_all_lanes(question: str, deps: LaneDeps, emit: Emit) -> dict[Lane, LaneResult]:
-    lane_timeout_s = getattr(deps, "lane_timeout_s", None)
+    lane_timeout_s = deps.lane_timeout_s
     results = await asyncio.gather(
         run_lane_bounded("academic", question, deps, emit, lane_timeout_s),
         run_lane_bounded("practical", question, deps, emit, lane_timeout_s),

@@ -4,28 +4,17 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from agent_system.adapters.outbound.calendar import GoogleCalendarAdapter
 from agent_system.adapters.outbound.embedding import OpenAIEmbeddingAdapter
-from agent_system.adapters.outbound.fsm import AgentDependencies
 from agent_system.adapters.outbound.graph import Neo4jAdapter
 from agent_system.adapters.outbound.llm import OpenAIAdapter
-from agent_system.adapters.outbound.persistence import (
-    Database,
-    SQLAlchemyConversationRepository,
-    SQLAlchemyPlanRepository,
-    SQLAlchemyUserRepository,
-)
+from agent_system.adapters.outbound.persistence import Database
 from agent_system.composition_root.config import Settings
 from agent_system.domain.ports import (
-    ConversationRepository,
     EmbeddingPort,
     GoogleCalendarPort,
     KnowledgeGraphPort,
     LLMPort,
-    PlanRepository,
-    UserRepository,
 )
 
 # Longest the graph index checks may take while the container is being built.
@@ -36,8 +25,7 @@ GRAPH_SETUP_TIMEOUT_S = 15.0
 class Container:
     """Dependency injection container.
     
-    This container holds all the configured adapters and provides
-    factory methods for creating repository instances.
+    This container holds the configured long-lived adapters.
     """
 
     settings: Settings
@@ -156,62 +144,6 @@ class Container:
         await self.database.dispose()
         if self.knowledge_graph_adapter and isinstance(self.knowledge_graph_adapter, Neo4jAdapter):
             await self.knowledge_graph_adapter.close()
-
-    def get_user_repository(self, session: AsyncSession) -> UserRepository:
-        """Get a user repository instance.
-        
-        Args:
-            session: Database session
-            
-        Returns:
-            User repository
-        """
-        return SQLAlchemyUserRepository(session)
-
-    def get_conversation_repository(self, session: AsyncSession) -> ConversationRepository:
-        """Get a conversation repository instance.
-        
-        Args:
-            session: Database session
-            
-        Returns:
-            Conversation repository
-        """
-        return SQLAlchemyConversationRepository(session)
-
-    def get_plan_repository(self, session: AsyncSession) -> PlanRepository:
-        """Get a plan repository instance.
-        
-        Args:
-            session: Database session
-            
-        Returns:
-            Plan repository
-        """
-        return SQLAlchemyPlanRepository(session)
-
-    def get_agent_dependencies(self, session: AsyncSession) -> AgentDependencies:
-        """Get dependencies for the FSM workflow.
-        
-        Args:
-            session: Database session
-            
-        Returns:
-            Agent dependencies for workflow execution
-        """
-        return AgentDependencies(
-            llm_port=self.llm_adapter,
-            user_repository=self.get_user_repository(session),
-            conversation_repository=self.get_conversation_repository(session),
-            plan_repository=self.get_plan_repository(session),
-            knowledge_graph_port=self.knowledge_graph_adapter,
-            embedding_port=self.embedding_adapter,
-            openai_api_key=self.settings.openai_api_key,
-            default_model=self.settings.default_model,
-            fallback_model=self.settings.fallback_model,
-            temperature=self.settings.temperature,
-            max_tokens=self.settings.max_tokens,
-        )
 
 
 # Global container instance

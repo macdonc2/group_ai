@@ -123,8 +123,8 @@ def _turn_limits(deps: AgentDependencies) -> tuple[float, int]:
 
     settings = get_settings()
     return (
-        float(getattr(deps, "turn_timeout_s", None) or settings.chat_turn_timeout_s),
-        int(getattr(deps, "turn_max_llm_calls", None) or settings.chat_turn_max_llm_calls),
+        float(deps.turn_timeout_s or settings.chat_turn_timeout_s),
+        int(deps.turn_max_llm_calls or settings.chat_turn_max_llm_calls),
     )
 
 
@@ -183,7 +183,7 @@ def chat_engine_for(state: WorkflowState, deps: AgentDependencies) -> str:
     """Which engine runs this turn. `deps.chat_engine` (a superuser's choice, evals, tests) overrides the setting."""
     if state.group_context:  # group turns stay on the FSM until they have their own tool profile
         return "fsm"
-    engine = getattr(deps, "chat_engine", None)
+    engine = deps.chat_engine
     if engine is None:
         from agent_system.composition_root.config import get_settings
 
@@ -245,7 +245,7 @@ async def _run_loop_engine(
                     emit=deps.emit_event,
                     context=bundle_for(state),
                 ),
-                model=getattr(deps, "chat_loop_model", None) or _get_model(deps.default_model, deps.openai_api_key),
+                model=deps.chat_loop_model or _get_model(deps.default_model, deps.openai_api_key),
                 history=build_history(state.conversation.get_context_messages(), user_input),
                 max_requests=settings.chat_loop_max_requests,
                 timeout_s=settings.chat_loop_timeout_s,

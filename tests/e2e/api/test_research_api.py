@@ -79,7 +79,7 @@ def settings() -> Settings:
 
 @pytest.fixture
 async def client(settings, monkeypatch):
-    from agent_system.adapters.inbound.api.dependencies import set_database
+    from agent_system.adapters.inbound.api.dependencies import get_research_runner, set_database
     from agent_system.adapters.outbound.persistence import Database
     from agent_system.adapters.outbound.persistence.models import UserModel
 
@@ -94,7 +94,7 @@ async def client(settings, monkeypatch):
 
     fake = FakeRunner(db)
     runner_mod.set_runner(fake)  # type: ignore[arg-type]
-    monkeypatch.setattr("agent_system.adapters.inbound.api.routes.research.get_runner", lambda: fake)
+    app.dependency_overrides[get_research_runner] = lambda: fake
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
