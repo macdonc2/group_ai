@@ -11,7 +11,11 @@ from fastapi import APIRouter, Header, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
 
 from agent_system.adapters.inbound.api.auth import authenticate_token
-from agent_system.adapters.inbound.api.dependencies import CurrentUserId, SessionDep
+from agent_system.adapters.inbound.api.dependencies import (
+    CurrentUserId,
+    ResearchRunnerDep,
+    SessionDep,
+)
 from agent_system.adapters.inbound.api.schemas import (
     FigureRead,
     ResearchCreate,
@@ -24,7 +28,6 @@ from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
 from agent_system.adapters.outbound.persistence.research_repositories import (
     SQLAlchemyResearchRepository,
 )
-from agent_system.adapters.outbound.research import get_runner
 from agent_system.adapters.outbound.research.runner import TERMINAL_EVENTS
 from agent_system.domain.entities.research import ResearchJob, ResearchStatus
 from agent_system.domain.value_objects import UserId
@@ -70,7 +73,7 @@ def _list_item(job: ResearchJob, has_audio: bool = False) -> ResearchListItem:
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
-async def create_research(payload: ResearchCreate, current_user_id: CurrentUserId, session: SessionDep) -> ResearchListItem:
+async def create_research(payload: ResearchCreate, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep) -> ResearchListItem:
     from agent_system.composition_root.config import get_settings
 
     settings = get_settings()
@@ -88,7 +91,7 @@ async def create_research(payload: ResearchCreate, current_user_id: CurrentUserI
     await session.commit()
     job.progress = progress
 
-    get_runner().start(job.id, api_key)
+    runner.start(job.id, api_key)
     return _list_item(job)
 
 
@@ -119,19 +122,19 @@ async def get_research(job_id: str, current_user_id: CurrentUserId, session: Ses
 
 
 @router.delete("/{job_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep) -> None:
-    await get_runner().cancel(job_id)
+async def delete_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep) -> None:
+    await runner.cancel(job_id)
     if not await SQLAlchemyResearchRepository(session).delete(job_id, current_user_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
 
 
 @router.post("/{job_id}/cancel")
-async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep) -> ResearchListItem:
+async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: SessionDep, runner: ResearchRunnerDep) -> ResearchListItem:
     repo = SQLAlchemyResearchRepository(session)
     job = await repo.get(job_id, current_user_id)
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
-    await get_runner().cancel(job_id)
+    await runner.cancel(job_id)
     return _list_item(job)
 
 
@@ -139,6 +142,7 @@ async def cancel_research(job_id: str, current_user_id: CurrentUserId, session: 
 async def stream_research(
     job_id: str,
     session: SessionDep,
+    runner: ResearchRunnerDep,
     token: str | None = Query(None, description="Auth token (EventSource cannot send headers)"),
     after: int = Query(0, description="Replay only events with seq greater than this"),
 ) -> StreamingResponse:
@@ -149,7 +153,6 @@ async def stream_research(
     if not job:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Research job not found")
 
-    runner = get_runner()
     # Subscribe BEFORE reading history so nothing falls in the gap; dedupe by seq.
     live_q = runner.subscribe(job_id)
     history = await repo.get_events(job_id)

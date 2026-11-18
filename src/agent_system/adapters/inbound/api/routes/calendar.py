@@ -10,10 +10,11 @@ from pydantic import BaseModel
 
 from agent_system.adapters.inbound.api.dependencies import (
     CurrentUserId,
+    GoogleCalendarDep,
+    OptionalGoogleCalendarDep,
     SessionDep,
 )
 from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
-from agent_system.composition_root.container import get_container
 from agent_system.domain.utils.encryption import get_api_key_encryption
 from agent_system.domain.value_objects import UserId
 
@@ -85,25 +86,18 @@ async def get_calendar_status(
 async def connect_google_calendar(
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: GoogleCalendarDep,
 ) -> CalendarConnectResponse:
     """Start the Google Calendar OAuth flow.
 
     Returns an authorization URL to redirect the user to.
     """
-    container = await get_container()
-
-    if not container.google_calendar_adapter:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google Calendar integration is not configured",
-        )
-
     # Generate state token for CSRF protection
     state = secrets.token_urlsafe(32)
     _oauth_states[state] = current_user_id
 
     # Get authorization URL
-    auth_url = container.google_calendar_adapter.get_authorization_url(state)
+    auth_url = calendar.get_authorization_url(state)
 
     logger.info(f"Starting OAuth flow for user {current_user_id}")
     logger.info(f"Generated authorization URL: {auth_url[:100]}...")
@@ -115,6 +109,7 @@ async def oauth_callback(
     code: Annotated[str, Query(description="Authorization code from Google")],
     state: Annotated[str, Query(description="State token for CSRF protection")],
     session: SessionDep,
+    calendar: OptionalGoogleCalendarDep,
 ) -> RedirectResponse:
     """Handle the OAuth callback from Google.
 
@@ -129,18 +124,17 @@ async def oauth_callback(
             url="/settings?calendar_error=invalid_state", status_code=302
         )
 
-    container = await get_container()
-    if not container.google_calendar_adapter:
+    if not calendar:
         return RedirectResponse(
             url="/settings?calendar_error=not_configured", status_code=302
         )
 
     try:
         # Exchange code for tokens
-        tokens = await container.google_calendar_adapter.exchange_code_for_tokens(code)
+        tokens = await calendar.exchange_code_for_tokens(code)
 
         # Get user info (email)
-        user_info = await container.google_calendar_adapter.get_user_info(
+        user_info = await calendar.get_user_info(
             tokens.access_token
         )
 
@@ -180,6 +174,7 @@ async def oauth_callback(
 async def disconnect_google_calendar(
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: OptionalGoogleCalendarDep,
 ) -> CalendarStatusResponse:
     """Disconnect Google Calendar and revoke access."""
     user_repo = SQLAlchemyUserRepository(session)
@@ -196,14 +191,12 @@ async def disconnect_google_calendar(
             detail="Google Calendar is not connected",
         )
 
-    container = await get_container()
-
     # Try to revoke the token with Google
-    if container.google_calendar_adapter and user.encrypted_google_refresh_token:
+    if calendar and user.encrypted_google_refresh_token:
         try:
             encryption = get_api_key_encryption()
             refresh_token = encryption.decrypt(user.encrypted_google_refresh_token)
-            await container.google_calendar_adapter.revoke_token(refresh_token)
+            await calendar.revoke_token(refresh_token)
             logger.info(f"Revoked Google token for {user.id}")
         except Exception as e:
             logger.warning(f"Failed to revoke Google token: {e}")
@@ -267,6 +260,7 @@ async def update_calendar_settings(
 async def list_calendars(
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: OptionalGoogleCalendarDep,
 ) -> list[GoogleCalendarInfo]:
     """List available Google Calendars for the connected account."""
     user_repo = SQLAlchemyUserRepository(session)
@@ -283,8 +277,7 @@ async def list_calendars(
             detail="Google Calendar is not connected",
         )
 
-    container = await get_container()
-    if not container.google_calendar_adapter:
+    if not calendar:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Google Calendar integration is not configured",
@@ -295,12 +288,12 @@ async def list_calendars(
         encryption = get_api_key_encryption()
         refresh_token = encryption.decrypt(user.encrypted_google_refresh_token)
 
-        tokens = await container.google_calendar_adapter.refresh_access_token(
+        tokens = await calendar.refresh_access_token(
             refresh_token
         )
 
         # List calendars
-        calendars = await container.google_calendar_adapter.list_calendars(
+        calendars = await calendar.list_calendars(
             tokens.access_token
         )
 
@@ -363,6 +356,7 @@ async def sync_event_to_google(
     data: SyncEventRequest,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: GoogleCalendarDep,
 ) -> SyncEventResponse:
     """Sync a specific event to Google Calendar."""
     from agent_system.adapters.outbound.persistence import (
@@ -370,13 +364,6 @@ async def sync_event_to_google(
     )
     from agent_system.application.services import CalendarSyncService
     from agent_system.domain.value_objects import EventId
-
-    container = await get_container()
-    if not container.google_calendar_adapter:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google Calendar integration is not configured",
-        )
 
     # Get user
     user_repo = SQLAlchemyUserRepository(session)
@@ -401,7 +388,7 @@ async def sync_event_to_google(
         )
 
     # Sync event
-    sync_service = CalendarSyncService(container.google_calendar_adapter)
+    sync_service = CalendarSyncService(calendar)
     updated_event = await sync_service.sync_event_to_google(event, user)
 
     # Save updated event
@@ -420,16 +407,10 @@ async def sync_event_to_google(
 async def get_google_events(
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: GoogleCalendarDep,
 ) -> list[GoogleEventInfo]:
     """Get events from user's Google Calendar."""
     from agent_system.application.services import CalendarSyncService
-
-    container = await get_container()
-    if not container.google_calendar_adapter:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google Calendar integration is not configured",
-        )
 
     user_repo = SQLAlchemyUserRepository(session)
     user = await user_repo.get(UserId.from_string(current_user_id))
@@ -444,7 +425,7 @@ async def get_google_events(
             detail="Google Calendar is not connected",
         )
 
-    sync_service = CalendarSyncService(container.google_calendar_adapter)
+    sync_service = CalendarSyncService(calendar)
     events = await sync_service.pull_events_from_google(user)
 
     return [
@@ -467,6 +448,7 @@ async def delete_synced_event(
     event_id: str,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: GoogleCalendarDep,
 ) -> SyncEventResponse:
     """Delete an event from Google Calendar (keeps local event)."""
     from agent_system.adapters.outbound.persistence import (
@@ -474,13 +456,6 @@ async def delete_synced_event(
     )
     from agent_system.application.services import CalendarSyncService
     from agent_system.domain.value_objects import EventId
-
-    container = await get_container()
-    if not container.google_calendar_adapter:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Google Calendar integration is not configured",
-        )
 
     user_repo = SQLAlchemyUserRepository(session)
     user = await user_repo.get(UserId.from_string(current_user_id))
@@ -504,7 +479,7 @@ async def delete_synced_event(
             message="Event was not synced to Google Calendar",
         )
 
-    sync_service = CalendarSyncService(container.google_calendar_adapter)
+    sync_service = CalendarSyncService(calendar)
     deleted = await sync_service.delete_event_from_google(event, user)
 
     if deleted:
