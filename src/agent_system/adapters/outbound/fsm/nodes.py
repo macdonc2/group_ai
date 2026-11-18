@@ -1404,7 +1404,7 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             return EvaluateResult()
         
         tool_info = AVAILABLE_TOOLS[tool_name]
-        tool_func = tool_info["function"]
+        tool_func = ctx.deps.tool_overrides.get(tool_name) or tool_info["function"]
         from agent_system.adapters.outbound.llm.context import bundle_for
 
         bundle = bundle_for(ctx.state)
@@ -1441,9 +1441,9 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 else:
                     async with ctx.deps.session_factory() as session:
                         tool_args["session"] = session
-                        result = await run_tool(tool_name, tool_func, **tool_args)
+                        result = await run_tool(tool_name, tool_func, interceptor=ctx.deps.tool_interceptor, **tool_args)
             else:
-                result = await run_tool(tool_name, tool_func, **tool_args)
+                result = await run_tool(tool_name, tool_func, interceptor=ctx.deps.tool_interceptor, **tool_args)
 
             tool_ok = bool(result.success)
             if ctx.deps.trace is not None and tool_name in ("recall_about_topic", "recall_from_period"):

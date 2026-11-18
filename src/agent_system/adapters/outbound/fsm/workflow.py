@@ -218,7 +218,12 @@ async def _run_loop_engine(
     from pydantic_graph import GraphRunContext
 
     from agent_system.adapters.outbound.llm.agents import _get_model
-    from agent_system.adapters.outbound.llm.chat_agent import ChatDeps, build_history, run_chat_loop
+    from agent_system.adapters.outbound.llm.chat_agent import (
+        ChatDeps,
+        build_history,
+        run_chat_loop,
+        tool_implementations,
+    )
     from agent_system.adapters.outbound.llm.context import bundle_for
     from agent_system.composition_root.config import get_settings
 
@@ -246,6 +251,8 @@ async def _run_loop_engine(
                     context=bundle_for(state),
                     session_factory=deps.session_factory,
                     google_calendar=deps.google_calendar,
+                    impl=tool_implementations(deps.tool_overrides),
+                    interceptor=deps.tool_interceptor,
                 ),
                 model=deps.chat_loop_model or _get_model(deps.default_model, deps.openai_api_key),
                 history=build_history(state.conversation.get_context_messages(), user_input),

@@ -138,15 +138,6 @@ class EvalEnv:
         container = await get_container()
         if dependencies._database is None:  # CLI: tools that open their own sessions need it
             dependencies.set_database(container.database)
-        from agent_system.evals.web_fixture import install_web_fixture_hook
-
-        install_web_fixture_hook()
-        from agent_system.evals.world_fixture import install_world_fixture_hook
-
-        install_world_fixture_hook()
-        from agent_system.evals.tool_faults import install_tool_fault_hook
-
-        install_tool_fault_hook()
         embedder = OpenAIEmbeddingAdapter(api_key=api_key)
         kg = container.knowledge_graph_adapter
         if kg is not None:
@@ -162,7 +153,10 @@ class EvalEnv:
 # ---------------------------------------------------------------------------
 
 
-async def play_turns(case: EvalCase, seeded: Any, env: EvalEnv) -> list[dict[str, Any]]:
+async def play_turns(case: EvalCase, seeded: Any, env: EvalEnv, *, tool_overrides: dict[str, Any] | None = None,
+                     tool_interceptor: Any = None) -> list[dict[str, Any]]:
+    """Run the case's turns. `tool_overrides` and `tool_interceptor` are the case's fixtures and
+    planned faults; they go to the turn's dependencies, so nothing outside this case sees them."""
     from agent_system.adapters.outbound.fsm import (
         AgentDependencies,
         WorkflowState,
@@ -195,6 +189,7 @@ async def play_turns(case: EvalCase, seeded: Any, env: EvalEnv) -> list[dict[str
                 fallback_model=env.settings.fallback_model, temperature=env.settings.temperature,
                 max_tokens=env.settings.max_tokens, trace=TurnTrace(),
                 google_calendar=env.calendar, session_factory=env.database.session,
+                tool_overrides=dict(tool_overrides or {}), tool_interceptor=tool_interceptor,
             )
             try:
                 result = await run_agent_workflow(text, state, deps)
@@ -264,21 +259,16 @@ async def run_agent_case(case: EvalCase, suite: Suite, env: EvalEnv, judges: lis
     seeded = None
     try:
         seeded = await seed_user(case, run_id, env.database, env.kg, env.embedder)
-        from agent_system.evals.web_fixture import reset_web_fixture, set_web_fixture
+        from agent_system.evals.tool_faults import FaultPlan
+        from agent_system.evals.web_fixture import web_tools
+        from agent_system.evals.world_fixture import world_tools
 
-        from agent_system.evals.world_fixture import reset_world, set_world
-
-        token = set_web_fixture(case.web_fixture)
-        from agent_system.evals.tool_faults import reset_faults, set_faults
-
-        world = set_world(case.events_fixture, case.calendar_fixture, seeded.user.timezone)
-        fault_plan, fault_token = set_faults(case.tool_faults)
-        try:
-            turns = await play_turns(case, seeded, env)
-        finally:
-            reset_faults(fault_token)
-            reset_world(world)
-            reset_web_fixture(token)
+        # This case's fixed outside world, as replacement tools handed to its turns
+        overrides = {**web_tools(case.web_fixture),
+                     **world_tools(case.events_fixture, case.calendar_fixture, seeded.user.timezone)}
+        fault_plan = FaultPlan(list(case.tool_faults)) if case.tool_faults else None
+        turns = await play_turns(case, seeded, env, tool_overrides=overrides,
+                                 tool_interceptor=fault_plan.intercept if fault_plan else None)
         wants_kg = case.expect.entities or case.expect.forbid_entities or case.expect.forbid_memory
         snapshot = await snapshot_entities(env.kg, seeded.user.id) if wants_kg else None
         last = turns[-1]

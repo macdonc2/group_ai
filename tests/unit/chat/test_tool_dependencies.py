@@ -115,3 +115,69 @@ async def test_the_loop_engine_gives_event_tools_no_session_when_it_has_no_facto
     async with _session(ChatDeps(user_id="u-1", session_factory=sessions.factory)) as session:
         assert session == "the session"
     assert (sessions.opened, sessions.closed) == (1, 1)
+
+
+async def test_the_state_machine_runs_a_replacement_tool_and_the_interceptor_from_the_turn(monkeypatch):
+    async def real_search(query: str, num_results: int = 5):
+        raise AssertionError("the real tool must not run when the turn replaces it")
+
+    async def stand_in(query: str, num_results: int = 5):
+        return tools.ToolResult(success=True, data=[], message=f"stand-in saw {query}")
+
+    seen: list[str] = []
+
+    async def interceptor(name, kwargs):
+        seen.append(name)
+        return None  # let the call through
+
+    monkeypatch.setitem(tools.AVAILABLE_TOOLS["web_search"], "function", real_search)
+    ctx = _ctx(tool_overrides={"web_search": stand_in}, tool_interceptor=interceptor)
+    ctx.state.tool_name, ctx.state.tool_arguments = "web_search", {"query": "jazz"}
+
+    await nodes.ExecuteTool().run(ctx)
+
+    assert seen == ["web_search"]
+    assert ctx.deps.trace is None  # no trace needed for this path
+    assert tools.AVAILABLE_TOOLS["web_search"]["function"] is real_search  # the registry was not touched
+
+
+async def test_an_interceptor_can_fail_a_state_machine_tool_call():
+    async def interceptor(name, kwargs):
+        return tools.ToolResult(success=False, data=None, message="429 rate limited")
+
+    ctx = _ctx(tool_interceptor=interceptor)
+    ctx.state.tool_name, ctx.state.tool_arguments = "calculate", {"expression": "2+2"}
+
+    await nodes.ExecuteTool().run(ctx)
+
+    assert ctx.state.tool_result == "Tool failed: 429 rate limited"
+
+
+def test_the_loop_engine_merges_replacements_over_its_own_tools():
+    from agent_system.adapters.outbound.llm.chat_agent import tool_implementations
+
+    async def stand_in(**kwargs): ...
+
+    merged = tool_implementations({"web_search": stand_in})
+    assert merged["web_search"] is stand_in
+    assert merged["calculate"] is tools.calculate
+    assert tool_implementations()["web_search"] is tools.web_search
+
+
+async def test_the_loop_engine_runs_the_interceptor_from_its_dependencies():
+    from types import SimpleNamespace
+
+    from agent_system.adapters.outbound.llm.chat_agent import _call, tool_implementations
+
+    async def calculate(expression: str):
+        return tools.ToolResult(success=True, data=None, message="4")
+
+    async def interceptor(name, kwargs):
+        return tools.ToolResult(success=False, data=None, message=f"{name} is down") if name == "calculate" else None
+
+    impl = tool_implementations({"calculate": calculate})
+    plain = SimpleNamespace(deps=ChatDeps(user_id="u-1", impl=impl))
+    faulty = SimpleNamespace(deps=ChatDeps(user_id="u-1", impl=impl, interceptor=interceptor))
+
+    assert (await _call(plain, "calculate", expression="2+2")).message == "4"
+    assert (await _call(faulty, "calculate", expression="2+2")).message == "calculate is down"

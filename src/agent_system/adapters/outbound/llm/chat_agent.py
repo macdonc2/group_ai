@@ -85,6 +85,11 @@ def _default_impl() -> dict[str, ToolImpl]:
     }
 
 
+def tool_implementations(overrides: dict[str, ToolImpl] | None = None) -> dict[str, ToolImpl]:
+    """The loop's tools by name, with any replacements the turn was given."""
+    return {**_default_impl(), **(overrides or {})}
+
+
 @asynccontextmanager
 async def _session(deps: ChatDeps) -> AsyncIterator[Any]:
     """A database session for one event-tool call, or None when the turn was given no way to
@@ -109,6 +114,7 @@ class ChatDeps:
     impl: dict[str, ToolImpl] = field(default_factory=_default_impl)
     session_factory: Callable[[], AbstractAsyncContextManager[Any]] | None = None  # opened only by the event tools
     google_calendar: Any = None                      # GoogleCalendarPort; None when not configured
+    interceptor: Any = None                          # run before every tool call; see tools.run_tool
     steps: list[dict[str, Any]] = field(default_factory=list)
     untrusted_seen: bool = False                     # set once web content enters the turn
     context: Any = None                              # ContextBundle: validated web passages for the turn
@@ -245,7 +251,7 @@ async def _call(ctx: RunContext[ChatDeps], name: str, **kwargs: Any) -> Any:
     from agent_system.adapters.outbound.llm.tools import run_tool
 
     try:
-        return await run_tool(name, ctx.deps.impl[name], **kwargs)
+        return await run_tool(name, ctx.deps.impl[name], interceptor=ctx.deps.interceptor, **kwargs)
     except Exception as exc:  # noqa: BLE001 - a failing tool is a result the model can react to
         logger.warning("chat tool %s failed: %s: %s", name, type(exc).__name__, exc)
 

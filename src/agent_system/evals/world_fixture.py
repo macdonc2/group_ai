@@ -14,13 +14,13 @@ Two choices worth knowing:
   built in the shape Google sends them (a local time with a UTC offset) and go through the real
   parser, because the bug this guards against was in that parser.
 
-The hooks are installed only in eval processes and fall through to the real thing when a case
-sets no fixture.
+`world_tools(...)` returns replacement tool functions for one case: the real tools, bound to a
+fixed events source and a fixed calendar. The eval runner hands them to the turn
+(`AgentDependencies.tool_overrides`); a case with no fixture gets none and uses the real thing.
 """
 
 from __future__ import annotations
 
-import contextvars
 from datetime import datetime, time, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -54,22 +54,6 @@ class FixtureCalendarEntry(BaseModel):
     end: str | None = None
     location: str | None = None
     description: str | None = None
-
-
-_events: contextvars.ContextVar[list[FixtureEvent] | None] = contextvars.ContextVar("eval_events", default=None)
-_calendar: contextvars.ContextVar[tuple[list[FixtureCalendarEntry], str] | None] = contextvars.ContextVar(
-    "eval_calendar", default=None)
-_installed = False
-
-
-def set_world(events: list[FixtureEvent] | None, calendar: list[FixtureCalendarEntry] | None,
-              timezone: str) -> tuple[contextvars.Token, contextvars.Token]:
-    return _events.set(events), _calendar.set((calendar, timezone) if calendar is not None else None)
-
-
-def reset_world(tokens: tuple[contextvars.Token, contextvars.Token]) -> None:
-    _events.reset(tokens[0])
-    _calendar.reset(tokens[1])
 
 
 def _clock(text: str) -> time:
@@ -145,32 +129,37 @@ def calendar_events(fixture: list[FixtureCalendarEntry], timezone: str, time_min
     return out
 
 
-def install_world_fixture_hook() -> None:
-    """Wrap the events fetch and the Google Calendar pull once. Both chat engines reach them through
-    `houston_events.py` and `tools.py`, so one hook covers the FSM and the loop."""
-    global _installed
-    if _installed:
-        return
-    from agent_system.adapters.outbound import houston_events
+def events_source(fixture: list[FixtureEvent]) -> Any:
+    """An events adapter whose fetch returns the fixture. Everything above the fetch (search,
+    selection, de-duplication, formatting) is the real adapter's code."""
+    from agent_system.adapters.outbound.houston_events import HoustonEventsAdapter
+
+    class FixtureEventsAdapter(HoustonEventsAdapter):
+        async def get_latest_events(self, limit: int = 30) -> list[Any]:
+            return build_events(fixture)[:limit]
+
+    return FixtureEventsAdapter()
+
+
+def world_tools(events: list[FixtureEvent] | None, calendar: list[FixtureCalendarEntry] | None,
+                timezone: str) -> dict[str, Any]:
+    """Replacement tools for one case, by tool name. `None` (not an empty list) means the case
+    sets no fixture of that kind and the real tool is used."""
+    from functools import partial
+
     from agent_system.adapters.outbound.llm import tools
 
-    real_fetch = houston_events.HoustonEventsAdapter.get_latest_events
-    real_pull = tools.pull_google_events
+    replaced: dict[str, Any] = {}
+    add_to_calendar = tools.add_to_calendar
+    if events is not None:
+        source = events_source(events)
+        replaced["get_houston_events"] = partial(tools.get_houston_events, houston_events=source)
+        # adding an event looks its name up in the listing, so it reads the same fixed listing
+        replaced["add_to_calendar"] = partial(add_to_calendar, houston_events=source)
+    if calendar is not None:
+        async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime,
+                                     google_calendar: Any = None) -> list[dict[str, Any]]:
+            return calendar_events(calendar, timezone, time_min, time_max)
 
-    async def get_latest_events(self: Any, limit: int = 30) -> list[Any]:
-        fixture = _events.get()
-        if fixture is None:
-            return await real_fetch(self, limit)
-        return build_events(fixture)[:limit]
-
-    async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime,
-                                 google_calendar: Any = None) -> list[dict[str, Any]]:
-        fixture = _calendar.get()
-        if fixture is None:
-            return await real_pull(session, user_id, time_min, time_max, google_calendar)
-        entries, timezone = fixture
-        return calendar_events(entries, timezone, time_min, time_max)
-
-    houston_events.HoustonEventsAdapter.get_latest_events = get_latest_events
-    tools.pull_google_events = pull_google_events
-    _installed = True
+        replaced["get_upcoming_events"] = partial(tools.get_upcoming_events, pull_google_events=pull_google_events)
+    return replaced
