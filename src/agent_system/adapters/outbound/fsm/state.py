@@ -119,6 +119,8 @@ class WorkflowState:
     
     # Set once a tool has put web text into this turn; write tools then refuse to run
     untrusted_seen: bool = False
+    # Validated context for this turn (llm/context.py); created on first use by bundle_for()
+    context_bundle: Any = None
 
     # Group context (for group chats)
     group_context: dict[str, str] | None = None
