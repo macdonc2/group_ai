@@ -31,7 +31,6 @@ from agent_system.adapters.inbound.api.routes import (
     research_router,
     tools_router,
 )
-from agent_system.adapters.outbound.persistence import Database
 from agent_system.adapters.outbound.telemetry.otel import instrument_database, setup_telemetry, shutdown_telemetry
 from agent_system.adapters.outbound.research.runner import (
     ResearchRunner,
@@ -40,6 +39,7 @@ from agent_system.adapters.outbound.research.runner import (
     set_runner,
 )
 from agent_system.composition_root.config import Settings, get_settings, secret_key_problem
+from agent_system.composition_root.container import Container, set_container
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +91,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise RuntimeError(f"Refusing to start: {problem}. Set a random SECRET_KEY of 32+ characters.")
             logging.getLogger("agent_system").warning("%s; fine for local development only.", problem)
 
-        # Initialize database
-        db = Database(settings.database_url, echo=settings.debug)
-        await db.create_tables()
+        # The one place the long-lived objects are built: the database, the graph store,
+        # the embedding and calendar adapters. Registered so code that still calls
+        # `get_container()` gets these same objects rather than building a second set.
+        container = await Container.create(settings)
+        set_container(container)
+        app.state.container = container
+        db = container.database
         set_database(db)
         instrument_database(db.engine)
 
@@ -113,9 +117,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         
         yield
         
-        # Cleanup
+        # Cleanup: closes the database pool and the graph driver
         shutdown_telemetry()
-        await db.dispose()
+        set_container(None)
+        app.state.container = None
+        await container.close()
     
     # The interactive docs describe every endpoint and parameter. Useful on a
     # laptop; on the public site they are a map for anyone probing it.
@@ -222,9 +228,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         checks = {"database": await _check("database", database)}
 
-        from agent_system.composition_root import container as container_module
-
-        graph = getattr(container_module._container, "knowledge_graph_adapter", None)
+        graph = getattr(getattr(app.state, "container", None), "knowledge_graph_adapter", None)
         driver = getattr(graph, "_driver", None)
         checks["graph"] = await _check("graph", driver.verify_connectivity) if driver else "not_connected"
 

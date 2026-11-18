@@ -1,5 +1,6 @@
 """Dependency injection container."""
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +27,9 @@ from agent_system.domain.ports import (
     PlanRepository,
     UserRepository,
 )
+
+# Longest the graph index checks may take while the container is being built.
+GRAPH_SETUP_TIMEOUT_S = 15.0
 
 
 @dataclass
@@ -103,13 +107,20 @@ class Container:
                 
                 # Set up vector index if Neo4j is available
                 if knowledge_graph_adapter:
-                    await knowledge_graph_adapter.ensure_vector_index(
-                        dimensions=embedding_adapter.get_dimensions()
+                    # Bounded: this now runs while the app starts, and a graph store that
+                    # does not answer must not keep the app from starting.
+                    await asyncio.wait_for(
+                        knowledge_graph_adapter.ensure_vector_index(
+                            dimensions=embedding_adapter.get_dimensions()
+                        ),
+                        GRAPH_SETUP_TIMEOUT_S,
                     )
                     print("✓ Neo4j vector index ready")
                     
                     # Set up temporal indexes for time-based queries
-                    await knowledge_graph_adapter.ensure_temporal_index()
+                    await asyncio.wait_for(
+                        knowledge_graph_adapter.ensure_temporal_index(), GRAPH_SETUP_TIMEOUT_S
+                    )
                     print("✓ Neo4j temporal indexes ready")
             except Exception as e:
                 print(f"✗ Embedding adapter initialization failed: {e}")
@@ -208,11 +219,23 @@ _container: Container | None = None
 print(f"=== container.py module loaded, _container={_container} ===")
 
 
+def set_container(container: Container | None) -> None:
+    """Make `container` the one `get_container()` returns, or clear it with None.
+
+    The API builds its container once at startup (`create_app`'s lifespan) and registers it
+    here, so code that still asks for the container by calling `get_container()` gets the
+    same objects as the rest of the app instead of building a second set.
+    """
+    global _container
+    _container = container
+
+
 async def get_container() -> Container:
     """Get the global container instance.
-    
-    Creates the container on first access.
-    
+
+    Inside the API this is the container the app built at startup. Elsewhere (the eval
+    command line, scripts) nothing has registered one, so it is created on first access.
+
     Returns:
         The container instance
     """

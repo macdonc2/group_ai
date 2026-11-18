@@ -4,6 +4,7 @@ from agent_system.composition_root.config import Settings, get_settings
 from agent_system.composition_root.container import (
     Container,
     get_container,
+    set_container,
     shutdown_container,
 )
 from agent_system.composition_root.services import (
@@ -19,6 +20,7 @@ __all__ = [
     # Container
     "Container",
     "get_container",
+    "set_container",
     "shutdown_container",
     # Services
     "AgentService",
