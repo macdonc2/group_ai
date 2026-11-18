@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
@@ -11,6 +12,7 @@ from agent_system.domain.entities import Conversation, Plan, User
 from agent_system.domain.ports import (
     ConversationRepository,
     EmbeddingPort,
+    GoogleCalendarPort,
     KnowledgeGraphPort,
     LLMPort,
     PlanRepository,
@@ -45,6 +47,11 @@ class AgentDependencies:
     plan_repository: PlanRepository | None
     knowledge_graph_port: KnowledgeGraphPort | None
     embedding_port: EmbeddingPort | None = None  # for semantic search
+    google_calendar: GoogleCalendarPort | None = None  # None when OAuth is not configured
+
+    # Opens a short-lived database session for a tool that needs one (the event tools).
+    # A factory, not a session: most turns never call such a tool, so none is opened.
+    session_factory: Callable[[], AbstractAsyncContextManager[Any]] | None = None
 
     # Configuration
     openai_api_key: str = ""

@@ -119,8 +119,9 @@ def git_sha() -> str | None:
 
 
 class EvalEnv:
-    def __init__(self, database: Any, kg: Any, embedder: Any, api_key: str, settings: Any) -> None:
+    def __init__(self, database: Any, kg: Any, embedder: Any, api_key: str, settings: Any, calendar: Any = None) -> None:
         self.database, self.kg, self.embedder, self.api_key, self.settings = database, kg, embedder, api_key, settings
+        self.calendar = calendar  # the Google Calendar adapter, when OAuth is configured
 
     @classmethod
     async def create(cls) -> EvalEnv:
@@ -153,7 +154,7 @@ class EvalEnv:
                 await kg.ensure_vector_index(dimensions=embedder.get_dimensions())
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Vector index check failed: %s", exc)
-        return cls(container.database, kg, embedder, api_key, settings)
+        return cls(container.database, kg, embedder, api_key, settings, container.google_calendar_adapter)
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +194,7 @@ async def play_turns(case: EvalCase, seeded: Any, env: EvalEnv) -> list[dict[str
                 openai_api_key=env.api_key, default_model=env.settings.default_model,
                 fallback_model=env.settings.fallback_model, temperature=env.settings.temperature,
                 max_tokens=env.settings.max_tokens, trace=TurnTrace(),
+                google_calendar=env.calendar, session_factory=env.database.session,
             )
             try:
                 result = await run_agent_workflow(text, state, deps)

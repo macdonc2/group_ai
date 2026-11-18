@@ -30,6 +30,9 @@ class _FakeHoustonAdapter:
         pass
 
 
+CALENDAR = object()  # stands in for the calendar adapter; _FakeSync does the work
+
+
 class _FakeSync:
     created = []
     flags = []
@@ -61,9 +64,6 @@ def wire(monkeypatch):
                          url="https://example.com/prgs", description="Indoor market")]
     adapter = _FakeHoustonAdapter(hits)
 
-    async def fake_container():
-        return SimpleNamespace(google_calendar_adapter=object())
-
     async def fake_parse(text, user_timezone="UTC", reference_time=None, api_key=None):
         t = text.lower()
         if "tuesday" in t:
@@ -72,7 +72,6 @@ def wire(monkeypatch):
             return datetime(2026, 9, 19, 23, 0, tzinfo=timezone.utc)
         return None
 
-    monkeypatch.setattr("agent_system.composition_root.container.get_container", fake_container)
     monkeypatch.setattr("agent_system.adapters.outbound.persistence.SQLAlchemyUserRepository", lambda session: _FakeUserRepo(session.user))
     monkeypatch.setattr("agent_system.adapters.outbound.houston_events.HoustonEventsAdapter", lambda: adapter)
     monkeypatch.setattr("agent_system.application.services.CalendarSyncService", _FakeSync)
@@ -83,7 +82,7 @@ def wire(monkeypatch):
 @pytest.mark.unit
 async def test_matches_houston_event_by_name(wire):
     session = SimpleNamespace(user=_user())
-    r = await tools_mod.add_to_calendar(title="punk rock garage sale", when="punk rock garage sale", session=session, user_id="11111111-1111-1111-1111-111111111111")
+    r = await tools_mod.add_to_calendar(title="punk rock garage sale", when="punk rock garage sale", session=session, user_id="11111111-1111-1111-1111-111111111111", google_calendar=CALENDAR)
     assert r.success, r.message
     title, start, end, location, description = _FakeSync.created[0]
     assert title.startswith("Punk Rock Garage Sale")
@@ -96,7 +95,7 @@ async def test_matches_houston_event_by_name(wire):
 @pytest.mark.unit
 async def test_falls_back_to_parsed_datetime(wire):
     session = SimpleNamespace(user=_user())
-    r = await tools_mod.add_to_calendar(title="Dentist Tuesday at 3pm", when="Dentist Tuesday at 3pm", session=session, user_id="11111111-1111-1111-1111-111111111111")
+    r = await tools_mod.add_to_calendar(title="Dentist Tuesday at 3pm", when="Dentist Tuesday at 3pm", session=session, user_id="11111111-1111-1111-1111-111111111111", google_calendar=CALENDAR)
     assert r.success, r.message
     title, start, end, *_ = _FakeSync.created[0]
     assert title == "Dentist Tuesday at 3pm" and start == datetime(2026, 9, 22, 20, 0) and end is None
@@ -106,14 +105,14 @@ async def test_falls_back_to_parsed_datetime(wire):
 @pytest.mark.unit
 async def test_no_match_and_no_date_asks_for_one(wire):
     session = SimpleNamespace(user=_user())
-    r = await tools_mod.add_to_calendar(title="Zane's thing", when="Zane's thing", session=session, user_id="11111111-1111-1111-1111-111111111111")
+    r = await tools_mod.add_to_calendar(title="Zane's thing", when="Zane's thing", session=session, user_id="11111111-1111-1111-1111-111111111111", google_calendar=CALENDAR)
     assert not r.success and "day and time" in r.message and _FakeSync.created == []
 
 
 @pytest.mark.unit
 async def test_not_connected(wire):
     session = SimpleNamespace(user=_user(connected=False))
-    r = await tools_mod.add_to_calendar(title="anything", session=session, user_id="11111111-1111-1111-1111-111111111111")
+    r = await tools_mod.add_to_calendar(title="anything", session=session, user_id="11111111-1111-1111-1111-111111111111", google_calendar=CALENDAR)
     assert not r.success and "isn't connected" in r.message
 
 
@@ -143,6 +142,7 @@ async def test_several_events_tentative_with_all_day_fallback(wire):
             {"title": "Asiatown food crawl"},
         ],
         status="tentative", session=session, user_id="11111111-1111-1111-1111-111111111111",
+        google_calendar=CALENDAR,
     )
     assert r.success, r.message
     assert len(_FakeSync.created) == 3
@@ -175,3 +175,12 @@ def test_calendar_tool_args_parsing():
 
     broken = calendar_tool_args("{not json", "add it")
     assert broken["title"] == "{not json"
+
+
+@pytest.mark.unit
+async def test_without_a_calendar_adapter_it_says_the_server_is_not_configured(wire):
+    session = SimpleNamespace(user=_user())
+    r = await tools_mod.add_to_calendar(title="x", session=session, user_id="11111111-1111-1111-1111-111111111111")
+    assert not r.success
+    assert "not configured" in r.message
+    assert _FakeSync.created == []

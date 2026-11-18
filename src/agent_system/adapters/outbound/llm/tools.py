@@ -33,6 +33,16 @@ def set_tool_interceptor(interceptor: Any) -> None:
     _tool_interceptor = interceptor
 
 
+def tool_accepts(func: Any, name: str) -> bool:
+    """Whether a tool function can be passed the keyword `name`: it declares that parameter,
+    or it takes `**kwargs`. Read from the signature, so a local variable that happens to
+    share the name does not count."""
+    import inspect
+
+    parameters = inspect.signature(func).parameters
+    return name in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+
+
 async def run_tool(name: str, func: Any, **kwargs: Any) -> Any:
     """Call a tool function. Both chat engines call tools through here, so it is the one place
     to observe or replace a call."""
@@ -1378,19 +1388,20 @@ async def search_internal_docs_tool(query: str, max_sections: int = 5) -> ToolRe
 
 # ============ Event Lookup Tool ============
 
-async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime) -> list[dict]:
+async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime,
+                             google_calendar: Any = None) -> list[dict]:
     """The user's Google Calendar events that start between two naive-UTC instants.
 
-    Returns nothing when no calendar is configured, connected or enabled. Kept as its own
-    function so evals can put a fixed calendar here (`evals/world_fixture.py`).
+    `google_calendar` is the calendar adapter (a GoogleCalendarPort), handed in by whoever
+    runs the tool. Returns nothing when there is none, or the user's calendar is not connected
+    or enabled. Kept as its own function so evals can put a fixed calendar here
+    (`evals/world_fixture.py`).
     """
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
-    from agent_system.composition_root.container import get_container
     from agent_system.domain.value_objects import UserId
 
-    container = await get_container()
-    logger.info(f"Google Calendar adapter available: {container.google_calendar_adapter is not None}")
-    if not container.google_calendar_adapter:
+    logger.info(f"Google Calendar adapter available: {google_calendar is not None}")
+    if not google_calendar:
         return []
     user = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
     has_gcal = user.has_google_calendar_connected() if user else False
@@ -1401,7 +1412,7 @@ async def pull_google_events(session: Any, user_id: str, time_min: datetime, tim
     from agent_system.application.services import CalendarSyncService
 
     logger.info(f"Pulling Google Calendar events: {time_min} to {time_max} UTC")
-    raw = await CalendarSyncService(container.google_calendar_adapter).pull_events_from_google(
+    raw = await CalendarSyncService(google_calendar).pull_events_from_google(
         user, time_min=time_min, time_max=time_max, max_results=50,
     )
     logger.info(f"Google Calendar returned {len(raw)} events")
@@ -1604,7 +1615,8 @@ async def get_upcoming_events(
             # pull_google_events / Google API expects naive UTC
             gcal_time_min = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
             gcal_time_max = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
-            raw_gcal = await pull_google_events(session, user_id, gcal_time_min, gcal_time_max)
+            raw_gcal = await pull_google_events(session, user_id, gcal_time_min, gcal_time_max,
+                                                google_calendar=kwargs.get("google_calendar"))
 
             for ge in raw_gcal:
                 title = ge.get("title", "Untitled")
@@ -1869,9 +1881,13 @@ async def add_to_calendar(
     status: str | None = None,
     session=None,
     user_id: str | None = None,
+    google_calendar: Any = None,
     **kwargs,
 ) -> ToolResult:
     """Put one or more events on the user's Google Calendar.
+
+    `session`, `user_id` and `google_calendar` (the calendar adapter) are handed in by
+    whoever runs the tool, never chosen by the model.
 
     Either a single event (`title`, optional `when`/`location`/`description`)
     or several via `events=[{"title", "when", "location", "description"}, ...]`.
@@ -1889,13 +1905,11 @@ async def add_to_calendar(
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
     from agent_system.application.services import CalendarSyncService
     from agent_system.application.services.datetime_parser import parse_vague_datetime
-    from agent_system.composition_root.container import get_container
     from agent_system.domain.value_objects import UserId
 
     if session is None or not user_id:
         return ToolResult(success=False, data=None, message="Calendar tool needs a signed-in user.")
-    container = await get_container()
-    if not container.google_calendar_adapter:
+    if not google_calendar:
         return ToolResult(success=False, data=None, message="Google Calendar integration is not configured on this server.")
     user = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
     if not user:
@@ -1914,7 +1928,7 @@ async def add_to_calendar(
 
     tentative = str(status or "").strip().lower() in _TENTATIVE_WORDS
     tz = ZoneInfo(user.timezone or "UTC")
-    sync = CalendarSyncService(container.google_calendar_adapter)
+    sync = CalendarSyncService(google_calendar)
     created_items: list[dict] = []
     lines: list[str] = []
     failed: list[str] = []

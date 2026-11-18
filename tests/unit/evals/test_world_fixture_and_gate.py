@@ -75,7 +75,7 @@ async def test_hooks_use_the_fixture_only_while_one_is_set(monkeypatch):
     async def live_fetch(self, limit=30):
         return ["live"]
 
-    async def live_pull(session, user_id, time_min, time_max):
+    async def live_pull(session, user_id, time_min, time_max, google_calendar=None):
         return ["live"]
 
     monkeypatch.setattr(houston_events.HoustonEventsAdapter, "get_latest_events", live_fetch)

@@ -1407,6 +1407,8 @@ async def websocket_chat(
                                     conversation_repository=conv_repo,
                                     plan_repository=plan_repo,
                                     knowledge_graph_port=container.knowledge_graph_adapter,
+                                    google_calendar=container.google_calendar_adapter,
+                                    session_factory=container.database.session,
                                     embedding_port=container.embedding_adapter,
                                     openai_api_key=agent_api_key,
                                     default_model=settings.default_model,
