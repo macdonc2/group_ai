@@ -10,7 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisco
 logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent_system.adapters.inbound.api.dependencies import CurrentUserId, SessionDep, get_session
+from agent_system.adapters.inbound.api.dependencies import (
+    ContainerDep,
+    CurrentUserId,
+    OptionalGoogleCalendarDep,
+    SessionDep,
+    get_session,
+)
 from agent_system.adapters.inbound.api.schemas import (
     ExtractedEventRead,
     ExtractedEventUpdate,
@@ -662,6 +668,7 @@ async def update_event(
     data: ExtractedEventUpdate,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: OptionalGoogleCalendarDep,
 ):
     """Update an extracted event (confirm, edit details)."""
     await require_group_access(group_id, current_user_id, session)
@@ -701,17 +708,15 @@ async def update_event(
         try:
             from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
             from agent_system.application.services import CalendarSyncService
-            from agent_system.composition_root.container import get_container
             from agent_system.domain.value_objects import UserId
             
-            container = await get_container()
-            if container.google_calendar_adapter:
+            if calendar:
                 user_repo = SQLAlchemyUserRepository(session)
                 group_repo = SQLAlchemyGroupRepository(session)
                 group = await group_repo.get(GroupId.from_string(group_id))
                 
                 if group:
-                    sync_service = CalendarSyncService(container.google_calendar_adapter)
+                    sync_service = CalendarSyncService(calendar)
                     synced_count = 0
                     
                     # Sync to all group members who have calendar enabled
@@ -760,11 +765,11 @@ async def sync_event_to_calendar(
     event_id: str,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    calendar: OptionalGoogleCalendarDep,
 ):
     """Manually sync an event to the current user's Google Calendar."""
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
     from agent_system.application.services import CalendarSyncService
-    from agent_system.composition_root.container import get_container
     from agent_system.domain.value_objects import UserId
     
     await require_group_access(group_id, current_user_id, session)
@@ -815,14 +820,13 @@ async def sync_event_to_calendar(
         )
     
     # Sync to calendar
-    container = await get_container()
-    if not container.google_calendar_adapter:
+    if not calendar:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Calendar service is not available"
         )
     
-    sync_service = CalendarSyncService(container.google_calendar_adapter)
+    sync_service = CalendarSyncService(calendar)
     event = await sync_service.sync_event_to_google(event, user)
     
     await repo.update(event)
@@ -1071,6 +1075,7 @@ async def websocket_chat(
     websocket: WebSocket,
     group_id: str,
     conversation_id: str,
+    container: ContainerDep,
 ):
     """WebSocket endpoint for real-time group chat.
 
@@ -1209,13 +1214,11 @@ async def websocket_chat(
                             async def store_user_message_embedding():
                                 try:
                                     import asyncio
-                                    from agent_system.composition_root.container import get_container
                                     from agent_system.adapters.outbound.embedding import OpenAIEmbeddingAdapter
                                     from agent_system.domain.utils.encryption import get_api_key_encryption
                                     
                                     # Timeout after 10 seconds to prevent hangs
                                     async with asyncio.timeout(10):
-                                        container = await get_container()
                                         
                                         # Need knowledge graph for storage
                                         if not container.knowledge_graph_adapter:
@@ -1368,8 +1371,6 @@ async def websocket_chat(
                                 )
                                 
                                 # Get knowledge graph from container
-                                from agent_system.composition_root.container import get_container
-                                container = await get_container()
                                 
                                 # Generate message ID for streaming chunks
                                 pending_agent_msg_id = str(uuid.uuid4())
@@ -1702,7 +1703,6 @@ async def websocket_chat(
                     try:
                         from agent_system.adapters.outbound.llm.knowledge_extractor import extract_knowledge_from_text
                         from agent_system.composition_root.config import get_settings
-                        from agent_system.composition_root.container import get_container
                         
                         # Get API key for entity extraction (reuse logic from event extraction)
                         api_key_for_entities: str | None = None
@@ -1721,7 +1721,6 @@ async def websocket_chat(
                             settings = get_settings()
                             api_key_for_entities = settings.openai_api_key
                         
-                        container = await get_container()
                         knowledge_graph = container.knowledge_graph_adapter if container else None
                         if api_key_for_entities and knowledge_graph:
                             # Load recent context for entity extraction

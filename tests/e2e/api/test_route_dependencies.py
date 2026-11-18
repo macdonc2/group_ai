@@ -93,3 +93,22 @@ def test_routes_get_the_container_the_app_built_at_startup(app, signed_in):
     graph = _Graph()
     app.state.container = SimpleNamespace(knowledge_graph_adapter=graph, google_calendar_adapter=None)
     assert signed_in.delete("/api/v1/knowledge/graph").json() == {"deleted_nodes": 3}
+
+
+@pytest.mark.e2e
+def test_a_websocket_route_is_handed_the_same_container():
+    from fastapi import FastAPI, WebSocket
+
+    from agent_system.adapters.inbound.api.dependencies import ContainerDep
+
+    mini = FastAPI()
+    mini.state.container = SimpleNamespace(knowledge_graph_adapter="the graph", google_calendar_adapter=None)
+
+    @mini.websocket("/ws")
+    async def ws(websocket: WebSocket, container: ContainerDep) -> None:
+        await websocket.accept()
+        await websocket.send_text(container.knowledge_graph_adapter)
+        await websocket.close()
+
+    with TestClient(mini).websocket_connect("/ws") as connection:
+        assert connection.receive_text() == "the graph"

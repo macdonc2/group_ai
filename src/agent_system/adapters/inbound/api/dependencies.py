@@ -3,7 +3,8 @@
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, status
+from starlette.requests import HTTPConnection
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_system.adapters.outbound.persistence import Database
@@ -52,13 +53,14 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 # any of these with `app.dependency_overrides[get_knowledge_graph] = lambda: fake`.
 
 
-async def get_app_container(request: Request) -> Container:
+async def get_app_container(connection: HTTPConnection) -> Container:
     """The container this app built at startup.
 
-    An app whose startup did not run (a test driving it without the lifespan) has none,
-    so it falls back to the shared `get_container()`.
+    `HTTPConnection` is what an HTTP request and a WebSocket have in common, so this
+    works for both kinds of route. An app whose startup did not run (a test driving it
+    without the lifespan) has no container, so it falls back to the shared `get_container()`.
     """
-    container = getattr(request.app.state, "container", None)
+    container = getattr(connection.app.state, "container", None)
     return container if container is not None else await get_container()
 
 

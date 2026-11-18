@@ -46,7 +46,7 @@ def world(tmp_path, monkeypatch):
     calls = SimpleNamespace(remembered=[], forgotten=[], added=[], turns=[])
     graph = object()
 
-    async def fake_ports(api_key):
+    def fake_ports(container, api_key):
         return graph, None
 
     async def fake_remember(**kwargs):
