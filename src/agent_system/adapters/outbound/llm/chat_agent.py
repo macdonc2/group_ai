@@ -113,6 +113,7 @@ class ChatDeps:
     session_factory: Callable[[], AbstractAsyncContextManager[Any]] = _default_session
     steps: list[dict[str, Any]] = field(default_factory=list)
     untrusted_seen: bool = False                     # set once web content enters the turn
+    context: Any = None                              # ContextBundle: validated web passages for the turn
     streamed_chars: int = 0                          # reply text already sent to `emit` as it was written
 
 
@@ -211,6 +212,15 @@ def _untrusted(source: str, text: str) -> str:
     return f'<untrusted source="{source}">\n{body}\n</untrusted>'
 
 
+def _bundle(ctx: RunContext[ChatDeps]) -> Any:
+    """The turn's validated context (llm/context.py), created on first use."""
+    if ctx.deps.context is None:
+        from agent_system.adapters.outbound.llm.context import ContextBundle
+
+        ctx.deps.context = ContextBundle(ctx.deps.user_id)
+    return ctx.deps.context
+
+
 def _text(result: Any) -> tuple[bool, str]:
     """(ok, text) from a ToolResult; the human-readable `message` is what the model reads."""
     ok = bool(getattr(result, "success", False))
@@ -224,6 +234,7 @@ async def _record(ctx: RunContext[ChatDeps], tool: str, args: dict[str, Any], ok
     shown = {k: v for k, v in args.items() if v not in (None, [], "")}
     ctx.deps.steps.append({"tool": tool, "args": shown, "ok": ok,
                            "summary": result.split("\n", 1)[0][:200], "duration_ms": duration_ms})
+    _bundle(ctx).note_shown(result)
     if ctx.deps.trace is not None:
         ctx.deps.trace.add_tool_call(tool, shown, result, ok, duration_ms)
     if ctx.deps.emit is not None:
@@ -266,13 +277,14 @@ async def web_search(ctx: RunContext[ChatDeps], query: str) -> str:
     started = time.perf_counter()
     result = await _call(ctx, "web_search", query=query, num_results=5)
     ok, text = _text(result)
-    if ok and isinstance(result.data, list) and result.data:
-        from agent_system.adapters.outbound.fsm.nodes import format_web_results
-
-        text = format_web_results(result.data[:5])
     ctx.deps.untrusted_seen = True
-    return await _record(ctx, "web_search", {"query": query}, ok,
-                         _untrusted("web", _clip(text, hint="use read_webpage on one result for more")), started)
+    if ok and isinstance(result.data, list):
+        # results become validated passages; only the bundle writes them into the prompt
+        bundle = _bundle(ctx)
+        shown = bundle.render_web_results(bundle.add_web_results(result.data), empty=text or "No results found.")
+    else:
+        shown = _untrusted("web", _clip(text, hint="use read_webpage on one result for more"))
+    return await _record(ctx, "web_search", {"query": query}, ok, shown, started)
 
 
 @chat_agent.tool
@@ -284,10 +296,17 @@ async def read_webpage(ctx: RunContext[ChatDeps], url: str) -> str:
         url: The full http(s) URL.
     """
     started = time.perf_counter()
-    ok, text = _text(await _call(ctx, "read_webpage", url=url))
+    result = await _call(ctx, "read_webpage", url=url)
+    ok, text = _text(result)
     ctx.deps.untrusted_seen = True
-    return await _record(ctx, "read_webpage", {"url": url}, ok,
-                         _untrusted("web", _clip(text, MAX_PAGE_CHARS, "the page is longer than shown")), started)
+    data = getattr(result, "data", None)
+    if ok and isinstance(data, dict):
+        bundle = _bundle(ctx)
+        shown = bundle.render_web_page(bundle.add_web_page(data.get("url") or url, data.get("text"), data.get("status")),
+                                       failure=text)
+    else:
+        shown = _untrusted("web", _clip(text, MAX_PAGE_CHARS, "the page is longer than shown"))
+    return await _record(ctx, "read_webpage", {"url": url}, ok, shown, started)
 
 
 @chat_agent.tool

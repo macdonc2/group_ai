@@ -82,6 +82,7 @@ Every agent turn records a `TurnTrace`, whether it comes from a chat, a group ch
 | `llm_calls` | Per model request: agent, model, input/output/cached tokens, duration, cost, a preview of the prompt and output, and `role` (`system` or `judge`). |
 | `embedding_calls` | Embedding model, tokens, duration and cost. |
 | `usage` / `judge_usage` | Rollups, including the number of `unpriced_calls`. |
+| `context` | The validated context for the turn: each passage's id, kind, trust and source, what was rejected and why, and the check of the reply's links ([docs/context.md](context.md)). |
 
 **How LLM calls are captured.** pydantic-ai's OpenTelemetry instrumentation is switched on for every `Agent` with a private tracer provider (`install_llm_capture()`). Its only span processor turns `chat` spans into `LLMCall` records on whichever trace is bound. Nothing is exported, and no call site had to change.
 - Model-request spans are identified by `gen_ai.operation.name == "chat"`.

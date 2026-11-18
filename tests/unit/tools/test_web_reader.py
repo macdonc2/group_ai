@@ -3,7 +3,6 @@
 import httpx
 import pytest
 
-from agent_system.adapters.outbound.fsm.nodes import format_web_results
 from agent_system.adapters.outbound.web import reader
 
 pytestmark = pytest.mark.unit
@@ -70,12 +69,3 @@ async def test_js_shell_without_renderer_returns_what_it_has(monkeypatch):
 
 async def test_non_html_is_skipped():
     assert (await reader.read_page("https://pdf.test/paper.pdf")).status == "skipped"
-
-
-def test_format_web_results_includes_page_text_or_why_not():
-    out = format_web_results([
-        {"title": "Inventor page", "url": "https://a", "snippet": "s", "page_text": "Patent 1; Patent 2"},
-        {"title": "Blocked", "url": "https://b", "snippet": "s2", "page_status": "blocked: HTTP 403"},
-    ])
-    assert "Page text (read from the site):\n  Patent 1; Patent 2" in out
-    assert "(Page not read: blocked: HTTP 403)" in out

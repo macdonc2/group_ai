@@ -803,6 +803,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
             node.content as content,
             node.role as role,
             node.conversation_id as conversation_id,
+            node.user_id as user_id,
             node.message_id as message_id,
             node.metadata_json as metadata_json,
             node.created_at as created_at,
@@ -833,6 +834,7 @@ class Neo4jAdapter(KnowledgeGraphPort):
                         "content": record["content"],
                         "role": record["role"],
                         "conversation_id": record["conversation_id"],
+                        "user_id": record["user_id"],  # checked again in code before it reaches a prompt
                         "message_id": record["message_id"],
                         "metadata": meta,
                         "created_at": record["created_at"],

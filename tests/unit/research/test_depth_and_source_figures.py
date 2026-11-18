@@ -30,7 +30,7 @@ def _fake_lane_pipeline(monkeypatch):
         return [Source(id="", lane=lane, title="Paper One", url="https://x/one", snippet="s1"),
                 Source(id="", lane=lane, title="Paper Two", url="https://x/two", snippet="s2")]
 
-    async def findings(question, lane, sources, deps):
+    async def findings(question, lane, sources, deps, report=None):
         calls["findings"] += 1
         return FindingsOut(findings=[Finding(claim=f"claim from {s.id}", evidence="e", source_id=s.id) for s in sources])
 

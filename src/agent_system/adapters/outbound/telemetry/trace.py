@@ -288,6 +288,9 @@ class TurnTrace:
             "judge_usage": self.usage("judge"),
             "response": _clip(self.response, 20000),
             "error": self.error,
+            # validated context: which passages the model was given, what was rejected, and the
+            # check of the reply's links against them (llm/context.py)
+            "context": getattr(self, "context", None),
         }
 
 
