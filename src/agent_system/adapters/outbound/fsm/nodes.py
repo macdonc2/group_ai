@@ -267,7 +267,7 @@ Analyze the intent of the current message IN CONTEXT of the conversation above. 
 
         for model, label in [
             (ctx.deps.default_model, "primary"),
-            (getattr(ctx.deps, "fallback_model", "openai:gpt-5-mini-2025-08-07"), "fallback"),
+            (ctx.deps.fallback_model, "fallback"),
         ]:
             try:
                 agent = create_intent_agent(model, ctx.deps.openai_api_key)
@@ -2768,7 +2768,7 @@ async def _present_listing(ctx, listing: str) -> str:
     sign-off, both written by the model, and each time-of-day header gets a line from the
     voice bank. The events themselves are shown exactly as the tool returned them.
     """
-    persona = getattr(ctx.deps, "persona", None)
+    persona = ctx.deps.persona
     if not persona:
         return f"Here's what I found:\n\n{listing}"
     lead, sign_off = "Here's what I found:", ""

@@ -25,10 +25,8 @@ def _turn(**limits):
         events.append(event_type)
 
     deps = AgentDependencies(llm_port=None, user_repository=None, conversation_repository=None,
-                             plan_repository=None, knowledge_graph_port=None, event_callback=on_event)
-    deps.chat_engine = "fsm"
-    for key, value in limits.items():
-        setattr(deps, key, value)
+                             plan_repository=None, knowledge_graph_port=None, event_callback=on_event,
+                             chat_engine="fsm", **limits)
     return state, deps, events
 
 
@@ -142,3 +140,14 @@ def test_turn_outcome_labels_stay_low_cardinality():
 
     assert [turn_outcome(e) for e in (None, "", "timeout", "step_limit", "RuntimeError: boom")] == [
         "ok", "ok", "timeout", "step_limit", "error"]
+
+
+@pytest.mark.unit
+def test_dependencies_reject_names_that_are_not_declared():
+    """A misspelt option used to be accepted and ignored; now it fails where it is written."""
+    _, deps, _ = _turn(turn_timeout_s=1.0)
+    assert deps.turn_timeout_s == 1.0
+    with pytest.raises(TypeError):
+        _turn(turn_timeout=1.0)
+    with pytest.raises(AttributeError):
+        deps.turn_timout_s = 2.0

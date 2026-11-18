@@ -3,29 +3,48 @@
 import asyncio
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Coroutine
+from typing import TYPE_CHECKING, Any, Callable, Coroutine
 
 from pydantic_ai import ModelMessage
 
 from agent_system.domain.entities import Conversation, Plan, User
+from agent_system.domain.ports import (
+    ConversationRepository,
+    EmbeddingPort,
+    KnowledgeGraphPort,
+    LLMPort,
+    PlanRepository,
+    UserRepository,
+)
 from agent_system.domain.value_objects import Intent, Message, Suggestion
+
+if TYPE_CHECKING:
+    from pydantic_ai.models import Model
+
+    from agent_system.adapters.outbound.telemetry.trace import TurnTrace
 
 
 # Type for event callback function
 EventCallback = Callable[[str, str, str, dict | None], Coroutine[Any, Any, None]]
 
 
-@dataclass
+@dataclass(slots=True)
 class AgentDependencies:
-    """Dependencies injected into FSM nodes."""
+    """Everything one chat turn is handed: ports, configuration and per-request choices.
 
-    # Ports
-    llm_port: Any  # LLMPort - using Any to avoid circular imports
-    user_repository: Any  # UserRepository
-    conversation_repository: Any  # ConversationRepository
-    plan_repository: Any  # PlanRepository
-    knowledge_graph_port: Any  # KnowledgeGraphPort (optional)
-    embedding_port: Any = None  # EmbeddingPort - for semantic search (optional)
+    This is the whole interface. Code reads these as plain attributes (`deps.persona`), so a
+    misspelt name fails loudly instead of quietly using a default, and a new knob is added
+    here as a field rather than attached to an instance from outside (`slots=True` makes
+    setting an undeclared attribute an error).
+    """
+
+    # Ports (None where the app runs without one, and in tests that do not need it)
+    llm_port: LLMPort | None
+    user_repository: UserRepository | None
+    conversation_repository: ConversationRepository | None
+    plan_repository: PlanRepository | None
+    knowledge_graph_port: KnowledgeGraphPort | None
+    embedding_port: EmbeddingPort | None = None  # for semantic search
 
     # Configuration
     openai_api_key: str = ""
@@ -37,6 +56,14 @@ class AgentDependencies:
     # Per-request engine choice ("fsm" or "loop"); None uses the CHAT_ENGINE setting
     chat_engine: str | None = None
 
+    # Limits for one turn; None uses CHAT_TURN_TIMEOUT_S / CHAT_TURN_MAX_LLM_CALLS
+    turn_timeout_s: float | None = None
+    turn_max_llm_calls: int | None = None
+
+    # The model the loop engine runs on; None builds one from default_model and the API key.
+    # Tests pass a scripted model here.
+    chat_loop_model: "Model | str | None" = None
+
     # Optional wrestler persona key (see llm/personas.py); changes voice only
     persona: str | None = None
     
@@ -44,7 +71,7 @@ class AgentDependencies:
     event_callback: EventCallback | None = None
 
     # Turn trace (spans, decisions, retrievals, usage); None disables recording
-    trace: Any = None  # TurnTrace
+    trace: "TurnTrace | None" = None
 
     async def emit_event(
         self,
