@@ -21,19 +21,6 @@ UNTRUSTED_TOOLS = frozenset({"web_search", "read_webpage"})  # their output is t
 WRITE_TOOLS = frozenset({"add_to_calendar", "remember_about_user", "update_user_preference"})
 
 
-def format_web_results(items: list[dict]) -> str:
-    """Search results for the response prompt: snippet, plus the page's own text when it was read."""
-    blocks = []
-    for item in items:
-        block = f"• {item.get('title', '')}\n  URL: {item.get('url', '')}\n  Snippet: {item.get('snippet', '')}"
-        if item.get("page_text"):
-            block += f"\n  Page text (read from the site):\n  {item['page_text']}"
-        elif item.get("page_status"):
-            block += f"\n  (Page not read: {item['page_status']})"
-        blocks.append(block)
-    return "Search results:\n" + "\n\n".join(blocks)
-
-
 def react_tool_input(tool: str | None, proposed: str | None, user_input: str, step_description: str) -> str:
     """Input for a tool a ReAct step asked for.
 
@@ -1418,6 +1405,10 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         
         tool_info = AVAILABLE_TOOLS[tool_name]
         tool_func = tool_info["function"]
+        from agent_system.adapters.outbound.llm.context import bundle_for
+
+        bundle = bundle_for(ctx.state)
+        web_rendered = False
         
         try:
             # Add repository dependencies if needed
@@ -1463,12 +1454,20 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                 ctx.deps.record_retrieval(f"tool:{tool_name}", str(public_args.get("topic") or public_args), _retrieval_hits_from_tool(result.data))
             if result.success:
                 ctx.state.tool_result = result.message
-                if result.data:
+                if tool_name == "web_search" and isinstance(result.data, list):
+                    # results become validated passages; only the bundle writes them into the prompt
+                    ctx.state.tool_result = bundle.render_web_results(
+                        bundle.add_web_results(result.data), empty=result.message or "No results found.")
+                    web_rendered = True
+                elif tool_name == "read_webpage" and isinstance(result.data, dict):
+                    ctx.state.tool_result = bundle.render_web_page(
+                        bundle.add_web_page(result.data.get("url"), result.data.get("text"), result.data.get("status")),
+                        failure=result.message)
+                    web_rendered = True
+                elif result.data:
                     # Format data nicely for the response
                     if isinstance(result.data, list):
-                        if tool_name == "web_search":
-                            ctx.state.tool_result = format_web_results(result.data[:5])
-                        elif tool_name == "search_internal_docs":
+                        if tool_name == "search_internal_docs":
                             formatted = "\n\n".join([
                                 f"## {item['title']}\n{item['content']}"
                                 for item in result.data
@@ -1513,8 +1512,10 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             from agent_system.adapters.outbound.llm.chat_agent import _untrusted
 
             ctx.state.untrusted_seen = True
-            ctx.state.tool_result = _untrusted("web", ctx.state.tool_result or "")
+            if not web_rendered:  # failures and anything not rendered from passages still get wrapped
+                ctx.state.tool_result = _untrusted("web", ctx.state.tool_result or "")
 
+        bundle.note_shown(ctx.state.tool_result)
         if ctx.deps.trace is not None:
             ctx.deps.trace.add_tool_call(
                 tool_name, public_args, ctx.state.tool_result, tool_ok, (time.perf_counter() - t_start) * 1000,
@@ -1603,12 +1604,13 @@ class GenerateResponse(BaseNode[WorkflowState, AgentDependencies, WorkflowResult
                     min_score=0.7,  # Only high-quality matches
                 )
                 
-                # Filter out messages from the current conversation
-                current_conv_id = str(ctx.state.conversation.id)
-                related_history = [
-                    msg for msg in related_history 
-                    if msg.get("conversation_id") != current_conv_id
-                ]
+                # Validate in code before any of it can reach a prompt: each hit must belong to this
+                # user, clear the score threshold, have text and not repeat another (llm/context.py).
+                # Messages from the current conversation are left out; they are already in the prompt.
+                from agent_system.adapters.outbound.llm.context import bundle_for
+
+                related_history = bundle_for(ctx.state).add_history(
+                    related_history, min_score=0.7, exclude_conversation=str(ctx.state.conversation.id))
                 ctx.deps.record_retrieval(
                     "semantic_search", ctx.state.user_input,
                     [{"id": m.get("id"), "score": m.get("score"), "role": m.get("role"),

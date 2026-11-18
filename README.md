@@ -1107,6 +1107,7 @@ Two sets of docs ship with this repository:
 
 - **This README** is the engineering account: architecture, the agent roster, the two chat engines (FSM and tool loop), memory, API reference and setup.
 - **[docs/graph-explorer.md](docs/graph-explorer.md)** covers the graph explorer and its agent: architecture, tools, design decisions, evals and API.
+- **[docs/context.md](docs/context.md)** covers validated context: the `Passage` model, the rules applied in code before text reaches a prompt, what is covered so far, and the check of a reply's links.
 - **[docs/journal.md](docs/journal.md)** covers the journal: storage, how entries reach memory, the journal agent, calendar suggestions, access control and known limits.
 - **[docs/evals.md](docs/evals.md)** is the reference for the eval harness and turn tracing: suites, scorers, rubrics, judges, the Evals tab and the predicate tree, configuration and API.
 - **`src/agent_system/docs/`** is written for people using the app, and it is also loaded into the agent itself. `search_internal_docs` serves it, and the response agents route questions like "what tools do you have" or "how do I connect my calendar" to that tool, so the agent answers from these files. Anything shipped but missing there is a feature the agent will not know it has.

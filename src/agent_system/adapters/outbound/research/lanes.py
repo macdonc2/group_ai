@@ -12,10 +12,16 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from typing import Any
 
 from agent_system.adapters.outbound.research import sources as src
 from agent_system.adapters.outbound.research.llm import make_agent
-from agent_system.adapters.outbound.research.schemas import FindingsOut, GapPlan, QueryPlan, TablesOut
+from agent_system.adapters.outbound.research.schemas import (
+    FindingsOut,
+    GapPlan,
+    QueryPlan,
+    TablesOut,
+)
 from agent_system.domain.entities.research import DataTable, Finding, Lane, LaneResult, Source
 
 logger = logging.getLogger(__name__)
@@ -114,7 +120,41 @@ async def _search(lane: Lane, queries: list[str], deps: LaneDeps) -> list[Source
     return src.dedupe([s for b in batches for s in b])
 
 
-async def _findings(question: str, lane: Lane, sources: list[Source], deps: LaneDeps) -> FindingsOut:
+def source_text(source: Source) -> str:
+    """Exactly what the model is shown of a source, and so what a quote from it can be checked against."""
+    return f"{source.title}\n{source.snippet}"
+
+
+def verify_findings(findings: list[Finding], sources: list[Source]) -> tuple[list[Finding], list[dict[str, str]]]:
+    """Split findings into those whose evidence is really in the source they cite, and the rest.
+
+    A finding is a claim the model wrote. It goes on to the synthesis and report models as
+    established fact, so before it does, code checks the one part of it that can be checked
+    without judgement: the source exists, and the quoted evidence appears in that source word
+    for word (`find_quote`). A paraphrase fails, by design: it is the model's wording, and
+    nothing ties it to the page.
+    """
+    from agent_system.adapters.outbound.llm.context import find_quote
+
+    by_id = {s.id: s for s in sources}
+    kept: list[Finding] = []
+    rejected: list[dict[str, str]] = []
+    for finding in findings:
+        source = by_id.get(finding.source_id)
+        if source is None:
+            rejected.append({"source_id": finding.source_id, "claim": finding.claim, "reason": "unknown_source"})
+            continue
+        check = find_quote(finding.evidence, source_text(source))
+        if check.found:
+            kept.append(finding)
+        else:
+            rejected.append({"source_id": finding.source_id, "claim": finding.claim, "reason": check.reason,
+                             "evidence": finding.evidence[:300]})
+    return kept, rejected
+
+
+async def _findings(question: str, lane: Lane, sources: list[Source], deps: LaneDeps,
+                    report: Callable[[dict[str, Any]], None] | None = None) -> FindingsOut:
     role = {
         "academic": "an academic literature reviewer: precise about methods, datasets and what was actually shown",
         "practical": "a senior engineer surveying how this is done in practice: tools, libraries, patterns, trade-offs, maturity, gotchas",
@@ -124,17 +164,52 @@ async def _findings(question: str, lane: Lane, sources: list[Source], deps: Lane
         deps.strong_model, deps.api_key,
         system_prompt=(
             f"You are {role}. From the sources provided, extract findings that bear on the "
-            "research question. A finding is one claim, supported by a quoted or closely "
-            "paraphrased span from ONE source (cite its id). Prefer specific over general. "
-            "Skip sources that are off-topic and list them as dropped. 6-12 findings."
+            "research question. A finding is one claim in your own words, plus `evidence`: one "
+            "span copied character for character from ONE source (cite its id). The evidence is "
+            "checked by a program against the source text and a finding whose evidence is not an "
+            "exact quote is discarded, so never paraphrase, correct or tidy it; use ... to leave "
+            "words out. Prefer specific over general. Skip sources that are off-topic and list "
+            "them as dropped. 6-12 findings."
         ),
         output_type=FindingsOut,
     )
     prompt = f"Research question: {question}\n\nSources:\n{_sources_block(sources)}"
     result = await agent.run(prompt)
-    valid = {s.id for s in sources}
-    findings = [f for f in result.output.findings if f.source_id in valid]
+    findings, rejected = verify_findings(result.output.findings, sources)
+    first_pass = {"proposed": len(result.output.findings), "verified": len(findings), "rejected": len(rejected)}
+
+    # One chance to fix quotes that did not match, with the reason. Anything still unmatched is dropped.
+    fixable = [r for r in rejected if r["reason"] != "unknown_source"]
+    repaired = 0
+    if fixable:
+        listing = "\n".join(f"- [{r['source_id']}] claim: {r['claim']}\n  evidence given: {r.get('evidence', '')}" for r in fixable)
+        retry = await agent.run(
+            f"{prompt}\n\nThese findings were discarded because their evidence is not an exact quote from the "
+            f"cited source:\n{listing}\n\nReturn ONLY corrected versions of these findings, each with evidence "
+            "copied character for character from that source. Leave out any you cannot support with an exact quote."
+        )
+        again, still_rejected = verify_findings(retry.output.findings, sources)
+        seen = {(f.source_id, f.evidence) for f in findings}
+        fresh = [f for f in again if (f.source_id, f.evidence) not in seen]
+        findings.extend(fresh)
+        repaired = len(fresh)
+        rejected = [r for r in rejected if r["reason"] == "unknown_source"] + still_rejected
+    stats = {**first_pass, "repaired": repaired, "final": len(findings), "dropped": len(rejected),
+             "dropped_reasons": sorted({r["reason"] for r in rejected})}
+    logger.info("lane %s findings: %s", lane, stats)
+    if report is not None:
+        report(stats)
     return FindingsOut(findings=findings, dropped_source_ids=result.output.dropped_source_ids)
+
+
+async def _emit_evidence_check(emit: Any, lane: Lane, checks: list[dict[str, Any]], rnd: int = 1) -> None:
+    """Show in the run's progress how many findings survived the quote check."""
+    for stats in checks:
+        dropped = stats["dropped"]
+        message = (f"{stats['final']} findings verified against their sources"
+                   + (f", {stats['repaired']} after a correction" if stats["repaired"] else "")
+                   + (f"; {dropped} dropped: evidence not found in the cited source" if dropped else ""))
+        await emit("lane_step", lane, message, {"step": "evidence_check", **stats, "round": rnd})
 
 
 async def _tables(question: str, sources: list[Source], deps: LaneDeps) -> list[DataTable]:
@@ -208,8 +283,10 @@ async def run_lane(lane: Lane, question: str, deps: LaneDeps, emit: Emit) -> Lan
 
         # 3. findings / tables
         await emit("lane_step", lane, "Extracting findings", {"step": "findings"})
-        fo = await _findings(question, lane, sources, deps)
+        checks: list[dict[str, Any]] = []
+        fo = await _findings(question, lane, sources, deps, report=checks.append)
         result.findings = fo.findings
+        await _emit_evidence_check(emit, lane, checks)
         for f in fo.findings:
             await emit("lane_finding", lane, f.claim, {"source_id": f.source_id, "confidence": f.confidence})
 
@@ -239,8 +316,10 @@ async def run_lane(lane: Lane, question: str, deps: LaneDeps, emit: Emit) -> Lan
                 continue
             result.sources.extend(fresh)
             await emit("lane_step", lane, f"Round {rnd}: extracting findings", {"step": "findings", "round": rnd})
-            more = await _findings(question, lane, fresh, deps)
+            checks = []
+            more = await _findings(question, lane, fresh, deps, report=checks.append)
             result.findings.extend(more.findings)
+            await _emit_evidence_check(emit, lane, checks, rnd)
             for f in more.findings:
                 await emit("lane_finding", lane, f.claim, {"source_id": f.source_id, "confidence": f.confidence, "round": rnd})
 

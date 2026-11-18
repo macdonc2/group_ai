@@ -1,6 +1,7 @@
 """Agent workflow graph definition."""
 
 import asyncio
+import logging
 
 from pydantic_graph import End, Graph
 
@@ -28,6 +29,8 @@ from agent_system.adapters.outbound.telemetry import (
     install_llm_capture,
     set_current_node,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # Define the agent workflow graph
@@ -75,15 +78,39 @@ async def run_agent_workflow(
     timeout_s, max_llm_calls = _turn_limits(deps)
     engine = _run_loop_engine if chat_engine_for(state, deps) == "loop" else _run_fsm_engine
     try:
-        return await asyncio.wait_for(engine(user_input, state, deps, trace, max_llm_calls), timeout=timeout_s)
+        result = await asyncio.wait_for(engine(user_input, state, deps, trace, max_llm_calls), timeout=timeout_s)
     except TimeoutError:
-        return await _stopped_turn(state, deps, trace, "timeout",
-                                   f"That took longer than {int(timeout_s)} seconds, so I stopped. Please try again "
-                                   "or ask for one part at a time.")
+        result = await _stopped_turn(state, deps, trace, "timeout",
+                                     f"That took longer than {int(timeout_s)} seconds, so I stopped. Please try again "
+                                     "or ask for one part at a time.")
     except TurnLimitExceeded:
-        return await _stopped_turn(state, deps, trace, "step_limit",
-                                   f"I stopped after {max_llm_calls} model calls without finishing. Could you ask for "
-                                   "one part of that at a time?")
+        result = await _stopped_turn(state, deps, trace, "step_limit",
+                                     f"I stopped after {max_llm_calls} model calls without finishing. Could you ask for "
+                                     "one part of that at a time?")
+    _record_context(user_input, state, trace, result)
+    return result
+
+
+def _record_context(user_input: str, state: WorkflowState, trace: TurnTrace, result: WorkflowResult) -> None:
+    """Put the turn's validated context on its trace, with a check of the reply's links against it.
+
+    Never raises: this is bookkeeping after the reply exists.
+    """
+    try:
+        from agent_system.adapters.outbound.llm.context import bundle_for, check_reply
+
+        bundle = bundle_for(state)
+        said = "\n".join([user_input, *(str(getattr(m, "content", "")) for m in state.conversation.get_context_messages())])
+        bundle.reply_check = check_reply(result.response or "", bundle, also_allowed=said)
+        trace.context = bundle.report()
+        if bundle.reply_check["unsourced_links"]:
+            logger.warning("Reply has links that were not in its context", extra={
+                "event": "unsourced_links", "count": len(bundle.reply_check["unsourced_links"])})
+        if bundle.reply_check["unsupported_quotes"]:
+            logger.warning("Reply quotes text that was not in its context", extra={
+                "event": "unsupported_quotes", "count": len(bundle.reply_check["unsupported_quotes"])})
+    except Exception:  # noqa: BLE001
+        logger.debug("context report failed", exc_info=True)
 
 
 class TurnLimitExceeded(Exception):
@@ -192,6 +219,7 @@ async def _run_loop_engine(
 
     from agent_system.adapters.outbound.llm.agents import _get_model
     from agent_system.adapters.outbound.llm.chat_agent import ChatDeps, build_history, run_chat_loop
+    from agent_system.adapters.outbound.llm.context import bundle_for
     from agent_system.composition_root.config import get_settings
 
     settings = get_settings()
@@ -215,6 +243,7 @@ async def _run_loop_engine(
                     persona=deps.persona,
                     trace=trace,
                     emit=deps.emit_event,
+                    context=bundle_for(state),
                 ),
                 model=getattr(deps, "chat_loop_model", None) or _get_model(deps.default_model, deps.openai_api_key),
                 history=build_history(state.conversation.get_context_messages(), user_input),
