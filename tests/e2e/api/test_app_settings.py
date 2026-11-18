@@ -9,7 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_system.adapters.inbound.api import create_app
-from agent_system.adapters.inbound.api.auth import TokenData, create_access_token, decode_access_token
+from agent_system.adapters.inbound.api.auth import (
+    TokenData,
+    create_access_token,
+    decode_access_token,
+)
 from agent_system.composition_root.config import Settings, get_settings
 
 API = "/api/v1"
