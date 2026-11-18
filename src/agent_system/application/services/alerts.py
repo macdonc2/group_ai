@@ -8,13 +8,13 @@ service.
 
 Each check is written for a single-user app, where an hour may hold a handful of turns:
 a share alone would fire on one bad turn out of one, so every check also needs a minimum
-count. `evaluate` is pure so the rules are unit-tested without a database.
+count. `evaluate` is pure so the rules are unit-tested without a database; the query that
+feeds it is `load_turn_stats` in `adapters/outbound/persistence/trace_repository.py`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
 from typing import Any
 
 FAILED_OUTCOMES = ("error", "timeout", "step_limit")
@@ -101,24 +101,3 @@ def evaluate(turns: list[TurnStat], spend_day_usd: float, t: Thresholds = DEFAUL
     if t.spend_day_usd and spend_day_usd > t.spend_day_usd:
         alerts.append(Alert("spend_day", SUMMARIES["spend_day"], {"spent_usd": round(spend_day_usd, 2), "limit_usd": t.spend_day_usd}))
     return alerts
-
-
-async def load_and_evaluate(session: Any, t: Thresholds = DEFAULTS, now: datetime | None = None) -> tuple[list[Alert], int]:
-    """Read the window from `turn_traces` and evaluate it. Returns (alerts, turns in the window)."""
-    from sqlalchemy import func, select
-
-    from agent_system.adapters.outbound.persistence import TurnTraceModel
-
-    now = now or datetime.utcnow()
-    rows = (await session.execute(
-        select(TurnTraceModel.total_ms, TurnTraceModel.input_tokens, TurnTraceModel.cost_usd, TurnTraceModel.trace)
-        .where(TurnTraceModel.created_at >= now - timedelta(minutes=t.window_minutes))
-        .order_by(TurnTraceModel.created_at.desc()).limit(500)
-    )).all()
-    turns = [TurnStat(total_ms=ms, input_tokens=tokens or 0, cost_usd=cost, error=(trace or {}).get("error"))
-             for ms, tokens, cost, trace in rows]
-    spend_day = (await session.execute(
-        select(func.coalesce(func.sum(TurnTraceModel.cost_usd), 0.0))
-        .where(TurnTraceModel.created_at >= now - timedelta(hours=24))
-    )).scalar_one()
-    return evaluate(turns, float(spend_day or 0.0), t), len(turns)

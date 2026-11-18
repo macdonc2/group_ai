@@ -8,6 +8,7 @@ from typing import Any
 from sqlalchemy import select
 
 from agent_system.adapters.outbound.persistence.eval_models import TurnTraceModel
+from agent_system.application.services.alerts import TurnStat
 
 logger = logging.getLogger(__name__)
 
@@ -35,18 +36,17 @@ async def save_turn_trace(
     message_id: str | None = None,
     source: str = "chat",
     session: Any = None,
+    database: Any = None,
 ) -> str | None:
     """Persist one turn trace; never raises.
 
     Pass the request's `session` to write in the same transaction as the turn's
     messages (required on SQLite, whose single writer lock that session holds).
-    Without one, a short-lived session of its own is used.
+    Without one, pass the `database` and a short-lived session of its own is used.
     """
     if trace is None:
         return None
     try:
-        from agent_system.adapters.inbound.api.dependencies import get_database
-
         data = trace.to_dict()
         usage = data["usage"]
         try:
@@ -73,7 +73,9 @@ async def save_turn_trace(
             async with session.begin_nested():  # a savepoint, so a bad row can't poison the turn
                 session.add(row)
             return row.id
-        async with get_database().session() as own:
+        if database is None:
+            raise RuntimeError("save_turn_trace needs a session or a database")
+        async with database.session() as own:
             own.add(row)
             await own.commit()
         return row.id
@@ -119,3 +121,23 @@ class TurnTraceRepository:
             stmt = stmt.where(TurnTraceModel.user_id == user_id)
         result = await self._session.execute(stmt.order_by(TurnTraceModel.created_at.desc()).limit(limit))
         return list(result.scalars())
+
+
+async def load_turn_stats(session: Any, window_minutes: int, now: datetime | None = None) -> tuple[list[TurnStat], float]:
+    """What the alert checks need from `turn_traces`: the turns in the last `window_minutes`
+    (newest first, at most 500) and the model spend over the last 24 hours."""
+    from sqlalchemy import func
+
+    now = now or datetime.utcnow()
+    rows = (await session.execute(
+        select(TurnTraceModel.total_ms, TurnTraceModel.input_tokens, TurnTraceModel.cost_usd, TurnTraceModel.trace)
+        .where(TurnTraceModel.created_at >= now - timedelta(minutes=window_minutes))
+        .order_by(TurnTraceModel.created_at.desc()).limit(500)
+    )).all()
+    turns = [TurnStat(total_ms=ms, input_tokens=tokens or 0, cost_usd=cost, error=(trace or {}).get("error"))
+             for ms, tokens, cost, trace in rows]
+    spend_day = (await session.execute(
+        select(func.coalesce(func.sum(TurnTraceModel.cost_usd), 0.0))
+        .where(TurnTraceModel.created_at >= now - timedelta(hours=24))
+    )).scalar_one()
+    return turns, float(spend_day or 0.0)

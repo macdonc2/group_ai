@@ -253,7 +253,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         """
         import time
 
-        from agent_system.application.services.alerts import Thresholds, load_and_evaluate
+        from agent_system.adapters.outbound.persistence.trace_repository import load_turn_stats
+        from agent_system.application.services.alerts import Thresholds, evaluate
 
         cached = getattr(app.state, "alerts_cache", None)
         if cached and time.monotonic() - cached[0] < 60:
@@ -264,7 +265,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                 spend_day_usd=s.alert_spend_day_usd)
         try:
             async with get_database().session() as session:
-                found, turns = await load_and_evaluate(session, thresholds)
+                stats, spend_day = await load_turn_stats(session, thresholds.window_minutes)
+            found, turns = evaluate(stats, spend_day, thresholds), len(stats)
         except Exception as exc:  # noqa: BLE001 - the check itself failing is an alert, not a 500
             logger.warning("Alert check failed: %s", type(exc).__name__, extra={"event": "alert_check_failed"})
             return {"status": "alerting", "window_minutes": thresholds.window_minutes,

@@ -484,7 +484,8 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
                 saved = await own_repo.add_message(current_user_id, day, "assistant", outcome.response,
                                                    outcome.tools_used)
                 await own.commit()
-            await save_turn_trace(trace, user_id=current_user_id, conversation_id=f"journal:{day}", source="journal")
+            await save_turn_trace(trace, user_id=current_user_id, conversation_id=f"journal:{day}", source="journal",
+                                  database=get_database())
             await emit("response", "Journal", "Response complete", {
                 "response": outcome.response, "message_id": saved.id, "tools_used": outcome.tools_used,
                 "stopped": outcome.stopped,

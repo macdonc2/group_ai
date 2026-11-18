@@ -1429,6 +1429,7 @@ async def websocket_chat(
                                 from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
                                 await save_turn_trace(
                                     deps.trace, user_id=str(user.id), conversation_id=conversation_id, source="group",
+                                    database=_database,
                                 )
                             
                             agent_response = result.response
