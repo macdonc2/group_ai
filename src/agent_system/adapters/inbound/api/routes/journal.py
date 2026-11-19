@@ -22,7 +22,14 @@ from fastapi import APIRouter, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from agent_system.adapters.inbound.api.dependencies import ContainerDep, CurrentUserId, SessionDep, SettingsDep, get_database
+from agent_system.adapters.inbound.api.dependencies import (
+    ContainerDep,
+    CurrentUserId,
+    OptionalGoogleCalendarDep,
+    SessionDep,
+    SettingsDep,
+    get_database,
+)
 from agent_system.adapters.inbound.api.schemas import StreamEvent
 from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
 from agent_system.adapters.outbound.persistence.journal_models import JournalEntryModel, JournalMessageModel
@@ -250,14 +257,16 @@ def _with_status(entry: JournalEntryModel, suggestion_id: str, new_status: str) 
 
 @router.post("/entries/{entry_id}/suggestions/{suggestion_id}/accept")
 async def accept_suggestion(entry_id: str, suggestion_id: str, current_user_id: CurrentUserId,
-                            session: SessionDep) -> EntryRead:
+                            session: SessionDep,
+                            calendar: OptionalGoogleCalendarDep) -> EntryRead:
     """Add a suggested event to the user's Google Calendar. The click is the user's request."""
     repo = SQLAlchemyJournalRepository(session)
     entry, suggestion = await _suggestion(repo, entry_id, suggestion_id, current_user_id)
     if suggestion.get("status") == "added":
         return _entry_read(entry)  # a double click must not create the event twice
     result = await add_event(title=suggestion["title"], when=suggestion["when"], location=suggestion.get("location"),
-                             description="Added from your journal.", session=session, user_id=current_user_id)
+                             description="Added from your journal.", session=session, user_id=current_user_id,
+                             google_calendar=calendar)
     if not getattr(result, "success", False):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=str(getattr(result, "message", "") or "The event could not be added."))

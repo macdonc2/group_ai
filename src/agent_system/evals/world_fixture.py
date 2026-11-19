@@ -163,10 +163,11 @@ def install_world_fixture_hook() -> None:
             return await real_fetch(self, limit)
         return build_events(fixture)[:limit]
 
-    async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime) -> list[dict[str, Any]]:
+    async def pull_google_events(session: Any, user_id: str, time_min: datetime, time_max: datetime,
+                                 google_calendar: Any = None) -> list[dict[str, Any]]:
         fixture = _calendar.get()
         if fixture is None:
-            return await real_pull(session, user_id, time_min, time_max)
+            return await real_pull(session, user_id, time_min, time_max, google_calendar)
         entries, timezone = fixture
         return calendar_events(entries, timezone, time_min, time_max)
 

@@ -24,7 +24,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Awaitable, Callable, Literal
@@ -84,19 +85,15 @@ def _default_impl() -> dict[str, ToolImpl]:
     }
 
 
-def _default_session() -> AbstractAsyncContextManager[Any]:
-    """A database session for the event tools, opened only when one of them runs."""
-    from contextlib import asynccontextmanager
-
-    @asynccontextmanager
-    async def _open():
-        from agent_system.composition_root.container import get_container
-
-        container = await get_container()
-        async with container.database.session() as session:
-            yield session
-
-    return _open()
+@asynccontextmanager
+async def _session(deps: ChatDeps) -> AsyncIterator[Any]:
+    """A database session for one event-tool call, or None when the turn was given no way to
+    open one (the tool then says so itself)."""
+    if deps.session_factory is None:
+        yield None
+        return
+    async with deps.session_factory() as session:
+        yield session
 
 
 @dataclass
@@ -110,7 +107,8 @@ class ChatDeps:
     trace: Any = None                                # TurnTrace, optional
     emit: Emit | None = None                         # UI/trace event callback, optional
     impl: dict[str, ToolImpl] = field(default_factory=_default_impl)
-    session_factory: Callable[[], AbstractAsyncContextManager[Any]] = _default_session
+    session_factory: Callable[[], AbstractAsyncContextManager[Any]] | None = None  # opened only by the event tools
+    google_calendar: Any = None                      # GoogleCalendarPort; None when not configured
     steps: list[dict[str, Any]] = field(default_factory=list)
     untrusted_seen: bool = False                     # set once web content enters the turn
     context: Any = None                              # ContextBundle: validated web passages for the turn
@@ -376,10 +374,10 @@ async def get_upcoming_events(
     """
     started = time.perf_counter()
     args = {"timeframe": timeframe, "search": search, "when": when, "date": date}
-    async with ctx.deps.session_factory() as session:
+    async with _session(ctx.deps) as session:
         ok, text = _text(await _call(ctx, "get_upcoming_events", user_id=ctx.deps.user_id, timeframe=timeframe,
                                      search_query=search, temporal_filter=when, specific_date=date,
-                                     session=session))
+                                     session=session, google_calendar=ctx.deps.google_calendar))
     return await _record(ctx, "get_upcoming_events", args, ok,
                          _clip(text, hint="add a search keyword or a shorter timeframe"), started)
 
@@ -436,10 +434,11 @@ async def add_to_calendar(ctx: RunContext[ChatDeps], events: list[CalendarEvent]
         )
     if not events:
         return await _record(ctx, "add_to_calendar", args, False, "Nothing to add: `events` was empty.", started)
-    async with ctx.deps.session_factory() as session:
+    async with _session(ctx.deps) as session:
         ok, text = _text(await _call(ctx, "add_to_calendar", events=args["events"],
                                      status="tentative" if tentative else None,
-                                     session=session, user_id=ctx.deps.user_id))
+                                     session=session, user_id=ctx.deps.user_id,
+                                     google_calendar=ctx.deps.google_calendar))
     return await _record(ctx, "add_to_calendar", args, ok, _clip(text), started)
 
 

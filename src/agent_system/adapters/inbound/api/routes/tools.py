@@ -16,6 +16,7 @@ from agent_system.adapters.outbound.persistence import (
 )
 from agent_system.adapters.outbound.llm.tools import (
     AVAILABLE_TOOLS,
+    tool_accepts,
     web_search,
     get_user_profile,
     update_user_preference,
@@ -110,9 +111,9 @@ async def execute_tool(
     
     # Add repositories if needed
     if tool_info.get("requires_repos"):
-        if "user_repository" in tool_func.__code__.co_varnames:
+        if tool_accepts(tool_func, "user_repository"):
             args["user_repository"] = SQLAlchemyUserRepository(session)
-        if "conversation_repository" in tool_func.__code__.co_varnames:
+        if tool_accepts(tool_func, "conversation_repository"):
             args["conversation_repository"] = SQLAlchemyConversationRepository(session)
     
     try:

@@ -1374,7 +1374,7 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         ctx: GraphRunContext[WorkflowState, AgentDependencies],
     ) -> "EvaluateResult":
         """Execute the tool and capture the result."""
-        from agent_system.adapters.outbound.llm.tools import AVAILABLE_TOOLS, run_tool
+        from agent_system.adapters.outbound.llm.tools import AVAILABLE_TOOLS, ToolResult, run_tool, tool_accepts
         
         await ctx.deps.emit_event("node_start", "ExecuteTool", f"Executing {ctx.state.tool_name}...")
         
@@ -1411,44 +1411,40 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
         web_rendered = False
         
         try:
-            # Add repository dependencies if needed
+            # Hand the tool what it declares it needs. `tool_accepts` reads the function's
+            # signature; the `requires_*` flags say which dependencies a tool is allowed.
             if tool_info.get("requires_repos"):
-                if "user_repository" in tool_func.__code__.co_varnames:
+                if tool_accepts(tool_func, "user_repository"):
                     tool_args["user_repository"] = ctx.deps.user_repository
-                if "conversation_repository" in tool_func.__code__.co_varnames:
+                if tool_accepts(tool_func, "conversation_repository"):
                     tool_args["conversation_repository"] = ctx.deps.conversation_repository
-            
-            # Add knowledge graph port if needed
+
             if tool_info.get("requires_knowledge_graph"):
-                if "knowledge_graph_port" in tool_func.__code__.co_varnames:
+                if tool_accepts(tool_func, "knowledge_graph_port"):
                     tool_args["knowledge_graph_port"] = ctx.deps.knowledge_graph_port
-                # Auto-inject user_id for knowledge graph tools
-                if "user_id" in tool_func.__code__.co_varnames and "user_id" not in tool_args:
+                if tool_accepts(tool_func, "user_id") and "user_id" not in tool_args:
                     tool_args["user_id"] = str(ctx.state.user.id)
-            
-            # Add embedding port if needed (for semantic search)
+
             if tool_info.get("requires_embedding"):
-                if "embedding_port" in tool_func.__code__.co_varnames:
+                if tool_accepts(tool_func, "embedding_port"):
                     tool_args["embedding_port"] = ctx.deps.embedding_port
-            
-            # Add database session if needed (for event queries)
+
             if tool_info.get("requires_session"):
-                from agent_system.composition_root.container import get_container
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.info(f"Creating database session for tool {tool_name} with args: {list(tool_args.keys())}")
-                container = await get_container()
-                async with container.database.session() as session:
-                    tool_args["session"] = session
-                    # Auto-inject user_id for session-based tools
-                    if "user_id" in tool_func.__code__.co_varnames and "user_id" not in tool_args:
-                        tool_args["user_id"] = str(ctx.state.user.id)
-                    logger.info(f"Executing tool {tool_name} with args: {list(tool_args.keys())}")
-                    result = await run_tool(tool_name, tool_func, **tool_args)
-                    logger.info(f"Tool {tool_name} result: success={result.success}, message={result.message[:100] if result.message else 'None'}")
+                # The event tools: a database session for this one call, and the calendar adapter
+                if tool_accepts(tool_func, "user_id") and "user_id" not in tool_args:
+                    tool_args["user_id"] = str(ctx.state.user.id)
+                if tool_accepts(tool_func, "google_calendar"):
+                    tool_args["google_calendar"] = ctx.deps.google_calendar
+                if ctx.deps.session_factory is None:
+                    result = ToolResult(success=False, data=None,
+                                        message="This tool needs the database, which is not available for this turn.")
+                else:
+                    async with ctx.deps.session_factory() as session:
+                        tool_args["session"] = session
+                        result = await run_tool(tool_name, tool_func, **tool_args)
             else:
                 result = await run_tool(tool_name, tool_func, **tool_args)
-            
+
             tool_ok = bool(result.success)
             if ctx.deps.trace is not None and tool_name in ("recall_about_topic", "recall_from_period"):
                 ctx.deps.record_retrieval(f"tool:{tool_name}", str(public_args.get("topic") or public_args), _retrieval_hits_from_tool(result.data))

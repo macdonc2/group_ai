@@ -82,11 +82,7 @@ async def session(async_session, monkeypatch):
         async def get(self, _id):
             return user
 
-    async def fake_container():
-        return SimpleNamespace(google_calendar_adapter=object())
-
     _FakeSync.windows = []
-    monkeypatch.setattr("agent_system.composition_root.container.get_container", fake_container)
     monkeypatch.setattr("agent_system.adapters.outbound.persistence.SQLAlchemyUserRepository", Repo)
     monkeypatch.setattr("agent_system.application.services.CalendarSyncService", _FakeSync)
     return async_session
@@ -95,7 +91,7 @@ async def session(async_session, monkeypatch):
 async def _events_on(session, day: str):
     _FakeSync.local_day = datetime.fromisoformat(day).date()
     result = await tools_mod.get_upcoming_events(user_id=USER_ID, specific_date=day, temporal_filter="all",
-                                                 session=session)
+                                                 session=session, google_calendar=object())
     assert result.success, result.message
     return result
 
