@@ -170,7 +170,7 @@ The second chat engine is one PydanticAI agent in one tool loop (`adapters/outbo
 
 ```mermaid
 flowchart LR
-    In["User message<br/>+ last 12 messages<br/>+ date, up to 5 notes, persona"] --> Loop
+    In["User message<br/>+ recent messages within a token budget<br/>+ date, up to 5 notes, persona"] --> Loop
     subgraph Loop["ChatLoop · exits: answer, 8 model calls, 120 s"]
         Model["Model"] -- "tool call" --> Tools["10 tools<br/>capped text results"]
         Tools -- "result" --> Model
@@ -183,9 +183,11 @@ flowchart LR
 
 **What the model is given.**
 
-- **Context, just in time.** The prompt holds the recent conversation (12 messages, each clipped), the current date and time in the user's timezone, up to five stored notes and the persona voice. Memory, events, docs and web pages are fetched through tools only when the question needs them.
+- **Context, just in time.** The prompt holds the recent conversation (as many messages as fit a token budget; see below), the current date and time in the user's timezone, up to five stored notes and the persona voice. Memory, events, docs and web pages are fetched through tools only when the question needs them.
 - **Ten tools** instead of the FSM's twenty-seven: `web_search`, `read_webpage`, `recall_about_topic`, `list_entities`, `summarize_user_knowledge`, `get_upcoming_events`, `get_houston_events`, `add_to_calendar`, `search_internal_docs`, `calculate`. Each has its description on the tool, typed arguments and a capped text result (6,000 characters by default, 8,000 for a web page, 10,000 for an events listing) with a hint for narrowing the request.
 - **Provenance in history.** Earlier assistant messages are replayed with a `[Built from: <tools>]` line, so on a follow-up the model can tell a tool-backed answer from one it wrote unaided. The events listing is treated as the source of record: the model is told not to withdraw details that came from it.
+
+**How much history.** Both chat engines and the journal's side conversation send the model the most recent messages that fit a token budget, not a fixed number of them (`llm/history.py`). The defaults are 16,000 estimated tokens for chat (`CHAT_HISTORY_TOKENS`) and 8,000 for the journal (`JOURNAL_HISTORY_TOKENS`); one message is cut to 3,000 tokens before it counts (`CHAT_HISTORY_MESSAGE_TOKENS`). What is kept is one unbroken stretch ending at the latest message, the newest four messages are always kept, and when earlier messages are left out the prompt says how many, so the model can say that part is out of view or look it up, not answer as if it was never said. Before this the limits were 20 messages on the state machine and 12 clipped messages on the loop and in the journal. Older messages are dropped, not summarised: that is the next step.
 
 **Exits.** A turn ends in one of four ways, recorded as `ChatLoopOutcome.stopped`: `answered`, `step_limit` (8 model calls, `CHAT_LOOP_MAX_REQUESTS`), `timeout` (120 seconds, `CHAT_LOOP_TIMEOUT_S`) or `error`. The loop never raises for these; the user gets a plain message and nothing from a failed turn is saved to memory. The whole turn, including memory work, is also bound by the limits shared with the FSM (`CHAT_TURN_TIMEOUT_S`, `CHAT_TURN_MAX_LLM_CALLS`).
 
@@ -446,7 +448,7 @@ PostgreSQL (or SQLite for local development) serves as the **primary database** 
 ```python
 # When loading a conversation, recent messages provide immediate context
 conversation = await conv_repo.get(conversation_id)
-recent_messages = conversation.messages[-20:]  # Last 20 messages
+recent_messages = select_history(conversation.messages, token_budget=16000)  # as many recent messages as fit
 
 # This context is passed to the AI agents
 state = WorkflowState(
@@ -1188,6 +1190,8 @@ CHAT_LOOP_MAX_REQUESTS=8              # model calls per turn (loop engine)
 CHAT_LOOP_TIMEOUT_S=120               # seconds per turn (loop engine)
 CHAT_TURN_TIMEOUT_S=240               # whole turn, either engine, including memory work
 CHAT_TURN_MAX_LLM_CALLS=30
+CHAT_HISTORY_TOKENS=16000            # recent conversation sent to the model, in estimated tokens
+JOURNAL_HISTORY_TOKENS=8000
 
 # Optional: LLM request limits
 LLM_REQUEST_TIMEOUT_S=120

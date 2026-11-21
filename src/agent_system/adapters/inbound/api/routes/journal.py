@@ -433,7 +433,7 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
     A POST with the token in the Authorization header, so neither the message nor the
     token is ever in a URL. Events: tool_result, response_chunk, then response or error.
     """
-    from agent_system.adapters.outbound.llm.journal_agent import JournalDeps, build_history
+    from agent_system.adapters.outbound.llm.journal_agent import JournalDeps, build_history_and_omitted
     from agent_system.adapters.outbound.telemetry import TurnTrace, bind_trace, install_llm_capture, set_current_node
     from agent_system.adapters.outbound.persistence.trace_repository import save_turn_trace
 
@@ -450,8 +450,11 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
     timezone = user.timezone or "UTC"
     day_entries = [{"time": _local_time(e.created_at, timezone), "body": e.body}
                    for e in await repo.entries_for_day(current_user_id, day)]
-    history = build_history([{"role": m.role, "content": m.content}
-                             for m in await repo.messages_for_day(current_user_id, day, limit=12)])
+    from agent_system.composition_root.config import get_settings as _settings
+
+    history, history_omitted = build_history_and_omitted(
+        [{"role": m.role, "content": m.content} for m in await repo.messages_for_day(current_user_id, day)],
+        _settings().journal_history_tokens)
     kg, embedder = _memory_ports(container, api_key)
 
     queue: asyncio.Queue[StreamEvent | None] = asyncio.Queue()
@@ -474,6 +477,7 @@ async def chat_about_day(payload: ChatRequest, current_user_id: CurrentUserId, s
             deps = JournalDeps(
                 user_id=current_user_id, timezone=timezone, knowledge_graph_port=kg, embedding_port=embedder,
                 trace=trace, emit=emit, session_factory=_own_session, day=day, day_entries=day_entries, reader=reader,
+                history_omitted=history_omitted,
             )
             with bind_trace(trace):
                 token = set_current_node("Journal")
