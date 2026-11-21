@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { Send, Users, Calendar, Sparkles } from 'lucide-react';
+import { MapEmbeds } from '../chat/MapEmbeds';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { GroupMessage, GroupDetail, ExtractedEvent, SocialSuggestion } from '../../types';
@@ -232,6 +233,7 @@ export function GroupChat({
                         {message.content}
                       </ReactMarkdown>
                     </div>
+                    {isAssistant && <MapEmbeds text={message.content} />}
                     <p className={`text-xs mt-1 ${
                       isCurrentUser ? 'opacity-70' : 'text-gray-500 dark:text-gray-400'
                     }`}>

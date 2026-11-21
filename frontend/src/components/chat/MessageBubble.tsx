@@ -5,6 +5,7 @@ import { useThemeStore } from '../../stores/themeStore';
 import { getWrestler } from '../../lib/wrestlers';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MapEmbeds } from './MapEmbeds';
 
 interface MessageBubbleProps {
   message: Message;
@@ -78,7 +79,9 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             {message.content}
           </ReactMarkdown>
         </div>
-        
+
+        {!isUser && <MapEmbeds text={message.content} />}
+
         {/* Tool calls if any */}
         {message.toolCalls && message.toolCalls.length > 0 && (
           <div className="mt-2 pt-2 border-t border-slate-300/50 dark:border-slate-600/50">
