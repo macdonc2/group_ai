@@ -68,34 +68,42 @@ def test_putting_the_old_calendar_bug_back_changes_what_the_fixture_returns(monk
     assert found[0]["start_datetime"] == datetime(2026, 11, 15, 18, 0)      # "18:00 UTC", which displays as noon
 
 
-async def test_hooks_use_the_fixture_only_while_one_is_set(monkeypatch):
+async def test_world_tools_replace_only_what_the_case_fixes_and_leave_the_real_tools_alone():
     from agent_system.adapters.outbound import houston_events
     from agent_system.adapters.outbound.llm import tools
 
-    async def live_fetch(self, limit=30):
-        return ["live"]
+    real = (tools.get_houston_events, tools.get_upcoming_events, tools.add_to_calendar, tools.pull_google_events,
+            houston_events.HoustonEventsAdapter.get_latest_events)
 
-    async def live_pull(session, user_id, time_min, time_max, google_calendar=None):
-        return ["live"]
+    assert world.world_tools(None, None, "America/Chicago") == {}       # no fixture: the real tools are used
+    only_events = world.world_tools([world.FixtureEvent(title="Frozen", time="19:00")], None, "America/Chicago")
+    assert set(only_events) == {"get_houston_events", "add_to_calendar"}
+    both = world.world_tools([], [world.FixtureCalendarEntry(summary="Frozen call", start="09:00")], "America/Chicago")
+    assert set(both) == {"get_houston_events", "add_to_calendar", "get_upcoming_events"}  # an empty listing is still a fixture
 
-    monkeypatch.setattr(houston_events.HoustonEventsAdapter, "get_latest_events", live_fetch)
-    monkeypatch.setattr(tools, "pull_google_events", live_pull)
-    monkeypatch.setattr(world, "_installed", False)
-    world.install_world_fixture_hook()
-    adapter = houston_events.HoustonEventsAdapter.__new__(houston_events.HoustonEventsAdapter)
+    # the listing tool runs the real selection and formatting over the fixed events
+    listing = await only_events["get_houston_events"]()
+    assert listing.success
+    assert "Frozen" in listing.message
+    # the calendar stand-in is what the real tool is bound to call
+    pull = both["get_upcoming_events"].keywords["pull_google_events"]
     window = (datetime(2000, 1, 1), datetime(2100, 1, 1))
+    assert [e["title"] for e in await pull(None, "u", *window)] == ["Frozen call"]
 
-    assert await adapter.get_latest_events() == ["live"]
-    assert await tools.pull_google_events(None, "u", *window) == ["live"]
+    # nothing in the app was modified to do this
+    assert real == (tools.get_houston_events, tools.get_upcoming_events, tools.add_to_calendar,
+                    tools.pull_google_events, houston_events.HoustonEventsAdapter.get_latest_events)
 
-    tokens = world.set_world([world.FixtureEvent(title="Frozen", time="19:00")],
-                             [world.FixtureCalendarEntry(summary="Frozen call", start="09:00")], "America/Chicago")
-    try:
-        assert [e.title for e in await adapter.get_latest_events()] == ["Frozen"]
-        assert [e["title"] for e in await tools.pull_google_events(None, "u", *window)] == ["Frozen call"]
-    finally:
-        world.reset_world(tokens)
-    assert await adapter.get_latest_events() == ["live"]
+
+async def test_web_tools_return_the_case_text_and_nothing_without_one():
+    from agent_system.evals.web_fixture import web_tools
+
+    assert web_tools(None) == {}
+    fakes = web_tools("Jazz night at 8.")
+    found = await fakes["web_search"]("jazz")
+    assert found.data[0]["page_text"] == "Jazz night at 8."
+    page = await fakes["read_webpage"]("https://example.com/x")
+    assert page.data == {"url": "https://example.com/x", "text": "Jazz night at 8.", "status": "ok"}
 
 
 def test_any_of_mentions_accept_any_one_spelling():

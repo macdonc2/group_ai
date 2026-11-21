@@ -1,9 +1,14 @@
 """Application configuration using Pydantic Settings."""
 
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from agent_system.domain.utils.encryption import APIKeyEncryption
+
 
 
 class Settings(BaseSettings):
@@ -172,3 +177,14 @@ def secret_key_problem(secret_key: str) -> str | None:
 def get_settings() -> Settings:
     """Get cached application settings."""
     return Settings()
+
+
+def get_api_key_encryption() -> "APIKeyEncryption":
+    """The encryption for stored API keys and calendar tokens, keyed with SECRET_KEY.
+
+    This lives here, not in the domain, because it is the step that reads configuration.
+    The class it returns (`domain/utils/encryption.py`) knows nothing about settings.
+    """
+    from agent_system.domain.utils.encryption import APIKeyEncryption
+
+    return APIKeyEncryption(get_settings().secret_key)

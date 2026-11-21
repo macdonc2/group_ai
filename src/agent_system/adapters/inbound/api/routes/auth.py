@@ -25,7 +25,7 @@ from agent_system.adapters.inbound.api.schemas import (
 )
 from agent_system.adapters.outbound.persistence.repositories import SQLAlchemyUserRepository
 from agent_system.domain.entities import User
-from agent_system.domain.utils.encryption import get_api_key_encryption
+from agent_system.composition_root.config import get_api_key_encryption
 from agent_system.domain.value_objects import UserId
 
 

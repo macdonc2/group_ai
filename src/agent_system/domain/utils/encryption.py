@@ -71,15 +71,3 @@ class APIKeyEncryption:
             return True
         except (ValueError, InvalidToken):
             return False
-
-
-def get_api_key_encryption() -> APIKeyEncryption:
-    """Get an APIKeyEncryption instance using the application settings.
-    
-    Returns:
-        Configured APIKeyEncryption instance.
-    """
-    from agent_system.composition_root.config import get_settings
-    
-    settings = get_settings()
-    return APIKeyEncryption(settings.secret_key)

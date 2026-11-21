@@ -12,7 +12,7 @@ from agent_system.domain.entities import (
 )
 from agent_system.domain.ports import GoogleCalendarPort
 from agent_system.domain.value_objects import EventId
-from agent_system.domain.utils.encryption import get_api_key_encryption
+from agent_system.domain.utils.encryption import APIKeyEncryption
 
 logger = logging.getLogger(__name__)
 
@@ -20,14 +20,16 @@ logger = logging.getLogger(__name__)
 class CalendarSyncService:
     """Service for syncing events between the app and Google Calendar."""
 
-    def __init__(self, google_calendar_adapter: GoogleCalendarPort):
+    def __init__(self, google_calendar_adapter: GoogleCalendarPort, encryption: APIKeyEncryption):
         """Initialize the calendar sync service.
 
         Args:
             google_calendar_adapter: The Google Calendar port implementation
+            encryption: Decrypts the user's stored calendar token. Passed in, so this
+                service does not need to know where the secret key comes from.
         """
         self.google_calendar = google_calendar_adapter
-        self.encryption = get_api_key_encryption()
+        self.encryption = encryption
 
     async def _get_access_token(self, user: User) -> str | None:
         """Get a valid access token for the user.

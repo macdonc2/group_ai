@@ -51,7 +51,7 @@ class _FakeSync:
     windows: list[tuple[datetime, datetime]] = []
     items = [HANGOUT, BRUNCH_UTC, BIRTHDAY]
 
-    def __init__(self, adapter):
+    def __init__(self, adapter, encryption=None):
         pass
 
     async def pull_events_from_google(self, user, time_min=None, time_max=None, max_results=50):

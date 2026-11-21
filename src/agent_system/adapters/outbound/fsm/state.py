@@ -71,6 +71,12 @@ class AgentDependencies:
     # Tests pass a scripted model here.
     chat_loop_model: "Model | str | None" = None
 
+    # Replacements for tools by name, and a hook run before every tool call (see
+    # `tools.run_tool`). Empty and None in production. Evals use them to give a case fixed
+    # web pages, events and calendar entries, and to make tools fail on purpose.
+    tool_overrides: dict[str, Callable[..., Any]] = field(default_factory=dict)
+    tool_interceptor: Callable[[str, dict[str, Any]], Any] | None = None
+
     # Optional wrestler persona key (see llm/personas.py); changes voice only
     persona: str | None = None
     
