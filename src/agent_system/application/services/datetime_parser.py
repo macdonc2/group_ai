@@ -56,17 +56,9 @@ Examples:
 
 def _get_datetime_interpreter(api_key: str | None = None) -> Agent[None, InterpretedDateTime]:
     """Create an LLM agent for interpreting datetime strings."""
-    # Try provided key, then environment, then settings
+    # The caller's key; without one, the system key from the environment
     key = api_key or os.environ.get("OPENAI_API_KEY")
-    
-    if not key:
-        # Try to get from application settings
-        try:
-            from agent_system.composition_root.config import get_settings
-            key = get_settings().openai_api_key
-        except Exception:
-            pass
-    
+
     if key:
         model = OpenAIResponsesModel("gpt-5-mini", provider=openai_provider(key))
     else:

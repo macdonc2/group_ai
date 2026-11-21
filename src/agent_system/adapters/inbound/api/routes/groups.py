@@ -17,6 +17,7 @@ from agent_system.adapters.inbound.api.dependencies import (
     SessionDep,
     SettingsDep,
     get_session,
+    user_api_key,
 )
 from agent_system.adapters.inbound.api.schemas import (
     ExtractedEventRead,
@@ -888,6 +889,7 @@ async def get_group_summary(
     group_id: str,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    settings: SettingsDep,
 ):
     """Get a summary of recent group activity with themes.
     
@@ -950,7 +952,8 @@ async def get_group_summary(
     from agent_system.adapters.outbound.llm import generate_group_summary
     
     try:
-        summary_result = await generate_group_summary(messages_text)
+        requester = await SQLAlchemyUserRepository(session).get(UserId.from_string(current_user_id))
+        summary_result = await generate_group_summary(messages_text, api_key=user_api_key(requester, settings))
         themes = summary_result.themes[:5]
     except Exception as e:
         logger.warning(f"Group summary generation failed: {e}")
@@ -987,6 +990,7 @@ async def get_social_suggestions(
     group_id: str,
     current_user_id: CurrentUserId,
     session: SessionDep,
+    settings: SettingsDep,
 ):
     """Get social activity suggestions for the group based on interests and events.
     
@@ -1037,7 +1041,8 @@ async def get_social_suggestions(
     from agent_system.adapters.outbound.llm import generate_social_suggestions
     
     try:
-        result = await generate_social_suggestions(context_text)
+        requester = await SQLAlchemyUserRepository(session).get(UserId.from_string(current_user_id))
+        result = await generate_social_suggestions(context_text, api_key=user_api_key(requester, settings))
         return [
             SocialSuggestionRead(
                 title=s.title,
@@ -1319,7 +1324,6 @@ async def websocket_chat(
                                     await session.commit()
                                 
                                 # Get API key - try user's personal key first, then system key
-                                import os
                                 agent_api_key: str | None = None
                                 
                                 if user.has_api_key():
@@ -1342,9 +1346,6 @@ async def websocket_chat(
                                         "No API key configured. Please add your OpenAI API key in Settings."
                                     )
                                     continue
-                                
-                                # Set environment variable for PydanticAI
-                                os.environ["OPENAI_API_KEY"] = agent_api_key
                                 
                                 # Get group conversation for context
                                 group_conversation = await group_conv_repo.get(

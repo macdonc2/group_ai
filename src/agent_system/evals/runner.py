@@ -134,7 +134,6 @@ class EvalEnv:
         api_key = settings.eval_openai_api_key or settings.openai_api_key or os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError("Evals need EVAL_OPENAI_API_KEY (or OPENAI_API_KEY) for the system under test")
-        os.environ["OPENAI_API_KEY"] = api_key  # some extractors resolve the key from env
         container = await get_container()
         if dependencies._database is None:  # CLI: tools that open their own sessions need it
             dependencies.set_database(container.database)

@@ -115,6 +115,7 @@ class ChatDeps:
     session_factory: Callable[[], AbstractAsyncContextManager[Any]] | None = None  # opened only by the event tools
     google_calendar: Any = None                      # GoogleCalendarPort; None when not configured
     interceptor: Any = None                          # run before every tool call; see tools.run_tool
+    openai_api_key: str | None = None                # for a tool that itself calls a small model
     steps: list[dict[str, Any]] = field(default_factory=list)
     untrusted_seen: bool = False                     # set once web content enters the turn
     context: Any = None                              # ContextBundle: validated web passages for the turn
@@ -444,7 +445,8 @@ async def add_to_calendar(ctx: RunContext[ChatDeps], events: list[CalendarEvent]
         ok, text = _text(await _call(ctx, "add_to_calendar", events=args["events"],
                                      status="tentative" if tentative else None,
                                      session=session, user_id=ctx.deps.user_id,
-                                     google_calendar=ctx.deps.google_calendar))
+                                     google_calendar=ctx.deps.google_calendar,
+                                     api_key=ctx.deps.openai_api_key))
     return await _record(ctx, "add_to_calendar", args, ok, _clip(text), started)
 
 

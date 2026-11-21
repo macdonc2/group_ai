@@ -109,6 +109,20 @@ OptionalGoogleCalendarDep = Annotated[GoogleCalendarPort | None, Depends(get_opt
 ResearchRunnerDep = Annotated[ResearchRunner, Depends(get_research_runner)]
 
 
+def user_api_key(user: object, settings: object) -> str | None:
+    """The model API key to use for this user: the system key if there is one, else the
+    user's own stored key, else None. The caller passes it to whatever builds a model; it is
+    never written to the process environment, which every request shares."""
+    system_key = getattr(settings, "openai_api_key", None)
+    if system_key:
+        return system_key
+    if user is not None and user.has_api_key():
+        from agent_system.domain.utils.encryption import get_api_key_encryption
+
+        return get_api_key_encryption().decrypt(user.encrypted_openai_api_key)
+    return None
+
+
 async def get_current_user_id(
     token: "TokenData" = None,  # Injected by CurrentUserId dependency
 ) -> str:

@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import time
 from collections.abc import AsyncGenerator
 
@@ -38,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_user_api_key(user: User, settings) -> str:
-    """Set up the API key for the user.
+    """Choose the API key for the user. The caller passes it on; nothing global is set.
 
     Priority: system key (from env/config) > user's personal encrypted key.
     This ensures the centrally managed key is always used when available,
@@ -77,9 +76,6 @@ def setup_user_api_key(user: User, settings) -> str:
         raise ValueError(
             "No OpenAI API key available. Please configure your API key in Settings."
         )
-
-    # Set environment variable for PydanticAI
-    os.environ["OPENAI_API_KEY"] = api_key
 
     return api_key
 

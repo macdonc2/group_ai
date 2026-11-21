@@ -22,14 +22,20 @@ class ToolResult(BaseModel):
 
 # ============ Calling a tool ============
 
-def tool_accepts(func: Any, name: str) -> bool:
+def tool_accepts(func: Any, name: str, *, declared_only: bool = False) -> bool:
     """Whether a tool function can be passed the keyword `name`: it declares that parameter,
     or it takes `**kwargs`. Read from the signature, so a local variable that happens to
-    share the name does not count."""
+    share the name does not count.
+
+    `declared_only=True` ignores `**kwargs`. Use it for a secret, which should go only to a
+    tool that asks for it by name.
+    """
     import inspect
 
     parameters = inspect.signature(func).parameters
-    return name in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+    if name in parameters:
+        return True
+    return not declared_only and any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
 
 async def run_tool(name: str, func: Any, *, interceptor: Any = None, **kwargs: Any) -> Any:
@@ -1878,12 +1884,14 @@ async def add_to_calendar(
     session=None,
     user_id: str | None = None,
     google_calendar: Any = None,
+    api_key: str | None = None,
     **kwargs,
 ) -> ToolResult:
     """Put one or more events on the user's Google Calendar.
 
-    `session`, `user_id` and `google_calendar` (the calendar adapter) are handed in by
-    whoever runs the tool, never chosen by the model.
+    `session`, `user_id`, `google_calendar` (the calendar adapter) and `api_key` (for the
+    small model that reads a date like "next Tuesday") are handed in by whoever runs the tool,
+    never chosen by the model.
 
     Either a single event (`title`, optional `when`/`location`/`description`)
     or several via `events=[{"title", "when", "location", "description"}, ...]`.
@@ -1948,7 +1956,7 @@ async def add_to_calendar(
             parsed = None
             for text in (ev_when, ev_title if not ev_when else None):
                 if text:
-                    parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC")
+                    parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC", api_key=api_key)
                     if parsed:
                         break
             if parsed:

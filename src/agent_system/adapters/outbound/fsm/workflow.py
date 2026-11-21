@@ -253,6 +253,7 @@ async def _run_loop_engine(
                     google_calendar=deps.google_calendar,
                     impl=tool_implementations(deps.tool_overrides),
                     interceptor=deps.tool_interceptor,
+                    openai_api_key=deps.openai_api_key or None,
                 ),
                 model=deps.chat_loop_model or _get_model(deps.default_model, deps.openai_api_key),
                 history=build_history(state.conversation.get_context_messages(), user_input),

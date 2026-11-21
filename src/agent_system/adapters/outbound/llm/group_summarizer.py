@@ -41,7 +41,7 @@ Be concise but insightful - help members quickly understand what's been happenin
 """
 
 
-def create_group_summarizer_agent(model: str = "openai:gpt-5.2") -> Agent[None, GroupSummaryResult]:
+def create_group_summarizer_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent[None, GroupSummaryResult]:
     """Create an agent for generating group summaries.
     
     Args:
@@ -50,8 +50,10 @@ def create_group_summarizer_agent(model: str = "openai:gpt-5.2") -> Agent[None, 
     Returns:
         PydanticAI Agent configured for group summarization
     """
+    from agent_system.adapters.outbound.llm.agents import _get_model
+
     return Agent(
-        model,
+        _get_model(model, api_key),
         output_type=GroupSummaryResult,
         system_prompt=GROUP_SUMMARY_PROMPT,
     )
@@ -60,6 +62,7 @@ def create_group_summarizer_agent(model: str = "openai:gpt-5.2") -> Agent[None, 
 async def generate_group_summary(
     messages_text: str,
     model: str = "openai:gpt-5.2",
+    api_key: str | None = None,
 ) -> GroupSummaryResult:
     """Generate a summary of group conversations.
     
@@ -70,7 +73,7 @@ async def generate_group_summary(
     Returns:
         GroupSummaryResult with themes and insights
     """
-    agent = create_group_summarizer_agent(model)
+    agent = create_group_summarizer_agent(model, api_key)
     result = await agent.run(messages_text)
     return result.output
 
@@ -121,7 +124,7 @@ Suggest concrete, actionable ideas rather than vague possibilities.
 """
 
 
-def create_social_matcher_agent(model: str = "openai:gpt-5.2") -> Agent[None, SocialMatchResult]:
+def create_social_matcher_agent(model: str = "openai:gpt-5.2", api_key: str | None = None) -> Agent[None, SocialMatchResult]:
     """Create an agent for social matching and suggestions.
     
     Args:
@@ -130,8 +133,10 @@ def create_social_matcher_agent(model: str = "openai:gpt-5.2") -> Agent[None, So
     Returns:
         PydanticAI Agent configured for social matching
     """
+    from agent_system.adapters.outbound.llm.agents import _get_model
+
     return Agent(
-        model,
+        _get_model(model, api_key),
         output_type=SocialMatchResult,
         system_prompt=SOCIAL_MATCHING_PROMPT,
     )
@@ -140,6 +145,7 @@ def create_social_matcher_agent(model: str = "openai:gpt-5.2") -> Agent[None, So
 async def generate_social_suggestions(
     context_text: str,
     model: str = "openai:gpt-5.2",
+    api_key: str | None = None,
 ) -> SocialMatchResult:
     """Generate social suggestions for a group.
     
@@ -150,6 +156,6 @@ async def generate_social_suggestions(
     Returns:
         SocialMatchResult with suggestions
     """
-    agent = create_social_matcher_agent(model)
+    agent = create_social_matcher_agent(model, api_key)
     result = await agent.run(context_text)
     return result.output

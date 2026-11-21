@@ -34,7 +34,6 @@ KNOWN_VIOLATIONS = {
     ("application.services.contradiction_detector", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
     ("application.services.expertise_profiler", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
     ("application.services.datetime_parser", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
-    ("application.services.datetime_parser", "composition_root.config"): "take the API key as an argument only",
     # The factory reads the secret key from settings; the class itself is pure.
     ("domain.utils.encryption", "composition_root.config"): "pass the secret key in from the composition root",
 }

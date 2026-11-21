@@ -59,12 +59,14 @@ def _user(connected=True, tz="America/Chicago"):
 def wire(monkeypatch):
     _FakeSync.created = []
     _FakeSync.flags = []
+    _FakeSync.parse_keys = []
     hits = [HoustonEvent(title="Punk Rock Garage Sale - September ALL INDOORS Market!", location="Bad Astronaut Brewing Co.",
                          start_time=datetime(2026, 9, 20, 19, 0), end_time=datetime(2026, 9, 20, 23, 0),
                          url="https://example.com/prgs", description="Indoor market")]
     adapter = _FakeHoustonAdapter(hits)
 
     async def fake_parse(text, user_timezone="UTC", reference_time=None, api_key=None):
+        _FakeSync.parse_keys.append(api_key)
         t = text.lower()
         if "tuesday" in t:
             return datetime(2026, 9, 22, 20, 0, tzinfo=timezone.utc)
@@ -184,3 +186,15 @@ async def test_without_a_calendar_adapter_it_says_the_server_is_not_configured(w
     assert not r.success
     assert "not configured" in r.message
     assert _FakeSync.created == []
+
+
+@pytest.mark.unit
+async def test_the_date_reader_is_given_the_callers_api_key(wire):
+    """It used to find a key in the process environment, which could be another user's."""
+    session = SimpleNamespace(user=_user())
+    r = await tools_mod.add_to_calendar(title="Dentist Tuesday at 3pm", when="Dentist Tuesday at 3pm", session=session,
+                                        user_id="11111111-1111-1111-1111-111111111111", google_calendar=CALENDAR,
+                                        api_key="sk-this-user")
+    assert r.success, r.message
+    assert _FakeSync.parse_keys
+    assert set(_FakeSync.parse_keys) == {"sk-this-user"}
