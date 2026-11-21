@@ -118,3 +118,19 @@ def test_journal_side_chat_uses_a_budget_too():
     assert journal_agent.build_history([{"role": "assistant", "content": "orphan"}, {"role": "user", "content": "hi"}])[0].parts[0].content == "hi"
     assert chat_agent.HISTORY_TOKENS == 16000
     assert journal_agent.HISTORY_TOKENS == 8000
+
+
+def test_replies_are_asked_to_go_deep_by_default_and_personas_keep_the_substance():
+    # Replies on the loop engine were averaging about 220 words: the prompt said "a few paragraphs"
+    # and a persona capped a full reply at 200 to 350 words, half of it show.
+    from agent_system.adapters.outbound.llm.personas import persona_suffix
+
+    assert "450 to 700 words" in chat_agent.INSTRUCTIONS
+    assert "Do not stop at the first" in chat_agent.INSTRUCTIONS
+    assert "a few paragraphs" not in chat_agent.INSTRUCTIONS
+    assert "Short is right only when the message is short by nature" in chat_agent.INSTRUCTIONS
+    voice = persona_suffix("ultimate_warrior")
+    assert "450 to 700 words" in voice
+    assert "200 to 350 words" not in voice
+    assert "at least half the words are the real answer" in voice
+    assert persona_suffix(None) == ""
