@@ -220,7 +220,7 @@ async def _run_loop_engine(
     from agent_system.adapters.outbound.llm.agents import _get_model
     from agent_system.adapters.outbound.llm.chat_agent import (
         ChatDeps,
-        build_history,
+        build_history_and_omitted,
         run_chat_loop,
         tool_implementations,
     )
@@ -237,6 +237,9 @@ async def _run_loop_engine(
         try:
             trace.enter_node("ChatLoop")
             await deps.emit_event("node_start", "ChatLoop", "Thinking...")
+            history, history_omitted = build_history_and_omitted(
+                state.conversation.get_all_messages(), user_input,
+                settings.chat_history_tokens, settings.chat_history_message_tokens)
             outcome = await run_chat_loop(
                 user_input,
                 deps=ChatDeps(
@@ -249,6 +252,7 @@ async def _run_loop_engine(
                     trace=trace,
                     emit=deps.emit_event,
                     context=bundle_for(state),
+                    history_omitted=history_omitted,
                     session_factory=deps.session_factory,
                     google_calendar=deps.google_calendar,
                     impl=tool_implementations(deps.tool_overrides),
@@ -256,7 +260,7 @@ async def _run_loop_engine(
                     openai_api_key=deps.openai_api_key or None,
                 ),
                 model=deps.chat_loop_model or _get_model(deps.default_model, deps.openai_api_key),
-                history=build_history(state.conversation.get_context_messages(), user_input),
+                history=history,
                 max_requests=settings.chat_loop_max_requests,
                 timeout_s=settings.chat_loop_timeout_s,
             )

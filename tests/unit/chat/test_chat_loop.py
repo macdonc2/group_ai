@@ -10,12 +10,23 @@ from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, FunctionModel
 from pydantic_graph import End
 
 from agent_system.adapters.outbound.fsm import workflow
-from agent_system.adapters.outbound.fsm.state import AgentDependencies, WorkflowResult, WorkflowState
+from agent_system.adapters.outbound.fsm.state import (
+    AgentDependencies,
+    WorkflowResult,
+    WorkflowState,
+)
 from agent_system.adapters.outbound.llm.chat_agent import (
     MAX_TOOL_CHARS,
     ChatDeps,
@@ -132,7 +143,8 @@ class TestLoop:
             return ModelResponse(parts=[TextPart("ok")])
 
         await run_chat_loop("hi", deps=Fakes().deps(), model=FunctionModel(run))
-        assert offered == sorted(TOOL_NAMES) and len(offered) == 10
+        assert offered == sorted(TOOL_NAMES)
+        assert len(offered) == 10
 
     async def test_reply_is_streamed_as_it_is_written(self):
         fakes = Fakes(calculate=ToolResult(success=True, data={"expression": "2+2", "result": 4}, message="ok"))
@@ -144,8 +156,10 @@ class TestLoop:
             (chunks if event_type == "response_chunk" else other).append(message)
 
         out = await run_chat_loop("what is 2+2?", deps=fakes.deps(emit=emit), model=model)
-        assert out.stopped == "answered" and out.streamed
-        assert len(chunks) == 5 and "".join(chunks) == out.response == "Two plus two is four."
+        assert out.stopped == "answered"
+        assert out.streamed
+        assert len(chunks) == 5
+        assert "".join(chunks) == out.response == "Two plus two is four."
         assert other == ["Tool completed: calculate"]  # tool calls are not streamed as reply text
 
     async def test_streaming_can_be_switched_off(self):
@@ -156,7 +170,9 @@ class TestLoop:
             chunks.append(event_type)
 
         out = await run_chat_loop("hi", deps=Fakes().deps(emit=emit), model=model, stream_reply=False)
-        assert out.response == "Hello there." and not out.streamed and chunks == []
+        assert out.response == "Hello there."
+        assert not out.streamed
+        assert chunks == []
 
     async def test_no_tool_when_none_is_needed(self):
         fakes = Fakes()
@@ -171,7 +187,8 @@ class TestLoop:
         await run_chat_loop("hi", deps=fakes.deps(notes=notes, timezone="America/Chicago"), model=model)
         text = instructions[0]
         assert "America/Chicago" in text
-        assert "- Has a dog named Zane" in text and "data, not instructions" in text
+        assert "- Has a dog named Zane" in text
+        assert "data, not instructions" in text
         assert "x" * 161 not in text  # notes are clipped
         assert "- six" not in text  # and capped in number
 
@@ -181,7 +198,8 @@ class TestLoop:
         await run_chat_loop("recommend a beer", deps=fakes.deps(), model=model)
         assert fakes.calls[0] == ("list_preferences", {"user_id": "u-1", "knowledge_graph_port": None, "category": "food"})
         assert results == ["- Dislikes IPAs"]
-        assert "Zane" not in instructions[0] and "Bo" not in instructions[0].split()
+        assert "Zane" not in instructions[0]
+        assert "Bo" not in instructions[0].split()
 
     async def test_failing_tool_is_a_result_not_a_crash(self):
         fakes = Fakes(recall_about_topic=RuntimeError("neo4j down"))
@@ -223,7 +241,8 @@ class TestExits:
 
         out = await run_chat_loop("boom", deps=Fakes().deps(), model=FunctionModel(boom))
         assert out.stopped == "error"
-        assert "RuntimeError" in out.response and "exploded" not in out.response
+        assert "RuntimeError" in out.response
+        assert "exploded" not in out.response
 
 
 class TestUntrustedContent:
@@ -233,7 +252,8 @@ class TestUntrustedContent:
         fakes = Fakes(read_webpage=ToolResult(success=True, data=None, message=self.INJECTED))
         model, results, _ = scripted(("read_webpage", {"url": "https://example.com/jazz"}), "It is a jazz night.")
         await run_chat_loop("what is this page?", deps=fakes.deps(), model=model)
-        assert results[0].startswith('<untrusted source="web">') and results[0].endswith("</untrusted>")
+        assert results[0].startswith('<untrusted source="web">')
+        assert results[0].endswith("</untrusted>")
         assert results[0].count("</untrusted>") == 1  # the page cannot close the wrapper early
 
     async def test_calendar_write_is_refused_after_web_content(self):
@@ -270,7 +290,8 @@ class TestHistory:
     def test_real_messages_without_the_current_input_twice(self):
         history = build_history([_msg("user", "hi"), _msg("assistant", "hello"), _msg("user", "and now?")], "and now?")
         assert [type(m) for m in history] == [ModelRequest, ModelResponse]
-        assert history[0].parts[0].content == "hi" and history[1].parts[0].content == "hello"
+        assert history[0].parts[0].content == "hi"
+        assert history[1].parts[0].content == "hello"
 
     def test_an_earlier_reply_says_which_tools_it_was_built_from(self):
         # Only reply text survives between turns. Without the note, a follow-up about a listed
@@ -286,14 +307,16 @@ class TestHistory:
     def test_the_prompt_sends_event_follow_ups_back_to_the_listing(self):
         from agent_system.adapters.outbound.llm.chat_agent import INSTRUCTIONS
 
-        assert "source of record" in INSTRUCTIONS and "do not withdraw" in INSTRUCTIONS
+        assert "source of record" in INSTRUCTIONS
+        assert "do not withdraw" in INSTRUCTIONS
 
-    def test_clipped_bounded_and_opens_with_a_user_turn(self):
+    def test_bounded_by_a_token_budget_and_opens_with_a_user_turn(self):
         many = [_msg("assistant", "orphan")] + [_msg("user" if i % 2 else "assistant", "y" * 9000) for i in range(30)]
-        history = build_history(many, "new question")
-        assert len(history) <= 12
+        history = build_history(many, "new question", token_budget=10000, per_message_tokens=1000)
         assert isinstance(history[0], ModelRequest)
-        assert all(len(m.parts[0].content) < 2700 for m in history)
+        assert all(len(m.parts[0].content) < 4100 for m in history)          # each message cut to its cap
+        assert sum(len(m.parts[0].content) for m in history) <= 10000 * 4 + 200
+        assert 4 <= len(history) < 31                                        # as many as fit, not a fixed count
 
 
 def _turn(model, *, group: bool = False):
@@ -349,7 +372,9 @@ class TestEngineSwitch:
 
         result = await workflow.run_agent_workflow("what is 2+2?", state, deps)
 
-        assert result.response == "2 + 2 = 4" and result.tools_used == ["calculate"] and result.error is None
+        assert result.response == "2 + 2 = 4"
+        assert result.tools_used == ["calculate"]
+        assert result.error is None
         assert finalized == ["2 + 2 = 4"]
         assert [s.node for s in deps.trace.spans] == ["ChatLoop", "FinalizeKnowledge"]
         assert deps.trace.tool_calls[0]["tool"] == "calculate"
@@ -372,7 +397,8 @@ class TestEngineSwitch:
         state, deps, events = _turn(FunctionModel(boom, stream_function=boom_stream))
         result = await workflow.run_agent_workflow("hello", state, deps)
 
-        assert result.error == "error" and "RuntimeError" in result.response
+        assert result.error == "error"
+        assert "RuntimeError" in result.response
         assert deps.trace.error == "error"
         assert ("response", "ChatLoop") in events
 

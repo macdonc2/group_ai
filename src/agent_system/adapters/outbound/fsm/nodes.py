@@ -2091,12 +2091,20 @@ When asked about capabilities, describe them clearly and offer to demonstrate. F
         
         # Present the full conversation history as a natural dialogue
         # Include tool usage so we can faithfully answer "what did you do?" questions
-        history_messages = ctx.state.conversation.get_context_messages()
-        if history_messages:
+        # The most recent messages that fit a token budget, not a fixed count (llm/history.py)
+        from agent_system.adapters.outbound.llm.history import omitted_note, select_history
+        from agent_system.composition_root.config import get_settings as _settings
+
+        selection = select_history(
+            ctx.state.conversation.get_all_messages(), lambda m: m.content.text or "",
+            _settings().chat_history_tokens, _settings().chat_history_message_tokens)
+        history_messages = [m for m, _ in selection.kept]  # also logged below
+        if selection.kept:
             prompt_parts.append("[This Conversation So Far]")
-            for msg in history_messages:
+            if selection.omitted:
+                prompt_parts.append(f"({omitted_note(selection.omitted)})")
+            for msg, content in selection.kept:
                 role = "User" if msg.role.value == "user" else "You"
-                content = msg.content.text
                 # Include tool usage context for assistant messages
                 if msg.role.value == "assistant" and msg.tool_calls:
                     tool_names = [tc.tool_name for tc in msg.tool_calls]

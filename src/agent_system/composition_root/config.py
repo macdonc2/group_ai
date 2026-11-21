@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     chat_loop_max_requests: int = Field(default=8, description="Hard cap on model calls per chat turn (loop engine)")
     chat_loop_timeout_s: float = Field(default=120, description="Wall-clock limit for one chat turn (loop engine)")
 
+    # How much of a conversation the model is shown, in estimated tokens (llm/history.py). The most
+    # recent messages that fit are sent; the model is told how many earlier ones are out of view.
+    chat_history_tokens: int = Field(default=16000, description="History budget for a chat turn, both engines")
+    chat_history_message_tokens: int = Field(default=3000, description="One message is cut to this before it counts")
+    journal_history_tokens: int = Field(default=8000, description="History budget for the journal's side conversation")
+
     # Hard limits on any chat or group turn, whichever engine runs it (including post-reply memory work)
     chat_turn_timeout_s: float = Field(default=240, description="Wall-clock limit for one whole turn")
     chat_turn_max_llm_calls: int = Field(default=30, description="Model calls allowed in one turn (FSM: checked between nodes)")

@@ -34,8 +34,7 @@ from agent_system.adapters.outbound.llm.journal_memory import day_label
 logger = logging.getLogger(__name__)
 
 _DAY_ENTRY_CHARS = 6000      # how much of the open day's writing rides along in the prompt
-_HISTORY_MESSAGES = 12
-_HISTORY_CHARS = 2000
+HISTORY_TOKENS = 8000   # default history budget for the side conversation; the setting overrides it
 
 # (start_day, end_day, search, limit) -> [{"date", "time", "body"}], already limited to the owner.
 JournalReader = Callable[[str | None, str | None, str | None, int], Awaitable[list[dict[str, str]]]]
@@ -97,6 +96,10 @@ def journal_context(ctx: RunContext[JournalDeps]) -> str:
         now = datetime.now(ZoneInfo("UTC"))
     lines = [f"Now: {now.strftime('%A, %B %d, %Y, %I:%M %p')} ({ctx.deps.timezone}).",
              f"Open journal day: {day_label(ctx.deps.day)} ({ctx.deps.day})."]
+    if ctx.deps.history_omitted:
+        from agent_system.adapters.outbound.llm.history import omitted_note
+
+        lines.append(omitted_note(ctx.deps.history_omitted))
     if ctx.deps.day_entries:
         lines.append("Entries written on the open day (the person's own words):")
         budget = _DAY_ENTRY_CHARS
@@ -165,18 +168,29 @@ def _parse_day(value: str) -> str:
     return date.fromisoformat(value.strip()).isoformat()
 
 
-def build_history(messages: list[dict[str, str]]) -> list[ModelMessage]:
-    """The day's earlier side-chat as model messages: [{"role", "content"}], oldest first."""
+def build_history(messages: list[dict[str, str]], token_budget: int | None = None) -> list[ModelMessage]:
+    """The day's earlier side-chat as model messages. See `build_history_and_omitted`."""
+    return build_history_and_omitted(messages, token_budget)[0]
+
+
+def build_history_and_omitted(messages: list[dict[str, str]], token_budget: int | None = None) -> tuple[list[ModelMessage], int]:
+    """The most recent side-chat messages that fit the token budget ([{"role", "content"}], oldest
+    first), and how many earlier ones were left out (llm/history.py)."""
+    from agent_system.adapters.outbound.llm.history import select_history
+
+    usable = [m for m in messages if m.get("role") in ("user", "assistant")]
+    selection = select_history(usable, lambda m: m.get("content") or "", token_budget or HISTORY_TOKENS)
     history: list[ModelMessage] = []
-    for message in messages[-_HISTORY_MESSAGES:]:
-        text = chat._clip(message.get("content") or "", _HISTORY_CHARS, "clipped")
+    for message, text in selection.kept:
         if message.get("role") == "user":
             history.append(ModelRequest(parts=[UserPromptPart(content=text)]))
         elif message.get("role") == "assistant":
             history.append(ModelResponse(parts=[TextPart(content=text)]))
+    omitted = selection.omitted
     while history and isinstance(history[0], ModelResponse):  # a history must open with a user turn
         history.pop(0)
-    return history
+        omitted += 1
+    return history, omitted
 
 
 async def run_journal_turn(
