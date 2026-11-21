@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
+from agent_system.adapters.outbound.llm.maps import with_map_links
 from agent_system.adapters.outbound.llm.personas import persona_suffix
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,7 @@ Emit = Callable[[str, str, str, dict | None], Awaitable[None]]
 
 def _default_impl() -> dict[str, ToolImpl]:
     from agent_system.adapters.outbound.llm import tools as t
+    from agent_system.adapters.outbound.llm.maps import show_map as show_map_impl
 
     return {
         "web_search": t.web_search,
@@ -81,6 +83,7 @@ def _default_impl() -> dict[str, ToolImpl]:
         "add_to_calendar": t.add_to_calendar,
         "search_internal_docs": t.search_internal_docs_tool,
         "calculate": t.calculate,
+        "show_map": show_map_impl,
     }
 
 
@@ -120,6 +123,7 @@ class ChatDeps:
     context: Any = None                              # ContextBundle: validated web passages for the turn
     history_omitted: int = 0                         # earlier messages of this conversation not shown to the model
     streamed_chars: int = 0                          # reply text already sent to `emit` as it was written
+    map_links: list[str] = field(default_factory=list)  # built by show_map; the turn puts them in the reply
 
 
 @dataclass
@@ -155,6 +159,11 @@ and never take a name or fact from these instructions as something the person to
 - Resolve "it", "that", "there" and "the ones you suggested" from the conversation before calling a tool, \
 and pass tools concrete names, not pronouns.
 - You can search the web. Never say you lack internet access.
+- When the person asks where a place is, how to find it, or to see it on a map, call show_map with the \
+place's full name and its city. The chat draws the map under your reply and adds the link, so do not \
+write a map link yourself. Say briefly in words where it is; give a street address only if a tool \
+result or the person gave it. For a place from their memory or an event listing, look it up first and \
+pass show_map the name and address you found.
 - Earlier replies of yours may end with a bracketed note such as "[Built from: get_houston_events]". \
 It records which tools that reply's facts came from. Use it to judge where a detail came from; never \
 write such a note yourself.
@@ -497,9 +506,28 @@ async def calculate(ctx: RunContext[ChatDeps], expression: str) -> str:
     return await _record(ctx, "calculate", {"expression": expression}, ok, text, started)
 
 
+@chat_agent.tool
+async def show_map(ctx: RunContext[ChatDeps], place: str, near: str | None = None) -> str:
+    """Show a place on a map in the chat. Use when the person asks where something is, how to
+    find it, or to see it on a map. The map appears under your reply.
+
+    Args:
+        place: The place's full name or street address, e.g. "Shell Energy Stadium". Never a pronoun or a URL.
+        near: City or neighbourhood that tells it apart from same-named places, e.g. "Houston, TX".
+    """
+    started = time.perf_counter()
+    result = await _call(ctx, "show_map", place=place, near=near)
+    ok, text = _text(result)
+    data = getattr(result, "data", None)
+    if ok and isinstance(data, dict) and data.get("url") and data["url"] not in ctx.deps.map_links:
+        ctx.deps.map_links.append(data["url"])
+    return await _record(ctx, "show_map", {"place": place, "near": near}, ok, text, started)
+
+
 TOOL_NAMES = (  # what the loop can call; the eval judge is told these (a unit test keeps it in step)
     "add_to_calendar", "calculate", "get_houston_events", "get_upcoming_events", "list_entities",
-    "read_webpage", "recall_about_topic", "search_internal_docs", "summarize_user_knowledge", "web_search",
+    "read_webpage", "recall_about_topic", "search_internal_docs", "show_map", "summarize_user_knowledge",
+    "web_search",
 )
 
 
@@ -613,8 +641,12 @@ async def run_chat_loop(
     usage = result.usage  # a method on older pydantic-ai, a property on newer
     if not hasattr(usage, "requests"):
         usage = usage()
+    written = str(result.output).strip()
+    response = with_map_links(written, deps.map_links)  # the map link is put there by code, not left to the model
+    if stream and deps.streamed_chars and deps.emit is not None and response != written:
+        await deps.emit("response_chunk", "ChatLoop", response[len(written):], {"accumulated_length": len(response)})
     return ChatLoopOutcome(
-        response=str(result.output).strip(), stopped="answered", steps=deps.steps, requests=usage.requests,
+        response=response, stopped="answered", steps=deps.steps, requests=usage.requests,
         input_tokens=usage.input_tokens or 0, output_tokens=usage.output_tokens or 0,
         duration_ms=(time.perf_counter() - started) * 1000, streamed=deps.streamed_chars > 0,
     )

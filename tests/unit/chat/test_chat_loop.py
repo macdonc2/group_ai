@@ -144,7 +144,7 @@ class TestLoop:
 
         await run_chat_loop("hi", deps=Fakes().deps(), model=FunctionModel(run))
         assert offered == sorted(TOOL_NAMES)
-        assert len(offered) == 10
+        assert len(offered) == 11
 
     async def test_reply_is_streamed_as_it_is_written(self):
         fakes = Fakes(calculate=ToolResult(success=True, data={"expression": "2+2", "result": 4}, message="ok"))
