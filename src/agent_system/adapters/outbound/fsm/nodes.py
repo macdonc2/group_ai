@@ -1404,7 +1404,7 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
             return EvaluateResult()
         
         tool_info = AVAILABLE_TOOLS[tool_name]
-        tool_func = tool_info["function"]
+        tool_func = ctx.deps.tool_overrides.get(tool_name) or tool_info["function"]
         from agent_system.adapters.outbound.llm.context import bundle_for
 
         bundle = bundle_for(ctx.state)
@@ -1435,15 +1435,20 @@ class ExecuteTool(BaseNode[WorkflowState, AgentDependencies, WorkflowResult]):
                     tool_args["user_id"] = str(ctx.state.user.id)
                 if tool_accepts(tool_func, "google_calendar"):
                     tool_args["google_calendar"] = ctx.deps.google_calendar
+                # The model key goes straight into the call, never into `tool_args`: that dict
+                # is the turn's stored tool arguments.
+                wants_key = tool_accepts(tool_func, "api_key", declared_only=True)
+                secret = {"api_key": ctx.deps.openai_api_key or None} if wants_key else {}
                 if ctx.deps.session_factory is None:
                     result = ToolResult(success=False, data=None,
                                         message="This tool needs the database, which is not available for this turn.")
                 else:
                     async with ctx.deps.session_factory() as session:
                         tool_args["session"] = session
-                        result = await run_tool(tool_name, tool_func, **tool_args)
+                        result = await run_tool(tool_name, tool_func, interceptor=ctx.deps.tool_interceptor,
+                                                **tool_args, **secret)
             else:
-                result = await run_tool(tool_name, tool_func, **tool_args)
+                result = await run_tool(tool_name, tool_func, interceptor=ctx.deps.tool_interceptor, **tool_args)
 
             tool_ok = bool(result.success)
             if ctx.deps.trace is not None and tool_name in ("recall_about_topic", "recall_from_period"):

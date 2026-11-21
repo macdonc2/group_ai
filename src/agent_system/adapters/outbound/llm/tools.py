@@ -22,32 +22,33 @@ class ToolResult(BaseModel):
 
 # ============ Calling a tool ============
 
-# An optional hook run before every tool call. It may return a ToolResult to use instead of
-# calling the tool, raise, or return None to let the tool run. Nothing sets it in production;
-# evals use it to make tools fail on purpose (`evals/tool_faults.py`).
-_tool_interceptor: Any = None
-
-
-def set_tool_interceptor(interceptor: Any) -> None:
-    global _tool_interceptor
-    _tool_interceptor = interceptor
-
-
-def tool_accepts(func: Any, name: str) -> bool:
+def tool_accepts(func: Any, name: str, *, declared_only: bool = False) -> bool:
     """Whether a tool function can be passed the keyword `name`: it declares that parameter,
     or it takes `**kwargs`. Read from the signature, so a local variable that happens to
-    share the name does not count."""
+    share the name does not count.
+
+    `declared_only=True` ignores `**kwargs`. Use it for a secret, which should go only to a
+    tool that asks for it by name.
+    """
     import inspect
 
     parameters = inspect.signature(func).parameters
-    return name in parameters or any(p.kind is p.VAR_KEYWORD for p in parameters.values())
+    if name in parameters:
+        return True
+    return not declared_only and any(p.kind is p.VAR_KEYWORD for p in parameters.values())
 
 
-async def run_tool(name: str, func: Any, **kwargs: Any) -> Any:
+async def run_tool(name: str, func: Any, *, interceptor: Any = None, **kwargs: Any) -> Any:
     """Call a tool function. Both chat engines call tools through here, so it is the one place
-    to observe or replace a call."""
-    if _tool_interceptor is not None:
-        early = await _tool_interceptor(name, kwargs)
+    to observe or replace a call.
+
+    `interceptor` is an optional `async (name, kwargs)` run first. It may return a ToolResult
+    to use instead of calling the tool, raise, or return None to let the tool run. It comes
+    from the turn's dependencies; production turns have none, and evals pass one to make
+    tools fail on purpose (`evals/tool_faults.py`).
+    """
+    if interceptor is not None:
+        early = await interceptor(name, kwargs)
         if early is not None:
             return early
     return await func(**kwargs)
@@ -1410,9 +1411,10 @@ async def pull_google_events(session: Any, user_id: str, time_min: datetime, tim
     if not (user and has_gcal and gcal_enabled):
         return []
     from agent_system.application.services import CalendarSyncService
+    from agent_system.composition_root.config import get_api_key_encryption
 
     logger.info(f"Pulling Google Calendar events: {time_min} to {time_max} UTC")
-    raw = await CalendarSyncService(google_calendar).pull_events_from_google(
+    raw = await CalendarSyncService(google_calendar, get_api_key_encryption()).pull_events_from_google(
         user, time_min=time_min, time_max=time_max, max_results=50,
     )
     logger.info(f"Google Calendar returned {len(raw)} events")
@@ -1615,8 +1617,9 @@ async def get_upcoming_events(
             # pull_google_events / Google API expects naive UTC
             gcal_time_min = start_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
             gcal_time_max = end_date.replace(tzinfo=user_tz).astimezone(dt_timezone.utc).replace(tzinfo=None)
-            raw_gcal = await pull_google_events(session, user_id, gcal_time_min, gcal_time_max,
-                                                google_calendar=kwargs.get("google_calendar"))
+            pull = kwargs.get("pull_google_events") or pull_google_events  # evals pass a fixed calendar
+            raw_gcal = await pull(session, user_id, gcal_time_min, gcal_time_max,
+                                  google_calendar=kwargs.get("google_calendar"))
 
             for ge in raw_gcal:
                 title = ge.get("title", "Untitled")
@@ -1771,7 +1774,7 @@ async def get_houston_events(
             select_events,
         )
 
-        adapter = HoustonEventsAdapter()
+        adapter = kwargs.get("houston_events") or HoustonEventsAdapter()
         try:
             note = ""
             everything = await adapter.get_latest_events(limit=FETCH_LIMIT)
@@ -1850,12 +1853,12 @@ def _coming_saturday(tz) -> "datetime":
     return _dt(d.year, d.month, d.day)
 
 
-async def _find_houston_event(title: str):
+async def _find_houston_event(title: str, houston_events: Any = None):
     """Best Houston listing for an event name, or None."""
     try:
         from agent_system.adapters.outbound.houston_events import HoustonEventsAdapter
 
-        adapter = HoustonEventsAdapter()
+        adapter = houston_events or HoustonEventsAdapter()
         try:
             words = [w for w in title.split() if len(w) > 2][:4]
             for probe in (title, " ".join(words[:3]), " ".join(words[:2])):
@@ -1882,12 +1885,14 @@ async def add_to_calendar(
     session=None,
     user_id: str | None = None,
     google_calendar: Any = None,
+    api_key: str | None = None,
     **kwargs,
 ) -> ToolResult:
     """Put one or more events on the user's Google Calendar.
 
-    `session`, `user_id` and `google_calendar` (the calendar adapter) are handed in by
-    whoever runs the tool, never chosen by the model.
+    `session`, `user_id`, `google_calendar` (the calendar adapter) and `api_key` (for the
+    small model that reads a date like "next Tuesday") are handed in by whoever runs the tool,
+    never chosen by the model.
 
     Either a single event (`title`, optional `when`/`location`/`description`)
     or several via `events=[{"title", "when", "location", "description"}, ...]`.
@@ -1902,9 +1907,10 @@ async def add_to_calendar(
     from datetime import timezone as _tz
     from zoneinfo import ZoneInfo
 
+    from agent_system.adapters.outbound.llm.datetime_parser import parse_vague_datetime
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
     from agent_system.application.services import CalendarSyncService
-    from agent_system.application.services.datetime_parser import parse_vague_datetime
+    from agent_system.composition_root.config import get_api_key_encryption
     from agent_system.domain.value_objects import UserId
 
     if session is None or not user_id:
@@ -1928,7 +1934,7 @@ async def add_to_calendar(
 
     tentative = str(status or "").strip().lower() in _TENTATIVE_WORDS
     tz = ZoneInfo(user.timezone or "UTC")
-    sync = CalendarSyncService(google_calendar)
+    sync = CalendarSyncService(google_calendar, get_api_key_encryption())
     created_items: list[dict] = []
     lines: list[str] = []
     failed: list[str] = []
@@ -1939,7 +1945,7 @@ async def add_to_calendar(
         ev_location = str(spec.get("location") or "").strip() or None
         ev_description = str(spec.get("description") or "").strip() or None
         all_day = False
-        matched = await _find_houston_event(ev_title)
+        matched = await _find_houston_event(ev_title, kwargs.get("houston_events"))
         if matched:
             start_utc = _to_naive_utc(matched.start_time)
             end_utc = _to_naive_utc(matched.end_time) if matched.end_time else None
@@ -1952,7 +1958,7 @@ async def add_to_calendar(
             parsed = None
             for text in (ev_when, ev_title if not ev_when else None):
                 if text:
-                    parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC")
+                    parsed = await parse_vague_datetime(text, user_timezone=user.timezone or "UTC", api_key=api_key)
                     if parsed:
                         break
             if parsed:

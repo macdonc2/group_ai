@@ -27,7 +27,6 @@ case whose fault never fired rather than letting it pass for the wrong reason.
 
 from __future__ import annotations
 
-import contextvars
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -66,6 +65,25 @@ class FaultPlan:
                 return fault
         return None
 
+    async def intercept(self, name: str, kwargs: dict[str, Any]) -> Any:
+        """The hook `tools.run_tool` runs before every tool call of this case's turns (the
+        runner passes it as `AgentDependencies.tool_interceptor`). Returns a result to use
+        instead of calling the tool, raises to simulate a crash, or returns None to let the
+        real tool run."""
+        fault = self.next_fault(name)
+        if fault is None:
+            return None
+        from agent_system.adapters.outbound.llm.tools import ToolResult
+
+        message = fault.message or DEFAULT_MESSAGES[fault.kind]
+        if fault.kind == "exception":
+            raise RuntimeError(message)
+        if fault.kind == "timeout":
+            raise TimeoutError(message)
+        if fault.kind == "empty":
+            return ToolResult(success=True, data=[], message=message)
+        return ToolResult(success=False, data=None, message=message)
+
     def report(self) -> dict[str, Any]:
         planned = sorted({f.tool for f in self.faults})
         required = sorted({f.tool for f in self.faults if f.required})
@@ -74,46 +92,3 @@ class FaultPlan:
         if not required and not any(self.fired.values()):
             missed = planned
         return {"planned": planned, "calls": dict(self.calls), "fired": dict(self.fired), "never_reached": missed}
-
-
-_plan: contextvars.ContextVar[FaultPlan | None] = contextvars.ContextVar("eval_tool_faults", default=None)
-_installed = False
-
-
-def set_faults(faults: list[ToolFault] | None) -> tuple[FaultPlan | None, contextvars.Token]:
-    plan = FaultPlan(list(faults)) if faults else None
-    return plan, _plan.set(plan)
-
-
-def reset_faults(token: contextvars.Token) -> None:
-    _plan.reset(token)
-
-
-async def intercept(name: str, kwargs: dict[str, Any]) -> Any:
-    """Called by `tools.run_tool` before every tool. Returns a result to use instead of calling the
-    tool, raises to simulate a crash, or returns None to let the real tool run."""
-    plan = _plan.get()
-    fault = plan.next_fault(name) if plan is not None else None
-    if fault is None:
-        return None
-    from agent_system.adapters.outbound.llm.tools import ToolResult
-
-    message = fault.message or DEFAULT_MESSAGES[fault.kind]
-    if fault.kind == "exception":
-        raise RuntimeError(message)
-    if fault.kind == "timeout":
-        raise TimeoutError(message)
-    if fault.kind == "empty":
-        return ToolResult(success=True, data=[], message=message)
-    return ToolResult(success=False, data=None, message=message)
-
-
-def install_tool_fault_hook() -> None:
-    """Register the interceptor once. It does nothing for cases without `tool_faults`."""
-    global _installed
-    if _installed:
-        return
-    from agent_system.adapters.outbound.llm import tools
-
-    tools.set_tool_interceptor(intercept)
-    _installed = True

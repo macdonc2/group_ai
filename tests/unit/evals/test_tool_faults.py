@@ -16,39 +16,29 @@ from agent_system.evals.scorers import (
 pytestmark = pytest.mark.unit
 
 
-@pytest.fixture
-def interceptor(monkeypatch):
-    """Install the eval interceptor for one test and put production's (none) back afterwards."""
-    monkeypatch.setattr(tools, "_tool_interceptor", faults.intercept)
-
-
 async def real_search(query: str, num_results: int = 5):
     return tools.ToolResult(success=True, data=[{"title": "real"}], message=f"Found results for {query}")
 
 
+def _plan(*planned: faults.ToolFault) -> faults.FaultPlan:
+    return faults.FaultPlan(list(planned))
+
+
 async def test_without_an_interceptor_the_tool_just_runs():
-    assert tools._tool_interceptor is None          # production never sets one
-    result = await tools.run_tool("web_search", real_search, query="jazz")
+    result = await tools.run_tool("web_search", real_search, query="jazz")   # what production does
     assert result.success
     assert result.message == "Found results for jazz"
 
 
-async def test_no_planned_fault_means_the_real_tool_runs(interceptor):
-    plan, token = faults.set_faults(None)
-    try:
-        assert plan is None
-        assert (await tools.run_tool("web_search", real_search, query="jazz")).success
-    finally:
-        faults.reset_faults(token)
+async def test_a_plan_with_no_fault_for_the_tool_lets_it_run():
+    plan = _plan(faults.ToolFault(tool="read_webpage"))
+    assert (await tools.run_tool("web_search", real_search, interceptor=plan.intercept, query="jazz")).success
 
 
-async def test_each_kind_of_fault(interceptor):
+async def test_each_kind_of_fault():
     async def call(kind, **extra):
-        _, token = faults.set_faults([faults.ToolFault(tool="web_search", kind=kind, **extra)])
-        try:
-            return await tools.run_tool("web_search", real_search, query="jazz")
-        finally:
-            faults.reset_faults(token)
+        plan = _plan(faults.ToolFault(tool="web_search", kind=kind, **extra))
+        return await tools.run_tool("web_search", real_search, interceptor=plan.intercept, query="jazz")
 
     failed = await call("error")
     assert not failed.success
@@ -63,16 +53,25 @@ async def test_each_kind_of_fault(interceptor):
         await call("timeout")
 
 
-async def test_a_fault_hits_only_its_tool_and_only_the_first_n_calls(interceptor):
-    plan, token = faults.set_faults([faults.ToolFault(tool="web_search", kind="error", times=1)])
-    try:
-        assert (await tools.run_tool("read_webpage", real_search, query="x")).success      # another tool: untouched
-        assert not (await tools.run_tool("web_search", real_search, query="x")).success    # first call fails
-        assert (await tools.run_tool("web_search", real_search, query="x")).success        # the retry gets through
-    finally:
-        faults.reset_faults(token)
+async def test_a_fault_hits_only_its_tool_and_only_the_first_n_calls():
+    plan = _plan(faults.ToolFault(tool="web_search", kind="error", times=1))
+
+    async def run(name):
+        return await tools.run_tool(name, real_search, interceptor=plan.intercept, query="x")
+
+    assert (await run("read_webpage")).success      # another tool: untouched
+    assert not (await run("web_search")).success    # first call fails
+    assert (await run("web_search")).success        # the retry gets through
     assert plan.report() == {"planned": ["web_search"], "calls": {"read_webpage": 1, "web_search": 2},
                              "fired": {"web_search": 1}, "never_reached": []}
+
+
+async def test_two_cases_running_at_once_do_not_see_each_others_faults():
+    """Each case owns its plan. With the old process-wide hook this relied on a context variable."""
+    failing, clean = _plan(faults.ToolFault(tool="web_search")), _plan(faults.ToolFault(tool="read_webpage"))
+    assert not (await tools.run_tool("web_search", real_search, interceptor=failing.intercept, query="x")).success
+    assert (await tools.run_tool("web_search", real_search, interceptor=clean.intercept, query="x")).success
+    assert (await tools.run_tool("web_search", real_search, query="x")).success
 
 
 def test_a_case_whose_fault_never_fired_fails_instead_of_passing_for_nothing():

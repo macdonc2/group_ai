@@ -258,7 +258,7 @@ def _with_status(entry: JournalEntryModel, suggestion_id: str, new_status: str) 
 @router.post("/entries/{entry_id}/suggestions/{suggestion_id}/accept")
 async def accept_suggestion(entry_id: str, suggestion_id: str, current_user_id: CurrentUserId,
                             session: SessionDep,
-                            calendar: OptionalGoogleCalendarDep) -> EntryRead:
+                            calendar: OptionalGoogleCalendarDep, settings: SettingsDep) -> EntryRead:
     """Add a suggested event to the user's Google Calendar. The click is the user's request."""
     repo = SQLAlchemyJournalRepository(session)
     entry, suggestion = await _suggestion(repo, entry_id, suggestion_id, current_user_id)
@@ -266,7 +266,8 @@ async def accept_suggestion(entry_id: str, suggestion_id: str, current_user_id: 
         return _entry_read(entry)  # a double click must not create the event twice
     result = await add_event(title=suggestion["title"], when=suggestion["when"], location=suggestion.get("location"),
                              description="Added from your journal.", session=session, user_id=current_user_id,
-                             google_calendar=calendar)
+                             google_calendar=calendar,
+                             api_key=_api_key(await _user(session, current_user_id), settings))
     if not getattr(result, "success", False):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=str(getattr(result, "message", "") or "The event could not be added."))
@@ -311,7 +312,7 @@ def _api_key(user: Any, settings: Any) -> str | None:
     if settings.openai_api_key:
         return settings.openai_api_key
     if user.has_api_key():
-        from agent_system.domain.utils.encryption import get_api_key_encryption
+        from agent_system.composition_root.config import get_api_key_encryption
 
         return get_api_key_encryption().decrypt(user.encrypted_openai_api_key)
     return None

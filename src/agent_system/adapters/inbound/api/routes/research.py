@@ -42,7 +42,7 @@ def _resolve_api_key(user, settings) -> str:
     if settings.openai_api_key:
         return settings.openai_api_key
     if user.has_api_key():
-        from agent_system.domain.utils.encryption import get_api_key_encryption
+        from agent_system.composition_root.config import get_api_key_encryption
 
         return get_api_key_encryption().decrypt(user.encrypted_openai_api_key)
     raise HTTPException(
