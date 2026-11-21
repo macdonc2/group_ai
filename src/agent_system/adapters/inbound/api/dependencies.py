@@ -117,7 +117,7 @@ def user_api_key(user: object, settings: object) -> str | None:
     if system_key:
         return system_key
     if user is not None and user.has_api_key():
-        from agent_system.domain.utils.encryption import get_api_key_encryption
+        from agent_system.composition_root.config import get_api_key_encryption
 
         return get_api_key_encryption().decrypt(user.encrypted_openai_api_key)
     return None

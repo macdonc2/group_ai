@@ -37,7 +37,7 @@ class _FakeSync:
     created = []
     flags = []
 
-    def __init__(self, adapter):
+    def __init__(self, adapter, encryption=None):
         pass
 
     async def create_event_for_user(self, user, title, start_utc, end_utc=None, description=None, location=None,
@@ -77,7 +77,7 @@ def wire(monkeypatch):
     monkeypatch.setattr("agent_system.adapters.outbound.persistence.SQLAlchemyUserRepository", lambda session: _FakeUserRepo(session.user))
     monkeypatch.setattr("agent_system.adapters.outbound.houston_events.HoustonEventsAdapter", lambda: adapter)
     monkeypatch.setattr("agent_system.application.services.CalendarSyncService", _FakeSync)
-    monkeypatch.setattr("agent_system.application.services.datetime_parser.parse_vague_datetime", fake_parse)
+    monkeypatch.setattr("agent_system.adapters.outbound.llm.datetime_parser.parse_vague_datetime", fake_parse)
     return adapter
 
 

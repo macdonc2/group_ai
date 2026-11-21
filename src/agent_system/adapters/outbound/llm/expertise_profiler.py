@@ -7,8 +7,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai.models.openai import OpenAIResponsesModel
-from agent_system.adapters.outbound.llm.provider import openai_provider
 
+from agent_system.adapters.outbound.llm.provider import openai_provider
 from agent_system.domain.value_objects import UserId
 from agent_system.domain.value_objects.knowledge import ExpertiseLevel
 
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class ExpertiseAssessment(BaseModel):
     """Result of expertise assessment by LLM."""
-    
+
     topic: str = Field(description="The topic being assessed")
     level: str = Field(
         description="Expertise level: novice, beginner, intermediate, advanced, or expert"
@@ -61,18 +61,18 @@ def _get_model(api_key: str | None = None) -> OpenAIResponsesModel | str:
 
 class ExpertiseProfiler:
     """Tracks and updates user expertise profiles.
-    
+
     Analyzes user messages to build an understanding of their
     expertise level in various topics.
     """
-    
+
     def __init__(
         self,
         knowledge_graph_port: Any,
         api_key: str | None = None,
     ):
         """Initialize the expertise profiler.
-        
+
         Args:
             knowledge_graph_port: The Neo4j adapter
             api_key: Optional OpenAI API key
@@ -80,7 +80,7 @@ class ExpertiseProfiler:
         self.knowledge_graph = knowledge_graph_port
         self.api_key = api_key
         self._agent: Agent | None = None
-    
+
     def _get_agent(self) -> Agent[None, ExpertiseAssessment]:
         """Get or create the assessment agent."""
         if not self._agent:
@@ -90,18 +90,18 @@ class ExpertiseProfiler:
                 system_prompt=EXPERTISE_PROMPT,
             )
         return self._agent
-    
+
     async def assess_expertise(
         self,
         message: str,
         topic: str | None = None,
     ) -> ExpertiseAssessment:
         """Assess expertise level from a user message.
-        
+
         Args:
             message: The user's message
             topic: Optional explicit topic to assess
-            
+
         Returns:
             ExpertiseAssessment with level and confidence
         """
@@ -129,7 +129,7 @@ Provide:
                 confidence=0.3,
                 evidence=f"Could not assess: {str(e)}",
             )
-    
+
     def _level_to_enum(self, level: str) -> ExpertiseLevel:
         """Convert string level to ExpertiseLevel enum."""
         level_map = {
@@ -140,29 +140,29 @@ Provide:
             "expert": ExpertiseLevel.EXPERT,
         }
         return level_map.get(level.lower(), ExpertiseLevel.INTERMEDIATE)
-    
+
     async def update_user_expertise(
         self,
         user_id: UserId,
         message: str,
     ) -> list[dict[str, Any]]:
         """Update user's expertise profile based on a message.
-        
+
         Args:
             user_id: The user's ID
             message: The user's message
-            
+
         Returns:
             List of expertise updates made
         """
         updates = []
-        
+
         # Assess expertise from the message
         assessment = await self.assess_expertise(message)
-        
+
         if assessment.confidence < 0.5:
             return updates  # Not confident enough
-        
+
         # Store the expertise assessment
         # For now, store as a preference with the topic
         try:
@@ -173,22 +173,22 @@ Provide:
                 sentiment=self._level_to_score(assessment.level),
                 subcategory=assessment.topic,
             )
-            
+
             updates.append({
                 "topic": assessment.topic,
                 "level": assessment.level,
                 "confidence": assessment.confidence,
             })
-            
+
             logger.debug(
                 f"Updated expertise for {assessment.topic}: "
                 f"{assessment.level} (confidence: {assessment.confidence:.0%})"
             )
         except Exception as e:
             logger.error(f"Failed to store expertise update: {e}")
-        
+
         return updates
-    
+
     def _level_to_score(self, level: str) -> float:
         """Convert expertise level to a numeric score."""
         scores = {
@@ -199,18 +199,18 @@ Provide:
             "expert": 0.9,
         }
         return scores.get(level.lower(), 0.5)
-    
+
     async def get_user_expertise(
         self,
         user_id: UserId,
         topic: str | None = None,
     ) -> list[dict[str, Any]]:
         """Get user's expertise profile.
-        
+
         Args:
             user_id: The user's ID
             topic: Optional specific topic to query
-            
+
         Returns:
             List of expertise entries
         """
@@ -220,7 +220,7 @@ Provide:
                 category="expertise",
                 min_confidence=0.0,
             )
-            
+
             expertise = []
             for pref in prefs:
                 value = pref.get("value", "")
@@ -233,38 +233,38 @@ Provide:
                             "confidence": pref.get("confidence", 0.5),
                             "mention_count": pref.get("mention_count", 1),
                         })
-            
+
             return expertise
         except Exception as e:
             logger.error(f"Failed to get user expertise: {e}")
             return []
-    
+
     async def get_response_detail_level(
         self,
         user_id: UserId,
         topic: str,
     ) -> str:
         """Determine appropriate response detail level for a topic.
-        
+
         Args:
             user_id: The user's ID
             topic: The topic being discussed
-            
+
         Returns:
             Response style guidance: "detailed", "standard", or "concise"
         """
         expertise = await self.get_user_expertise(user_id, topic)
-        
+
         if not expertise:
             return "standard"
-        
+
         # Get the highest confidence expertise for this topic
         relevant = sorted(expertise, key=lambda x: x.get("confidence", 0), reverse=True)
         if not relevant:
             return "standard"
-        
+
         level = relevant[0].get("level", "intermediate").lower()
-        
+
         if level in ["novice", "beginner"]:
             return "detailed"  # More explanation needed
         elif level in ["advanced", "expert"]:

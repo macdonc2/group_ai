@@ -28,15 +28,7 @@ FORBIDDEN = {
 }
 
 # (importing module, imported module): why it is still here.
-KNOWN_VIOLATIONS = {
-    # These three build a model client themselves. They are adapters in all but location and
-    # should move to adapters/outbound/llm; tools.py imports them by their current path.
-    ("application.services.contradiction_detector", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
-    ("application.services.expertise_profiler", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
-    ("application.services.datetime_parser", "adapters.outbound.llm.provider"): "move to adapters/outbound/llm",
-    # The factory reads the secret key from settings; the class itself is pure.
-    ("domain.utils.encryption", "composition_root.config"): "pass the secret key in from the composition root",
-}
+KNOWN_VIOLATIONS: dict[tuple[str, str], str] = {}
 
 
 def _inside(module: str, package: str) -> bool:

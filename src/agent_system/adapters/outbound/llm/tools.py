@@ -1411,9 +1411,10 @@ async def pull_google_events(session: Any, user_id: str, time_min: datetime, tim
     if not (user and has_gcal and gcal_enabled):
         return []
     from agent_system.application.services import CalendarSyncService
+    from agent_system.composition_root.config import get_api_key_encryption
 
     logger.info(f"Pulling Google Calendar events: {time_min} to {time_max} UTC")
-    raw = await CalendarSyncService(google_calendar).pull_events_from_google(
+    raw = await CalendarSyncService(google_calendar, get_api_key_encryption()).pull_events_from_google(
         user, time_min=time_min, time_max=time_max, max_results=50,
     )
     logger.info(f"Google Calendar returned {len(raw)} events")
@@ -1906,9 +1907,10 @@ async def add_to_calendar(
     from datetime import timezone as _tz
     from zoneinfo import ZoneInfo
 
+    from agent_system.adapters.outbound.llm.datetime_parser import parse_vague_datetime
     from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
     from agent_system.application.services import CalendarSyncService
-    from agent_system.application.services.datetime_parser import parse_vague_datetime
+    from agent_system.composition_root.config import get_api_key_encryption
     from agent_system.domain.value_objects import UserId
 
     if session is None or not user_id:
@@ -1932,7 +1934,7 @@ async def add_to_calendar(
 
     tentative = str(status or "").strip().lower() in _TENTATIVE_WORDS
     tz = ZoneInfo(user.timezone or "UTC")
-    sync = CalendarSyncService(google_calendar)
+    sync = CalendarSyncService(google_calendar, get_api_key_encryption())
     created_items: list[dict] = []
     lines: list[str] = []
     failed: list[str] = []

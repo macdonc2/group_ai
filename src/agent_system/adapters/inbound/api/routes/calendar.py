@@ -15,7 +15,7 @@ from agent_system.adapters.inbound.api.dependencies import (
     SessionDep,
 )
 from agent_system.adapters.outbound.persistence import SQLAlchemyUserRepository
-from agent_system.domain.utils.encryption import get_api_key_encryption
+from agent_system.composition_root.config import get_api_key_encryption
 from agent_system.domain.value_objects import UserId
 
 router = APIRouter(prefix="/calendar", tags=["calendar"])
@@ -388,7 +388,7 @@ async def sync_event_to_google(
         )
 
     # Sync event
-    sync_service = CalendarSyncService(calendar)
+    sync_service = CalendarSyncService(calendar, get_api_key_encryption())
     updated_event = await sync_service.sync_event_to_google(event, user)
 
     # Save updated event
@@ -425,7 +425,7 @@ async def get_google_events(
             detail="Google Calendar is not connected",
         )
 
-    sync_service = CalendarSyncService(calendar)
+    sync_service = CalendarSyncService(calendar, get_api_key_encryption())
     events = await sync_service.pull_events_from_google(user)
 
     return [
@@ -479,7 +479,7 @@ async def delete_synced_event(
             message="Event was not synced to Google Calendar",
         )
 
-    sync_service = CalendarSyncService(calendar)
+    sync_service = CalendarSyncService(calendar, get_api_key_encryption())
     deleted = await sync_service.delete_event_from_google(event, user)
 
     if deleted:

@@ -6,8 +6,6 @@ import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
-
-logger = logging.getLogger(__name__)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent_system.adapters.inbound.api.dependencies import (
@@ -46,8 +44,11 @@ from agent_system.adapters.outbound.persistence.repositories import (
     SQLAlchemyPlanRepository,
     SQLAlchemyUserRepository,
 )
+from agent_system.composition_root.config import get_api_key_encryption
 from agent_system.domain.entities import EventType, ExtractedEvent, Group, GroupConversation
 from agent_system.domain.value_objects import EventId, GroupConversationId, GroupId, UserId
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/groups", tags=["groups"])
 
@@ -718,7 +719,7 @@ async def update_event(
                 group = await group_repo.get(GroupId.from_string(group_id))
                 
                 if group:
-                    sync_service = CalendarSyncService(calendar)
+                    sync_service = CalendarSyncService(calendar, get_api_key_encryption())
                     synced_count = 0
                     
                     # Sync to all group members who have calendar enabled
@@ -828,7 +829,7 @@ async def sync_event_to_calendar(
             detail="Calendar service is not available"
         )
     
-    sync_service = CalendarSyncService(calendar)
+    sync_service = CalendarSyncService(calendar, get_api_key_encryption())
     event = await sync_service.sync_event_to_google(event, user)
     
     await repo.update(event)
@@ -1222,7 +1223,7 @@ async def websocket_chat(
                                 try:
                                     import asyncio
                                     from agent_system.adapters.outbound.embedding import OpenAIEmbeddingAdapter
-                                    from agent_system.domain.utils.encryption import get_api_key_encryption
+                                    from agent_system.composition_root.config import get_api_key_encryption
                                     
                                     # Timeout after 10 seconds to prevent hangs
                                     async with asyncio.timeout(10):
@@ -1328,7 +1329,7 @@ async def websocket_chat(
                                 
                                 if user.has_api_key():
                                     try:
-                                        from agent_system.domain.utils.encryption import get_api_key_encryption
+                                        from agent_system.composition_root.config import get_api_key_encryption
                                         encryption = get_api_key_encryption()
                                         agent_api_key = encryption.decrypt(user.encrypted_openai_api_key)
                                         logger.info(f"Using user's personal API key for group agent")
@@ -1496,7 +1497,7 @@ async def websocket_chat(
                                     embed_api_key = settings.openai_api_key
                                     if not embed_api_key and user and user.has_api_key():
                                         try:
-                                            from agent_system.domain.utils.encryption import get_api_key_encryption
+                                            from agent_system.composition_root.config import get_api_key_encryption
                                             embed_api_key = get_api_key_encryption().decrypt(user.encrypted_openai_api_key)
                                         except Exception:
                                             pass
@@ -1553,7 +1554,7 @@ async def websocket_chat(
                                 user_for_key = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
                                 if user_for_key and user_for_key.has_api_key():
                                     try:
-                                        from agent_system.domain.utils.encryption import get_api_key_encryption
+                                        from agent_system.composition_root.config import get_api_key_encryption
                                         encryption = get_api_key_encryption()
                                         api_key_for_extraction = encryption.decrypt(user_for_key.encrypted_openai_api_key)
                                     except Exception as decrypt_err:
@@ -1629,7 +1630,7 @@ async def websocket_chat(
                                                 event_datetime = None
                                                 if extracted.datetime_str:
                                                     try:
-                                                        from agent_system.application.services import parse_vague_datetime
+                                                        from agent_system.adapters.outbound.llm.datetime_parser import parse_vague_datetime
                                                         
                                                         # Use smart datetime parser with LLM fallback for vague references
                                                         # "tonight" -> 6 PM, "tomorrow" -> 9 AM, "next week" -> 7 days at 9 AM
@@ -1710,7 +1711,7 @@ async def websocket_chat(
                             user_for_key = await SQLAlchemyUserRepository(session).get(UserId.from_string(user_id))
                             if user_for_key and user_for_key.has_api_key():
                                 try:
-                                    from agent_system.domain.utils.encryption import get_api_key_encryption
+                                    from agent_system.composition_root.config import get_api_key_encryption
                                     encryption = get_api_key_encryption()
                                     api_key_for_entities = encryption.decrypt(user_for_key.encrypted_openai_api_key)
                                 except Exception as decrypt_err:

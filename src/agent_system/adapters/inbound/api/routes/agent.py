@@ -63,7 +63,7 @@ def setup_user_api_key(user: User, settings) -> str:
     # Fall back to user's personal encrypted key
     if not api_key and user.has_api_key():
         try:
-            from agent_system.domain.utils.encryption import get_api_key_encryption
+            from agent_system.composition_root.config import get_api_key_encryption
             encryption = get_api_key_encryption()
             decrypted_key = encryption.decrypt(user.encrypted_openai_api_key)
             api_key = decrypted_key

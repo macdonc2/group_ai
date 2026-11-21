@@ -83,7 +83,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         """Application lifespan handler."""
         # Tokens are signed and checked with this app's key; stored API keys are
-        # still encrypted with the process-wide one (`domain/utils/encryption.py`),
+        # still encrypted with the process-wide one (`get_api_key_encryption` in `composition_root/config.py`),
         # so both are judged. Fatal where real users are, a warning on a laptop.
         problem = secret_key_problem(settings.secret_key) or secret_key_problem(get_settings().secret_key)
         if problem:
