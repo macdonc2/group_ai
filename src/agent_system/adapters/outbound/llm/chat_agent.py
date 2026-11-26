@@ -24,11 +24,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Awaitable, Callable, Literal
+from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, Field
@@ -46,6 +46,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.usage import UsageLimits
 
+from agent_system.adapters.outbound.llm.failures import failure_message
 from agent_system.adapters.outbound.llm.maps import with_map_links
 from agent_system.adapters.outbound.llm.personas import persona_suffix
 
@@ -636,7 +637,7 @@ async def run_chat_loop(
                                   "or ask a narrower question.")
     except Exception as exc:  # noqa: BLE001 - surface a clean failure, keep the detail in logs
         logger.exception("Chat loop failed")
-        return partial("error", f"Something went wrong on my side ({type(exc).__name__}). Please try again.")
+        return partial("error", failure_message(exc))
 
     usage = result.usage  # a method on older pydantic-ai, a property on newer
     if not hasattr(usage, "requests"):

@@ -38,6 +38,7 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.usage import UsageLimits
 
 from agent_system.adapters.outbound.llm import chat_agent as chat
+from agent_system.adapters.outbound.llm.failures import failure_message
 from agent_system.adapters.outbound.llm.personas import is_valid_persona, persona_suffix
 from agent_system.domain.recipes.models import (
     Category,
@@ -463,7 +464,7 @@ async def run_pitch_turn(
                                 "or an incomplete recipe), so nothing is shown. Please try again.")
     except Exception as exc:  # noqa: BLE001 - surface a clean failure, keep the detail in logs
         logger.exception("Recipe pitch failed")
-        return stopped("error", f"Something went wrong on my side ({type(exc).__name__}). Please try again.")
+        return stopped("error", failure_message(exc))
 
     usage = result.usage
     if not hasattr(usage, "requests"):

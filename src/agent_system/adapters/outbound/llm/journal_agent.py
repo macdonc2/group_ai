@@ -18,9 +18,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
-from typing import Any, Awaitable, Callable
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from pydantic_ai import Agent, RunContext
@@ -29,6 +30,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.usage import UsageLimits
 
 from agent_system.adapters.outbound.llm import chat_agent as chat
+from agent_system.adapters.outbound.llm.failures import failure_message
 from agent_system.adapters.outbound.llm.journal_memory import day_label
 
 logger = logging.getLogger(__name__)
@@ -229,7 +231,7 @@ async def run_journal_turn(
         return partial("timeout", f"That took longer than {int(timeout_s)} seconds, so I stopped. Please try again.")
     except Exception as exc:  # noqa: BLE001 - surface a clean failure, keep the detail in logs
         logger.exception("Journal turn failed")
-        return partial("error", f"Something went wrong on my side ({type(exc).__name__}). Please try again.")
+        return partial("error", failure_message(exc))
 
     usage = result.usage  # a method on older pydantic-ai, a property on newer
     if not hasattr(usage, "requests"):
