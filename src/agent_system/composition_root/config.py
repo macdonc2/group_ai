@@ -108,6 +108,16 @@ class Settings(BaseSettings):
     chat_history_message_tokens: int = Field(default=3000, description="One message is cut to this before it counts")
     journal_history_tokens: int = Field(default=8000, description="History budget for the journal's side conversation")
 
+    # Recipes mode
+    recipe_pitch_model: str | None = Field(default=None, description="Model for recipe pitches (defaults to default_model)")
+    recipe_image_model: str = Field(default="gpt-image-2.5-flare", description="OpenAI image model for dish pictures")
+    recipe_image_quality: str = Field(default="medium", description="Dish picture quality: low, medium or high (cost rises steeply)")
+    recipe_images_per_day: int = Field(default=20, description="Dish pictures one user may generate per 24 hours; 0 turns generation off")
+    recipe_photo_contact: str | None = Field(
+        default=None,
+        description="Contact URL or email sent to Wikimedia in the User-Agent for ingredient photos; unset = no photo lookups",
+    )
+
     # Hard limits on any chat or group turn, whichever engine runs it (including post-reply memory work)
     chat_turn_timeout_s: float = Field(default=240, description="Wall-clock limit for one whole turn")
     chat_turn_max_llm_calls: int = Field(default=30, description="Model calls allowed in one turn (FSM: checked between nodes)")

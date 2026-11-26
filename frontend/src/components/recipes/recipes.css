@@ -1,0 +1,183 @@
+/*
+  Recipes mode: an 80s/90s wrestling pay-per-view look.
+
+  The whole view is its own dark "arena", whatever the app theme, with cream "fight poster"
+  cards on top so recipe text stays easy to read. Colours follow the wrestler theme when one
+  is picked (--wt-*), and fall back to a house palette of hot pink, electric blue and gold.
+*/
+.rk-arena {
+  --rk-a: var(--wt-accent, #ff2d95);
+  --rk-b: var(--wt-accent2, #00b8d4);
+  --rk-gold: var(--wt-glow, #ffd23f);
+  --rk-font: var(--wt-font, 'Bangers', 'Anton', system-ui, sans-serif);
+  --rk-ink: #16101f;
+  --rk-paper: #fff8e7;
+  color: #f8f5ff;
+  background:
+    radial-gradient(ellipse 55% 45% at 15% -5%, color-mix(in srgb, var(--rk-a) 45%, transparent), transparent 70%),
+    radial-gradient(ellipse 55% 45% at 88% -5%, color-mix(in srgb, var(--rk-b) 45%, transparent), transparent 70%),
+    repeating-linear-gradient(135deg, rgba(255, 255, 255, 0.035) 0 14px, transparent 14px 28px),
+    #0c0a1c;
+}
+
+/* Ring ropes across the top of a section: red, white and blue. */
+.rk-ropes {
+  height: 20px;
+  background: linear-gradient(#e11d2b 0 4px, transparent 4px 8px, #f8fafc 8px 12px, transparent 12px 16px, #2563eb 16px 20px);
+  opacity: 0.9;
+}
+
+.rk-display { font-family: var(--rk-font); letter-spacing: 0.04em; text-transform: uppercase; line-height: 1.02; }
+.rk-title {
+  font-family: var(--rk-font); text-transform: uppercase; letter-spacing: 0.04em; line-height: 0.98;
+  color: var(--rk-gold); text-shadow: 3px 3px 0 #000, 0 0 22px color-mix(in srgb, var(--rk-a) 70%, transparent);
+}
+.rk-kicker { font-size: 11px; font-weight: 800; letter-spacing: 0.18em; text-transform: uppercase; color: var(--rk-b); }
+.rk-muted { color: rgba(248, 245, 255, 0.72); }
+
+/* Fight-poster card. */
+.rk-card {
+  background: var(--rk-paper); color: var(--rk-ink);
+  border: 3px solid #0b0b0f; border-radius: 12px;
+  box-shadow: 6px 6px 0 var(--rk-a);
+}
+.rk-card-alt { box-shadow: 6px 6px 0 var(--rk-b); }
+.rk-card h3, .rk-card h4 { color: var(--rk-ink); }
+.rk-card .rk-sub { color: #5b4f6b; }
+.rk-card a { color: #1d4ed8; text-decoration: underline; }
+.rk-lift { transition: transform 0.12s ease, box-shadow 0.12s ease; }
+.rk-lift:hover, .rk-lift:focus-within { transform: translate(-2px, -2px); box-shadow: 9px 9px 0 var(--rk-a); }
+.rk-lift.rk-card-alt:hover, .rk-lift.rk-card-alt:focus-within { box-shadow: 9px 9px 0 var(--rk-b); }
+.rk-tile { cursor: pointer; text-align: left; }
+.rk-tile:focus-visible { outline: 3px solid var(--rk-gold); outline-offset: -3px; }
+
+/* Buttons: chunky, like a marquee. */
+.rk-btn {
+  font-family: var(--rk-font); text-transform: uppercase; letter-spacing: 0.06em; font-size: 1rem; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  padding: 0.6rem 1rem; border-radius: 10px; border: 3px solid #0b0b0f; color: #fff;
+  background: linear-gradient(135deg, var(--rk-a), var(--rk-b));
+  box-shadow: 4px 4px 0 #0b0b0f; text-shadow: 1px 2px 0 rgba(0, 0, 0, 0.45);
+  transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.12s ease;
+}
+.rk-btn:hover:not(:disabled) { filter: brightness(1.1); }
+.rk-btn:active:not(:disabled) { transform: translate(3px, 3px); box-shadow: 1px 1px 0 #0b0b0f; }
+.rk-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+.rk-btn:focus-visible, .rk-input:focus-visible, .rk-seg button:focus-visible, .rk-chip button:focus-visible {
+  outline: 3px solid var(--rk-gold); outline-offset: 2px;
+}
+.rk-btn-gold { background: linear-gradient(135deg, #ffd23f, #ff9f1c); color: #1a1026; text-shadow: none; }
+.rk-btn-plain { background: #fff; color: #16101f; text-shadow: none; }
+.rk-btn-sm { font-size: 0.82rem; padding: 0.4rem 0.65rem; border-width: 2px; box-shadow: 3px 3px 0 #0b0b0f; }
+.rk-btn-big { font-size: 1.5rem; padding: 0.85rem 1.6rem; }
+
+.rk-input {
+  width: 100%; border: 3px solid #0b0b0f; border-radius: 10px; background: #fff; color: #16101f;
+  padding: 0.6rem 0.8rem; font-size: 15px; box-shadow: 4px 4px 0 var(--rk-b);
+}
+.rk-input::placeholder { color: #8a7f99; }
+.rk-label { font-family: var(--rk-font); text-transform: uppercase; letter-spacing: 0.06em; font-size: 0.95rem; color: var(--rk-gold); }
+
+/* Segmented switch (Find / Pitch, units, scale). */
+.rk-seg { display: inline-flex; border: 3px solid #0b0b0f; border-radius: 10px; overflow: hidden; background: #fff; box-shadow: 3px 3px 0 #0b0b0f; }
+.rk-seg button {
+  font-family: var(--rk-font); text-transform: uppercase; letter-spacing: 0.05em; font-size: 0.9rem; line-height: 1;
+  padding: 0.5rem 0.8rem; color: #16101f; background: transparent; border-right: 2px solid #0b0b0f;
+}
+.rk-seg button:last-child { border-right: 0; }
+.rk-seg button[aria-pressed='true'] { background: linear-gradient(135deg, var(--rk-a), var(--rk-b)); color: #fff; text-shadow: 1px 1px 0 rgba(0, 0, 0, 0.5); }
+.rk-seg-lg button { font-size: 1.15rem; padding: 0.65rem 1.1rem; }
+
+/* Where a recipe came from. The label is set from the server's `source`, never from recipe text. */
+.rk-badge {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: 10.5px; font-weight: 800; letter-spacing: 0.1em;
+  text-transform: uppercase; padding: 0.22rem 0.5rem; border-radius: 999px; border: 2px solid #0b0b0f; white-space: nowrap;
+}
+.rk-badge-cookbook { background: #ffd23f; color: #1a1026; }
+.rk-badge-model { background: #ff2d95; color: #fff; }
+.rk-badge-web { background: #00b8d4; color: #06222a; }
+.rk-badge-plain { background: #fff; color: #16101f; }
+
+.rk-chip {
+  display: inline-flex; align-items: center; gap: 0.25rem; font-size: 13px; font-weight: 700; padding: 0.2rem 0.3rem 0.2rem 0.6rem;
+  border-radius: 999px; border: 2px solid #0b0b0f; background: var(--rk-gold); color: #1a1026;
+}
+.rk-chip-avoid { background: #fecaca; }
+.rk-chip button { border-radius: 999px; padding: 2px; line-height: 0; }
+.rk-chip button:hover { background: rgba(0, 0, 0, 0.15); }
+
+/* A starburst sticker. */
+.rk-burst {
+  display: inline-grid; place-items: center; width: 84px; height: 84px; text-align: center;
+  font-family: var(--rk-font); font-size: 0.82rem; line-height: 0.95; text-transform: uppercase; color: #1a1026;
+  background: var(--rk-gold); transform: rotate(-10deg);
+  clip-path: polygon(50% 0%, 61% 13%, 77% 6%, 80% 23%, 97% 25%, 90% 41%, 100% 54%, 86% 63%, 91% 80%, 74% 80%, 68% 96%, 53% 87%, 39% 98%, 32% 82%, 15% 85%, 18% 68%, 2% 60%, 13% 47%, 3% 33%, 20% 28%, 21% 11%, 37% 16%);
+}
+
+/* The picture slot of a dish: the generated picture, or a poster placeholder. */
+.rk-shot {
+  position: relative; overflow: hidden; background:
+    radial-gradient(circle at 30% 20%, rgba(255, 255, 255, 0.35), transparent 45%),
+    linear-gradient(135deg, var(--rk-a), var(--rk-b));
+  display: grid; place-items: center; color: #fff; isolation: isolate;
+}
+.rk-shot::after {     /* halftone dots */
+  content: ''; position: absolute; inset: 0; z-index: -1; opacity: 0.35;
+  background-image: radial-gradient(rgba(0, 0, 0, 0.55) 1.4px, transparent 1.6px); background-size: 9px 9px;
+}
+.rk-shot img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 1; }
+.rk-shot-word { font-family: var(--rk-font); text-transform: uppercase; letter-spacing: 0.05em; text-shadow: 3px 3px 0 #000; text-align: center; padding: 0 0.5rem; }
+.rk-pulse { animation: rk-pulse 1.4s ease-in-out infinite; }
+@keyframes rk-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+
+/* Tale of the tape. */
+.rk-tape { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); border: 3px solid #0b0b0f; border-radius: 10px; overflow: hidden; background: #0b0b0f; gap: 2px; }
+.rk-tape > div { background: #1a1430; padding: 0.5rem 0.7rem; }
+.rk-tape dt { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--rk-b); font-weight: 800; }
+.rk-tape dd { font-family: var(--rk-font); font-size: 1.15rem; letter-spacing: 0.03em; color: var(--rk-gold); }
+
+/* Ingredient rows. */
+.rk-row { display: flex; align-items: center; gap: 0.7rem; padding: 0.45rem 0; border-bottom: 2px dashed rgba(22, 16, 31, 0.18); }
+.rk-row:last-child { border-bottom: 0; }
+.rk-photo {
+  width: 44px; height: 44px; flex: none; border-radius: 10px; border: 2px solid #0b0b0f; overflow: hidden;
+  display: grid; place-items: center; font-family: var(--rk-font); font-size: 1.3rem; color: #fff;
+  background: linear-gradient(135deg, var(--rk-a), var(--rk-b)); text-shadow: 1px 2px 0 rgba(0, 0, 0, 0.5);
+}
+.rk-photo img { width: 100%; height: 100%; object-fit: cover; }
+.rk-unit {
+  border: 2px solid #0b0b0f; border-radius: 8px; background: #fff; color: #16101f; font-size: 12px; font-weight: 700;
+  padding: 0.2rem 0.3rem; max-width: 6.5rem;
+}
+.rk-flag { font-size: 10.5px; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.1rem 0.4rem; border-radius: 6px; }
+.rk-flag-approx { background: #dbeafe; color: #1e3a8a; }
+.rk-flag-warn { background: #fde68a; color: #78350f; }
+
+/* Method steps as rounds. */
+.rk-round { display: grid; grid-template-columns: auto 1fr; gap: 0.8rem; align-items: start; padding: 0.6rem 0; border-bottom: 2px dashed rgba(22, 16, 31, 0.18); }
+.rk-round:last-child { border-bottom: 0; }
+.rk-round-no {
+  font-family: var(--rk-font); text-transform: uppercase; font-size: 0.8rem; letter-spacing: 0.06em; color: #fff; text-align: center;
+  background: #16101f; border-radius: 8px; padding: 0.3rem 0.5rem; min-width: 3.6rem; line-height: 1;
+}
+.rk-round-no b { display: block; font-size: 1.5rem; color: var(--rk-gold); font-weight: 400; }
+
+/* The promo, read into the microphone. */
+.rk-promo { border: 3px solid var(--rk-gold); border-radius: 14px; background: rgba(12, 10, 28, 0.72); box-shadow: 0 0 0 3px #0b0b0f, 0 0 34px color-mix(in srgb, var(--rk-a) 50%, transparent); }
+.rk-promo p { white-space: pre-wrap; line-height: 1.6; font-size: 15.5px; }
+
+.rk-note { border: 2px solid #0b0b0f; border-radius: 10px; padding: 0.55rem 0.75rem; font-size: 13.5px; }
+.rk-note-warn { background: #fde68a; color: #4a2c05; }
+.rk-note-info { background: #dbeafe; color: #172554; }
+.rk-note-error { background: #fecaca; color: #5f0f0f; }
+
+/* Saved list in the sidebar. */
+.rk-side-item { display: flex; align-items: center; gap: 0.6rem; width: 100%; text-align: left; padding: 0.45rem 0.6rem; border-radius: 10px; }
+.rk-side-item:hover { background: rgba(127, 127, 127, 0.14); }
+.rk-side-item[aria-current='true'] { background: color-mix(in srgb, var(--wt-accent, #ff2d95) 18%, transparent); }
+.rk-side-thumb { width: 42px; height: 42px; flex: none; border-radius: 9px; border: 2px solid #0b0b0f; font-size: 0.95rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rk-pulse { animation: none; }
+  .rk-lift, .rk-btn { transition: none; }
+}

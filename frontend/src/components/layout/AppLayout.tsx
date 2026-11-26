@@ -1,11 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { MessageSquare, Users, LogOut, Shield, Settings, Key, ChevronDown, Share2, KeyRound, Globe, Menu, X, UserCircle, Activity, Calendar, FlaskConical, Gauge, NotebookPen } from 'lucide-react';
+import { MessageSquare, Users, LogOut, Shield, Settings, Key, ChevronDown, Share2, KeyRound, Globe, Menu, X, UserCircle, Activity, Calendar, FlaskConical, Gauge, NotebookPen, ChefHat } from 'lucide-react';
 import { ConversationList } from '../sidebar';
 import { ChatContainer } from '../chat';
 import { TracePanel } from '../trace';
 import { ResearchList, ResearchView } from '../research';
 import { EvalSidebar, EvalsView } from '../evals';
 import { JournalCalendar, JournalView } from '../journal';
+import { RecipesView, SavedList } from '../recipes';
 import { useResearch } from '../../hooks/useResearch';
 import { ThemeToggle } from './ThemeToggle';
 import { WrestlerPicker } from './WrestlerPicker';
@@ -21,7 +22,7 @@ import { useGroupStore } from '../../stores/groupStore';
 import { useAuthStore } from '../../stores/authStore';
 import { api } from '../../lib/api';
 
-type ViewMode = 'chats' | 'groups' | 'research' | 'journal' | 'evals';
+type ViewMode = 'chats' | 'groups' | 'research' | 'journal' | 'recipes' | 'evals';
 
 export function AppLayout() {
   const { sendMessage, loadConversation, startNewConversation } = useChat();
@@ -33,7 +34,7 @@ export function AppLayout() {
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
     try {
       const saved = localStorage.getItem('view-mode');
-      return saved === 'groups' || saved === 'research' || saved === 'journal' || saved === 'evals' ? saved : 'chats';
+      return saved === 'groups' || saved === 'research' || saved === 'journal' || saved === 'recipes' || saved === 'evals' ? saved : 'chats';
     } catch {
       return 'chats';
     }
@@ -277,6 +278,17 @@ export function AppLayout() {
             <NotebookPen size={18} />
             Journal
           </button>
+          <button
+            onClick={() => setViewMode('recipes')}
+            className={`flex-1 min-w-0 flex flex-col items-center justify-center gap-1 px-1 py-2 text-[11px] font-medium transition-colors ${
+              viewMode === 'recipes'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400'
+                : 'text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 border-b-2 border-transparent'
+            }`}
+          >
+            <ChefHat size={18} />
+            Recipes
+          </button>
           {user?.is_superuser && (
             <button
               onClick={() => setViewMode('evals')}
@@ -304,6 +316,8 @@ export function AppLayout() {
             <EvalSidebar onSelect={() => setShowMobileSidebar(false)} />
           ) : viewMode === 'journal' ? (
             <JournalCalendar onSelect={() => setShowMobileSidebar(false)} />
+          ) : viewMode === 'recipes' ? (
+            <SavedList onSelect={() => setShowMobileSidebar(false)} />
           ) : viewMode === 'research' ? (
             <ResearchList
               onNew={handleResearchNew}
@@ -335,7 +349,7 @@ export function AppLayout() {
               <Menu size={20} />
             </button>
             <h1 className="font-semibold text-sm sm:text-base truncate">
-              {viewMode === 'chats' ? 'Agent Chat' : viewMode === 'research' ? 'Deep Research' : viewMode === 'journal' ? 'Journal' : viewMode === 'evals' ? 'Evals' : (selectedGroup?.name || 'Groups')}
+              {viewMode === 'chats' ? 'Agent Chat' : viewMode === 'research' ? 'Deep Research' : viewMode === 'journal' ? 'Journal' : viewMode === 'recipes' ? 'Recipes' : viewMode === 'evals' ? 'Evals' : (selectedGroup?.name || 'Groups')}
             </h1>
             {wrestler && (
               <span className="hidden xl:inline text-xs wt-tagline truncate max-w-72">{wrestler.tagline}</span>
@@ -484,6 +498,8 @@ export function AppLayout() {
           <EvalsView />
         ) : viewMode === 'journal' ? (
           <JournalView />
+        ) : viewMode === 'recipes' ? (
+          <RecipesView />
         ) : viewMode === 'research' ? (
           <ResearchView
             onStart={research.start}

@@ -48,6 +48,7 @@ Authentication answers *who is calling*. Authorization answers *may they touch t
 | Five `/tools` routes needed no login, including a web search | Every `/tools` route requires a signed-in user |
 | Calendar sync accepted any event ID | Caller must be a member of the event's group |
 | (new) Journal entries, suggestions and the per-day conversation | Built owner-scoped from the start: every repository query filters on the caller's user id; another user's entry is 404 |
+| (new) Recipes: imported cookbooks, kept recipes and dish pictures | Owner-scoped the same way; a cookbook is visible only to the account that imported it. Pictures are served by the API with the `Authorization` header and shown as `blob:` addresses, so the image policy stays `img-src 'self'` and no token is in an image URL. Details: [recipes.md](recipes.md) |
 
 Decisions:
 

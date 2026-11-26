@@ -26,6 +26,18 @@ import type {
   HumanLabels,
 } from '../types';
 import type { JournalDays, JournalEntry, JournalMessage, JournalStreamEvent } from '../types/journal';
+import type {
+  ImportResult,
+  IngredientGroup,
+  PhotoCredit,
+  PitchRequest,
+  RecipeCard,
+  RecipeDetail,
+  RecipesStatus,
+  RecipeStreamEvent,
+  RecipeUnit,
+  UnitSystem,
+} from '../types/recipes';
 import { useAuthStore } from '../stores/authStore';
 
 const API_BASE = '/api/v1';
@@ -449,6 +461,99 @@ export const api = {
             onEvent(JSON.parse(line.slice(5)) as JournalStreamEvent);
           } catch {
             // a malformed event is skipped; the final "response" event carries the whole reply
+          }
+        }
+        cut = buffer.indexOf('\n\n');
+      }
+    }
+  },
+
+  // Recipes
+  recipesStatus: async (): Promise<RecipesStatus> => fetchApi<RecipesStatus>('/recipes/status'),
+
+  importCookbooks: async (file: unknown): Promise<ImportResult> =>
+    fetchApi<ImportResult>('/recipes/cookbooks', { method: 'POST', body: JSON.stringify(file) }),
+
+  searchRecipes: async (query: string, have: string[], category: string | null): Promise<RecipeCard[]> => {
+    const params = new URLSearchParams();
+    if (query.trim()) params.set('q', query.trim());
+    if (have.length) params.set('have', have.join(','));
+    if (category) params.set('category', category);
+    return fetchApi<RecipeCard[]>(`/recipes/search?${params.toString()}`);
+  },
+
+  searchWebRecipes: async (query: string): Promise<RecipeCard[]> =>
+    fetchApi<RecipeCard[]>('/recipes/web/search', { method: 'POST', body: JSON.stringify({ query }) }),
+
+  importWebRecipe: async (url: string): Promise<RecipeCard[]> =>
+    fetchApi<RecipeCard[]>('/recipes/web/import', { method: 'POST', body: JSON.stringify({ url }) }),
+
+  savedRecipes: async (): Promise<RecipeCard[]> => fetchApi<RecipeCard[]>('/recipes/saved'),
+
+  getRecipe: async (id: string): Promise<RecipeDetail> => fetchApi<RecipeDetail>(`/recipes/${id}`),
+
+  keepRecipe: async (id: string): Promise<RecipeDetail> =>
+    fetchApi<RecipeDetail>(`/recipes/${id}/saved`, { method: 'PUT' }),
+
+  dropRecipe: async (id: string): Promise<void> => {
+    await fetchApi(`/recipes/${id}/saved`, { method: 'DELETE' });
+  },
+
+  retryRecipePicture: async (id: string): Promise<RecipeDetail> =>
+    fetchApi<RecipeDetail>(`/recipes/${id}/image`, { method: 'POST' }),
+
+  // Scaling and unit conversion are computed by the server, in code; the browser only displays them.
+  convertRecipe: async (
+    id: string,
+    scale: string,
+    system: UnitSystem,
+    units: Record<number, RecipeUnit>,
+  ): Promise<{ ingredients: IngredientGroup[] }> =>
+    fetchApi(`/recipes/${id}/convert`, { method: 'POST', body: JSON.stringify({ scale, system, units }) }),
+
+  ingredientPhotoCredits: async (keys: string[]): Promise<PhotoCredit[]> =>
+    fetchApi<PhotoCredit[]>(`/recipes/ingredient-photos/credits?keys=${encodeURIComponent(keys.join(','))}`),
+
+  // Pictures come from our own API with the Authorization header and are shown as blob: addresses,
+  // so the token is never in a URL and the page never loads an image from another site.
+  fetchImage: async (path: string): Promise<Blob | null> => {
+    const response = await fetch(`${API_BASE}${path}`, { headers: getAuthHeaders() });
+    if (response.status === 401) useAuthStore.getState().logout();
+    return response.ok ? response.blob() : null;
+  },
+
+  // Streams a recipe pitch: tool activity, then the card. A POST read with fetch, like the journal's.
+  streamRecipePitch: async (
+    request: PitchRequest,
+    onEvent: (event: RecipeStreamEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<void> => {
+    const response = await fetch(`${API_BASE}/recipes/pitch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...getAuthHeaders() },
+      body: JSON.stringify(request),
+      signal,
+    });
+    if (!response.ok || !response.body) {
+      if (response.status === 401) useAuthStore.getState().logout();
+      throw new ApiError(response.status, await response.text());
+    }
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let cut = buffer.indexOf('\n\n');
+      while (cut !== -1) {
+        const line = buffer.slice(0, cut).trim();
+        buffer = buffer.slice(cut + 2);
+        if (line.startsWith('data:')) {
+          try {
+            onEvent(JSON.parse(line.slice(5)) as RecipeStreamEvent);
+          } catch {
+            // a malformed event is skipped; the final event carries the whole card
           }
         }
         cut = buffer.indexOf('\n\n');

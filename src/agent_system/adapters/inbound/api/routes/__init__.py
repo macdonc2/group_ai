@@ -9,6 +9,7 @@ from agent_system.adapters.inbound.api.routes.groups import router as groups_rou
 from agent_system.adapters.inbound.api.routes.journal import router as journal_router
 from agent_system.adapters.inbound.api.routes.knowledge import router as knowledge_router
 from agent_system.adapters.inbound.api.routes.plans import router as plans_router
+from agent_system.adapters.inbound.api.routes.recipes import router as recipes_router
 from agent_system.adapters.inbound.api.routes.research import router as research_router
 from agent_system.adapters.inbound.api.routes.tools import router as tools_router
 
@@ -22,6 +23,7 @@ __all__ = [
     "journal_router",
     "knowledge_router",
     "plans_router",
+    "recipes_router",
     "research_router",
     "tools_router",
 ]
