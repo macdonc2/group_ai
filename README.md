@@ -9,6 +9,7 @@ Agent System is an intelligent conversational platform that combines:
 - **Real-Time Collaboration**: Group chat with WebSocket support and AI assistance
 - **Knowledge Management**: Neo4j-backed knowledge graph for context and memory
 - **Journal**: Private dated entries on a calendar, feeding the same memory, with their own tool-using agent
+- **Recipes**: Search your own cookbooks, have dishes pitched for what is in the kitchen, keep a list, switch units and scale by exact arithmetic, with dish and ingredient pictures and a wrestling look ([docs/recipes.md](docs/recipes.md))
 - **Modern Frontend**: React TypeScript UI with dark mode and real-time updates
 
 ## Architecture
@@ -49,6 +50,7 @@ frontend/
 │   │   ├── chat/              # Chat interface
 │   │   ├── groups/            # Group collaboration
 │   │   ├── journal/           # Journal tab: month calendar, day entries, side conversation
+│   │   ├── recipes/           # Recipes tab: find, pitch, saved list, recipe sheet with unit switching
 │   │   ├── knowledge/         # Knowledge graph explorer: canvas, filters, node panel, ask panel
 │   │   ├── evals/             # Evals tab: runs, scorecards, predicate-tree viewer
 │   │   ├── settings/          # User settings, API keys

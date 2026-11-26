@@ -43,6 +43,14 @@ from agent_system.adapters.outbound.persistence.models import (
     PlanStepModel,
     UserModel,
 )
+from agent_system.adapters.outbound.persistence.recipe_models import (
+    IngredientImageModel,
+    RecipeImageModel,
+    RecipeModel,
+)
+from agent_system.adapters.outbound.persistence.recipe_repository import (
+    SQLAlchemyRecipeRepository,
+)
 from agent_system.adapters.outbound.persistence.repositories import (
     SQLAlchemyConversationRepository,
     SQLAlchemyPlanRepository,
@@ -81,6 +89,9 @@ __all__ = [
     "EvalCaseResultModel",
     "JournalEntryModel",
     "JournalMessageModel",
+    "RecipeModel",
+    "RecipeImageModel",
+    "IngredientImageModel",
     # Mappers
     "UserMapper",
     "ConversationMapper",
@@ -101,4 +112,5 @@ __all__ = [
     "SQLAlchemyExtractedEventRepository",
     "SQLAlchemyResearchRepository",
     "SQLAlchemyJournalRepository",
+    "SQLAlchemyRecipeRepository",
 ]
