@@ -114,8 +114,9 @@ class Settings(BaseSettings):
     recipe_image_quality: str = Field(default="medium", description="Dish picture quality: low, medium or high (cost rises steeply)")
     recipe_images_per_day: int = Field(default=20, description="Dish pictures one user may generate per 24 hours; 0 turns generation off")
     recipe_photo_contact: str | None = Field(
-        default=None,
-        description="Contact URL or email sent to Wikimedia in the User-Agent for ingredient photos; unset = no photo lookups",
+        default="https://agent.macdonml.com",
+        description="Contact URL or email sent to Wikimedia in the User-Agent for ingredient photos (the same "
+                    "address the page reader gives); set it to your own, or to an empty value to make no photo lookups",
     )
 
     # Hard limits on any chat or group turn, whichever engine runs it (including post-reply memory work)

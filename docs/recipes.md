@@ -153,8 +153,8 @@ kept, once per recipe:
   shown under "Ingredient photo credits". On 2026-11-26, 204 of the 214 entries had a usable
   photo (about 20 KB each); the rest show a lettered tile.
 - Wikimedia refuses automated clients that do not give a contact, and rate-limits crawlers.
-  `RECIPE_PHOTO_CONTACT` (a URL or email) goes in the User-Agent; without it no lookups are
-  made. Requests are batched: all of a recipe's new ingredients cost two API calls plus one
+  `RECIPE_PHOTO_CONTACT` (a URL or email) goes in the User-Agent; it defaults to the address
+  the page reader already gives, and an empty value turns lookups off. Requests are batched: all of a recipe's new ingredients cost two API calls plus one
   small download each, one at a time, and each ingredient is fetched once for all users.
 
 ## Settings
@@ -165,7 +165,7 @@ kept, once per recipe:
 | `RECIPE_IMAGE_MODEL` | `gpt-image-2.5-flare` | Image model for dish pictures |
 | `RECIPE_IMAGE_QUALITY` | `medium` | `low`, `medium` or `high`; cost rises steeply |
 | `RECIPE_IMAGES_PER_DAY` | `20` | Dish pictures per user per 24 hours; `0` turns generation off |
-| `RECIPE_PHOTO_CONTACT` | unset | Contact for Wikimedia's User-Agent rule; unset = no ingredient photos |
+| `RECIPE_PHOTO_CONTACT` | `https://agent.macdonml.com` | Contact for Wikimedia's User-Agent rule; empty = no ingredient photos |
 
 ## Data
 
